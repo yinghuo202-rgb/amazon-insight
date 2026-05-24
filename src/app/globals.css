@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5eee5;
+  --background-strong: #fdf9f3;
+  --foreground: #18332d;
+  --foreground-soft: #5c6a65;
+  --surface: rgba(255, 250, 243, 0.8);
+  --surface-strong: rgba(255, 253, 248, 0.94);
+  --surface-muted: rgba(247, 239, 228, 0.86);
+  --border: rgba(24, 51, 45, 0.1);
+  --accent: #1c584a;
+  --accent-strong: #143f35;
+  --accent-soft: rgba(28, 88, 74, 0.12);
+  --accent-soft-strong: rgba(28, 88, 74, 0.2);
+  --warn-soft: rgba(193, 140, 70, 0.16);
+  --rose-soft: rgba(182, 81, 79, 0.12);
+  --shadow-soft: 0 24px 72px rgba(22, 37, 31, 0.08);
+  --shadow-strong: 0 32px 96px rgba(22, 37, 31, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: light;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    var(--font-body),
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+body {
+  overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(28, 88, 74, 0.14), transparent 26%),
+    radial-gradient(circle at 100% 10%, rgba(197, 144, 77, 0.14), transparent 24%),
+    radial-gradient(circle at 16% 100%, rgba(28, 88, 74, 0.07), transparent 26%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0));
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family:
+    var(--font-jakarta),
+    var(--font-body),
+    "PingFang SC",
+    sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+}
+
+::selection {
+  background: rgba(28, 88, 74, 0.18);
+}
+
+.surface-card {
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-soft);
+}
+
+.surface-strong {
+  background: var(--surface-strong);
+}
+
+.surface-muted {
+  background: var(--surface-muted);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.soft-outline {
+  border: 1px solid var(--border);
+}
+
+.ambient-ring {
+  position: relative;
+}
+
+.ambient-ring::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.page-shell {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+.safe-top {
+  padding-top: max(0rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: max(0rem, env(safe-area-inset-bottom));
+}
+
+.print-hidden {
+  display: block;
+}
+
+@media (max-width: 640px) {
+  body {
+    background-image:
+      radial-gradient(circle at top left, rgba(28, 88, 74, 0.11), transparent 30%),
+      radial-gradient(circle at 100% 4%, rgba(197, 144, 77, 0.1), transparent 28%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  :root {
+    --background: #ffffff;
+    --surface: #ffffff;
+    --surface-strong: #ffffff;
+  }
+
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  .surface-card,
+  .surface-strong {
+    background: #ffffff !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .ambient-ring::after {
+    display: none !important;
+  }
+}
