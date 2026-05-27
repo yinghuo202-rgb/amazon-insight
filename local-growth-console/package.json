@@ -1,0 +1,36 @@
+{
+  "name": "amazon-daily-product-recommender",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/local_api_server.js",
+    "serve": "node scripts/local_api_server.js",
+    "normalize:store": "node scripts/normalize_store_data.js",
+    "profile:store": "node scripts/build_store_profile.js",
+    "prepare:store": "npm run normalize:store && npm run profile:store",
+    "generate:store-expansion": "node scripts/generate_store_expansion_candidates.js",
+    "normalize:candidates": "node scripts/normalize_candidates.js",
+    "enrich:keepa": "node scripts/enrich_candidates_keepa.js",
+    "enrich:queue:keepa": "node scripts/enrich_queue_keepa.js",
+    "estimate:sales": "node scripts/estimate_candidate_sales.js",
+    "analyze:reviews": "node scripts/analyze_review_pain_points.js",
+    "prepare:recommendations": "npm run prepare:store && npm run generate:store-expansion && npm run normalize:candidates && npm run enrich:keepa && npm run estimate:sales && npm run analyze:reviews",
+    "daily:recommendations": "npm run prepare:recommendations && node scripts/run_daily_recommendation.js && node scripts/export_daily_report.js",
+    "export:daily-report": "node scripts/export_daily_report.js",
+    "audit:recommendations": "node scripts/audit_recommendation_engine.js",
+    "bootstrap:ads": "node scripts/bootstrap_ads_optimizer.js",
+    "audit:ads": "node scripts/audit_ads_optimizer.js",
+    "audit:asin": "node scripts/audit_asin_analyzer.js",
+    "migrate:data-layout": "node scripts/migrate_data_layout.js",
+    "import:candidates": "node scripts/import_product_candidates.js",
+    "import:ads-reports": "node scripts/import_ads_reports.js",
+    "plan:jungle-scout": "node scripts/generate_jungle_scout_keyword_tasks.js",
+    "check:jungle-scout-api": "node scripts/check_jungle_scout_provider.js",
+    "import:jungle-scout-api": "node scripts/import_jungle_scout_api.js",
+    "import:jungle-scout": "node scripts/import_jungle_scout_export.js",
+    "audit:all": "node scripts/audit_all.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-05-26T23:46:30.131Z",
+  "runs": [
+    {
+      "date": "2026-05-27",
+      "generated_at": "2026-05-26T23:46:30.127Z",
+      "marketplace": "Amazon US",
+      "final_count": 5,
+      "candidate_count": 102,
+      "main_themes": [
+        "organization",
+        "protection",
+        "automotive_edge_protection"
+      ],
+      "recommendation_file": "data/daily_recommendations/2026-05-27.json"
+    },
+    {
+      "date": "2026-05-26",
+      "generated_at": "2026-05-26T07:50:48.794Z",
+      "marketplace": "Amazon US",
+      "final_count": 5,
+      "candidate_count": 50,
+      "main_themes": [
+        "automotive_edge_protection",
+        "connection_fitting",
+        "organization",
+        "water_filtration",
+        "winterization"
+      ],
+      "recommendation_file": "data/daily_recommendations/2026-05-26.json"
+    },
+    {
+      "date": "2026-05-22",
+      "generated_at": "2026-05-22T01:27:13.054Z",
+      "marketplace": "Amazon US",
+      "final_count": 5,
+      "candidate_count": 20,
+      "main_themes": [
+        "automotive_edge_protection",
+        "connection_fitting",
+        "organization",
+        "water_filtration",
+        "winterization"
+      ],
+      "recommendation_file": "data/daily_recommendations/2026-05-22.json"
+    }
+  ]
+}

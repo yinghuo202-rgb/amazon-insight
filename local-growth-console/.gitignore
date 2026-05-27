@@ -1,0 +1,16 @@
+.env.local
+config/secrets.local.json
+config/llm.config.local.json
+config/keepa.config.local.json
+config/jungle_scout.config.local.json
+data/*
+!data/mock/
+!data/mock/*.json
+!data/product_research/
+!data/product_research/*.json
+!data/product_research/daily_recommendations/
+!data/product_research/daily_recommendations/*.json
+logs/
+*.sqlite
+*.db
+node_modules/

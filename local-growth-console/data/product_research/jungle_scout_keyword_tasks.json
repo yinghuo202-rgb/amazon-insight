@@ -1,0 +1,356 @@
+{
+  "generated_at": "2026-05-25T07:56:39.391Z",
+  "marketplace": "US",
+  "source": "store_profile_expansion_opportunities",
+  "task_count": 12,
+  "tasks": [
+    {
+      "task_id": "js_keyword_2026-05-25_01",
+      "keyword": "rv water pressure regulator",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 999,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/01_rv_water_pressure_regulator_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_02",
+      "keyword": "rv inline water filter",
+      "marketplace": "US",
+      "source_theme_id": "water_filtration_expansion",
+      "source_theme_label": "Water filtration and protection accessories",
+      "priority_score": 999,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/02_rv_inline_water_filter_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "filter",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "water_filtration",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_03",
+      "keyword": "garden hose pressure regulator",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 998,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/03_garden_hose_pressure_regulator_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_04",
+      "keyword": "rv water filter stand",
+      "marketplace": "US",
+      "source_theme_id": "water_filtration_expansion",
+      "source_theme_label": "Water filtration and protection accessories",
+      "priority_score": 998,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/04_rv_water_filter_stand_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "filter",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "water_filtration",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_05",
+      "keyword": "hose shut off valve",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 997,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/05_hose_shut_off_valve_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_06",
+      "keyword": "garden hose inline filter",
+      "marketplace": "US",
+      "source_theme_id": "water_filtration_expansion",
+      "source_theme_label": "Water filtration and protection accessories",
+      "priority_score": 997,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/06_garden_hose_inline_filter_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "filter",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "water_filtration",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_07",
+      "keyword": "hose splitter valve",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 996,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/07_hose_splitter_valve_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_08",
+      "keyword": "water filter hose adapter",
+      "marketplace": "US",
+      "source_theme_id": "water_filtration_expansion",
+      "source_theme_label": "Water filtration and protection accessories",
+      "priority_score": 996,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/08_water_filter_hose_adapter_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "filter",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "water_filtration",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_09",
+      "keyword": "flow control valve",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 995,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/09_flow_control_valve_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_10",
+      "keyword": "rv water filter hose",
+      "marketplace": "US",
+      "source_theme_id": "water_filtration_expansion",
+      "source_theme_label": "Water filtration and protection accessories",
+      "priority_score": 995,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/10_rv_water_filter_hose_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "filter",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "water_filtration",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_11",
+      "keyword": "pressure regulator adapter",
+      "marketplace": "US",
+      "source_theme_id": "water_pressure_control_expansion",
+      "source_theme_label": "Water pressure control accessories",
+      "priority_score": 994,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/11_pressure_regulator_adapter_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "pressure_regulator",
+        "valve",
+        "connector"
+      ],
+      "target_sub_scenarios": [
+        "water_pressure_control",
+        "flow_control",
+        "connection_fitting"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    },
+    {
+      "task_id": "js_keyword_2026-05-25_12",
+      "keyword": "outdoor faucet cover",
+      "marketplace": "US",
+      "source_theme_id": "protection_expansion",
+      "source_theme_label": "Protection covers and seasonal shields",
+      "priority_score": 829,
+      "status": "pending_export",
+      "export_target_path": "input/browser_exports/jungle_scout/12_outdoor_faucet_cover_2026-05-25.csv",
+      "browser_plugin": "Jungle Scout Extension",
+      "suggested_filters": {
+        "marketplace": "Amazon US",
+        "price_focus": "$20-$80",
+        "monthly_sales_min": 30,
+        "avoid_exact_store_duplicates": true,
+        "preferred_complexity": "low_to_medium"
+      },
+      "target_product_types": [
+        "cover",
+        "freeze_protection"
+      ],
+      "target_sub_scenarios": [
+        "protection",
+        "winterization"
+      ],
+      "notes": "Use Edge with the logged-in Jungle Scout extension, export CSV, then place the file at export_target_path.",
+      "created_at": "2026-05-25T07:56:39.389Z"
+    }
+  ]
+}

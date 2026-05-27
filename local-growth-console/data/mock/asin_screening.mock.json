@@ -1,0 +1,278 @@
+{
+  "samples": ["B0CGXQL7NK", "B0CPS9N4LM", "B0RVWFS810"],
+  "cases": {
+    "B0CGXQL7NK": {
+      "mode": "sample",
+      "label": "高评论量 / 强竞争",
+      "product": {
+        "asin": "B0CGXQL7NK",
+        "title": "Phomemo D30 Mini Bluetooth Label Maker",
+        "brand": "Phomemo",
+        "category": "Office Products",
+        "price": 28.99,
+        "rating": 4.6,
+        "reviews": 18420,
+        "monthly_units": 4600,
+        "monthly_revenue": 133354,
+        "source_keyword": "label maker"
+      },
+      "compare_products": [
+        {
+          "asin": "B0CF6JZ2K1",
+          "title": "NIIMBOT D11 Portable Label Maker Machine",
+          "brand": "NIIMBOT",
+          "price": 25.99,
+          "rating": 4.5,
+          "reviews": 12140,
+          "monthly_units": 3900
+        },
+        {
+          "asin": "B0CGVZ3W8P",
+          "title": "Brother P-touch Cube Plus Label Maker",
+          "brand": "Brother",
+          "price": 39.99,
+          "rating": 4.4,
+          "reviews": 6240,
+          "monthly_units": 1800
+        }
+      ],
+      "trend_series": [8200, 7900, 8100, 8600, 8900, 9200, 9100, 9350, 9600, 10100, 10300, 10800],
+      "analysis": {
+        "summary": "销量和搜索热度都强，但头部品牌集中、评论沉淀很深，不适合作为轻量切入机会。",
+        "recommendation": "建议只作为成熟类目学习样本，不建议直接进入；除非有明确耗材生态或差异化渠道。",
+        "decision": "hold",
+        "decision_label": "暂缓 / Hold",
+        "score": 46,
+        "lifecycle": {
+          "stage": "maturity",
+          "confidence": "high",
+          "evidence": ["近 12 个月搜索量仍在上升，但增长更像成熟类目内扩张。", "评论门槛超过 18,000，社会证明壁垒很高。", "头部品牌份额集中，价格带相对压缩。"]
+        },
+        "competition": {
+          "level": "high",
+          "entry_difficulty": "high",
+          "differentiation_room": "low",
+          "evidence": ["主要竞品都是成熟品牌。", "变体和耗材生态会抬高进入成本。", "用户对 App 连接和打印稳定性容忍度低。"]
+        },
+        "market_overview": {
+          "market_heat": "high",
+          "entry_barrier": "high",
+          "opportunity_level": "low",
+          "search_trend_delta": 0.32,
+          "sales_trend_delta": 0.15,
+          "brand_concentration": 79,
+          "review_barrier": 12140,
+          "price_spread": 0.35
+        },
+        "product_snapshot": {
+          "seller_type": "FBA",
+          "seller_count": 11,
+          "variant_count": 12,
+          "listing_quality_score": 83,
+          "price_positioning": "mid",
+          "age_months": 59,
+          "dimensions_summary": "5.2 x 3.1 x 1.6 in",
+          "flags": ["卖家数量偏多", "变体数量较多", "评论门槛较高", "上市时间较久"]
+        },
+        "listing_analysis": {
+          "confidence": "high",
+          "summary": "Listing 完成度较高，基础表达强，但同质化也明显。",
+          "strengths": ["品牌信息明确。", "标题覆盖核心关键词和使用场景。", "Listing 质量分较高。"],
+          "gaps": ["差异点更多依赖耗材生态，不适合低成本复制。"],
+          "warnings": ["移动端信息密度较高。", "App 体验会直接影响评价。"]
+        },
+        "review_analysis": {
+          "confidence": "high",
+          "coverage": "seeded_summary",
+          "summary": "评论驱动很强，但门槛也很深。用户对打印清晰度、App 连接和标签纸兼容性的容忍度都很低。",
+          "pain_points": ["App 配对和连接稳定性经常被提到。", "标签纸耗材成本和兼容性容易引发抱怨。", "打印深浅和裁切精度是高频体验点。"],
+          "purchase_drivers": ["便携、上手快。", "模板和图标丰富。", "覆盖收纳、办公和学习场景。"],
+          "risks": ["高评论基数意味着体验短板会被持续放大。"]
+        },
+        "next_steps": ["只记录为成熟类目样本。", "如果继续看，先找耗材或配件侧机会。", "不要用低价白牌直接切入。"]
+      }
+    },
+    "B0CPS9N4LM": {
+      "mode": "sample",
+      "label": "评论痛点清晰",
+      "product": {
+        "asin": "B0CPS9N4LM",
+        "title": "Veken Stainless Steel Cat Water Fountain 95oz",
+        "brand": "Veken",
+        "category": "Pet Supplies",
+        "price": 32.99,
+        "rating": 4.2,
+        "reviews": 3260,
+        "monthly_units": 1550,
+        "monthly_revenue": 51134,
+        "source_keyword": "cat water fountain"
+      },
+      "compare_products": [
+        {
+          "asin": "B0BHY6P9Q8",
+          "title": "PETLIBRO Cat Water Fountain",
+          "brand": "PETLIBRO",
+          "price": 39.99,
+          "rating": 4.3,
+          "reviews": 9100,
+          "monthly_units": 2400
+        },
+        {
+          "asin": "B09QF1P6J2",
+          "title": "Stainless Steel Pet Water Fountain",
+          "brand": "AONBOY",
+          "price": 29.99,
+          "rating": 4.1,
+          "reviews": 2100,
+          "monthly_units": 1200
+        }
+      ],
+      "trend_series": [6200, 6400, 6600, 6900, 7050, 7300, 7500, 7800, 8100, 8400, 8650, 8900],
+      "analysis": {
+        "summary": "需求处在增长区间，评论痛点集中，适合用体验改良思路评估，但售后和质量稳定性要求高。",
+        "recommendation": "可以继续研究，重点验证水泵噪音、清洗便利和滤芯成本是否能形成真实差异。",
+        "decision": "watch",
+        "decision_label": "继续观察 / Watch",
+        "score": 71,
+        "lifecycle": {
+          "stage": "growth",
+          "confidence": "medium",
+          "evidence": ["搜索趋势持续上行。", "评论痛点明确，说明需求已被验证。", "价格带仍有层次。"]
+        },
+        "competition": {
+          "level": "medium",
+          "entry_difficulty": "medium",
+          "differentiation_room": "high",
+          "evidence": ["头部评论较深，但仍有中腰部空间。", "差评集中在可工程化改良的体验点。"]
+        },
+        "market_overview": {
+          "market_heat": "high",
+          "entry_barrier": "medium",
+          "opportunity_level": "medium",
+          "search_trend_delta": 0.44,
+          "sales_trend_delta": 0.22,
+          "brand_concentration": 58,
+          "review_barrier": 3260,
+          "price_spread": 0.25
+        },
+        "product_snapshot": {
+          "seller_type": "FBA",
+          "seller_count": 4,
+          "variant_count": 3,
+          "listing_quality_score": 72,
+          "price_positioning": "mid",
+          "age_months": 39,
+          "dimensions_summary": "9.4 x 9.4 x 6.1 in",
+          "flags": ["评分压力明显", "存在清洁和漏水体验风险"]
+        },
+        "listing_analysis": {
+          "confidence": "medium",
+          "summary": "核心卖点完整，但如果要进入，需要把清洁路径和静音稳定性讲得更具体。",
+          "strengths": ["不锈钢材质有信任感。", "容量和宠物饮水场景明确。"],
+          "gaps": ["滤芯更换成本表达不足。", "清洗步骤和防漏结构需要更强视觉说明。"],
+          "warnings": ["水泵噪音和漏水问题会影响退货率。"]
+        },
+        "review_analysis": {
+          "confidence": "high",
+          "coverage": "seeded_summary",
+          "summary": "差评通常围绕水泵噪音、清洗难度、滤芯更换和漏水风险展开。",
+          "pain_points": ["水泵噪音或寿命不稳定。", "水垢和角落清洗麻烦。", "滤芯耗材成本敏感。"],
+          "purchase_drivers": ["宠物饮水频率提升。", "不锈钢更易建立卫生感。", "大容量减少频繁加水。"],
+          "risks": ["质量一致性和售后成本需要提前核算。"]
+        },
+        "next_steps": ["抽样 50 条差评拆痛点。", "核算水泵、滤芯和售后成本。", "寻找可视化清洁结构差异。"]
+      }
+    },
+    "B0RVWFS810": {
+      "mode": "local_mock",
+      "label": "店铺相邻机会",
+      "product": {
+        "asin": "B0RVWFS810",
+        "title": "RV Inline Water Filter Stand and Hose Support",
+        "brand": "MockPro",
+        "category": "RV Accessories",
+        "price": 32.99,
+        "rating": 4.4,
+        "reviews": 420,
+        "monthly_units": 145,
+        "monthly_revenue": 4784,
+        "source_keyword": "rv water filter stand"
+      },
+      "compare_products": [
+        {
+          "asin": "B0RVCOMP12",
+          "title": "RV Water Hose Support Stand",
+          "brand": "CamperEase",
+          "price": 29.99,
+          "rating": 4.2,
+          "reviews": 310,
+          "monthly_units": 110
+        },
+        {
+          "asin": "B0RVCOMP88",
+          "title": "Inline RV Water Filter Ground Holder",
+          "brand": "RoadFlow",
+          "price": 36.99,
+          "rating": 4.3,
+          "reviews": 260,
+          "monthly_units": 95
+        }
+      ],
+      "trend_series": [420, 450, 510, 560, 610, 690, 740, 760, 720, 680, 640, 620],
+      "analysis": {
+        "summary": "需求不大但场景清晰，和现有 RV 水路配件店铺能力相邻，适合作为小批量测试机会。",
+        "recommendation": "建议加入观察清单并做供应链/差评验证；重点确认承重、地面稳定和软管兼容性。",
+        "decision": "advance",
+        "decision_label": "可推进 / Advance",
+        "score": 78,
+        "lifecycle": {
+          "stage": "growth",
+          "confidence": "medium",
+          "evidence": ["春夏使用场景明显。", "评论门槛不高。", "与 RV 水路系统有自然搭配关系。"]
+        },
+        "competition": {
+          "level": "medium",
+          "entry_difficulty": "low",
+          "differentiation_room": "high",
+          "evidence": ["主要竞品评论量较低。", "结构细节、收纳方式和兼容性可形成差异。"]
+        },
+        "market_overview": {
+          "market_heat": "medium",
+          "entry_barrier": "low",
+          "opportunity_level": "high",
+          "search_trend_delta": 0.48,
+          "sales_trend_delta": 0.18,
+          "brand_concentration": 42,
+          "review_barrier": 310,
+          "price_spread": 0.19
+        },
+        "product_snapshot": {
+          "seller_type": "FBA",
+          "seller_count": 3,
+          "variant_count": 2,
+          "listing_quality_score": 64,
+          "price_positioning": "mid",
+          "age_months": 14,
+          "dimensions_summary": "12 x 4 x 4 in",
+          "flags": ["场景窄但明确", "安装复杂度低", "与店铺水路方向相邻"]
+        },
+        "listing_analysis": {
+          "confidence": "medium",
+          "summary": "Listing 需要把“为什么需要支撑架”讲清楚，否则容易被看成普通配件。",
+          "strengths": ["使用场景明确。", "价格处于主力区间。", "与 RV 水路配件有搭配销售可能。"],
+          "gaps": ["承重和兼容软管规格需要更明确。", "户外地面稳定性需要图片证明。"],
+          "warnings": ["如果结构太轻，差评会集中在倾倒和断裂。"]
+        },
+        "review_analysis": {
+          "confidence": "medium",
+          "coverage": "heuristic_only",
+          "summary": "评论侧重点预计在稳定性、兼容性和材质耐用度。",
+          "pain_points": ["软管容易拖地或折弯。", "地面不平时支撑不稳。", "塑料件日晒老化。"],
+          "purchase_drivers": ["保护滤芯和接头。", "让露营接水更整洁。", "减少水管弯折。"],
+          "risks": ["尺寸兼容和承重声明必须准确。"]
+        },
+        "next_steps": ["检查竞品差评中的倾倒/断裂频率。", "确认供应商材质和承重测试。", "评估是否能和水压表、过滤器做套装。"]
+      }
+    }
+  }
+}

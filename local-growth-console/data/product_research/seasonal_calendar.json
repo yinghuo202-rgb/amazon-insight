@@ -1,0 +1,126 @@
+{
+  "marketplace": "Amazon US",
+  "current_month": 5,
+  "themes": [
+    {
+      "theme": "rv_winterization",
+      "label": "RV winterization",
+      "related_product_types": ["freeze_protection", "connector", "adapter", "valve"],
+      "related_keywords": ["rv winterization", "blowout", "air compressor adapter", "antifreeze", "water line"],
+      "demand_window_months": [9, 10, 11],
+      "early_layout_months": [5, 6, 7, 8],
+      "observation_months": [4, 12],
+      "risk_notes": ["Demand is concentrated; ranking and inventory need to be ready before September."]
+    },
+    {
+      "theme": "outdoor_faucet_freeze_protection",
+      "label": "Outdoor faucet freeze protection",
+      "related_product_types": ["cover", "freeze_protection"],
+      "related_keywords": ["outdoor faucet cover", "spigot cover", "freeze protection", "winter faucet"],
+      "demand_window_months": [10, 11, 12, 1],
+      "early_layout_months": [7, 8, 9],
+      "observation_months": [6],
+      "risk_notes": ["Low price point can compress margin; validate pack quantity and dimensions."]
+    },
+    {
+      "theme": "pipe_insulation_water_line_freeze_protection",
+      "label": "Pipe insulation and water-line freeze protection",
+      "related_product_types": ["freeze_protection", "cover"],
+      "related_keywords": ["pipe insulation", "water line freeze", "hose bib", "foam cover"],
+      "demand_window_months": [10, 11, 12, 1],
+      "early_layout_months": [7, 8, 9],
+      "observation_months": [6],
+      "risk_notes": ["Bulky packaging can create FBA fee exposure."]
+    },
+    {
+      "theme": "garden_hose_spring_startup",
+      "label": "Garden hose spring startup",
+      "related_product_types": ["hose", "connector", "valve", "irrigation_accessory"],
+      "related_keywords": ["garden hose", "quick connect", "hose repair", "watering", "sprinkler"],
+      "demand_window_months": [3, 4, 5, 6],
+      "early_layout_months": [1, 2],
+      "observation_months": [7, 8],
+      "risk_notes": ["Commodity pressure is high; look for bundled fittings or quality differentiation."]
+    },
+    {
+      "theme": "irrigation_spring_summer_demand",
+      "label": "Irrigation spring and summer demand",
+      "related_product_types": ["irrigation_accessory", "connector", "valve", "filter"],
+      "related_keywords": ["irrigation", "drip", "sprinkler", "water timer", "garden watering"],
+      "demand_window_months": [4, 5, 6, 7],
+      "early_layout_months": [2, 3],
+      "observation_months": [8],
+      "risk_notes": ["Compatibility and thread standards need clear listing copy."]
+    },
+    {
+      "theme": "rv_spring_summer_travel",
+      "label": "RV spring and summer travel",
+      "related_product_types": ["storage_accessory", "filter", "connector", "pressure_regulator", "hose"],
+      "related_keywords": ["rv", "camping", "campground", "fresh water", "hose storage", "water filter"],
+      "demand_window_months": [4, 5, 6, 7, 8],
+      "early_layout_months": [2, 3],
+      "observation_months": [9],
+      "risk_notes": ["Avoid direct duplicates of existing pressure regulator listings."]
+    },
+    {
+      "theme": "trailer_towing_travel_season",
+      "label": "Trailer and towing travel season",
+      "related_product_types": ["wheel_chock", "trailer_accessory", "edge_guard"],
+      "related_keywords": ["trailer", "towing", "wheel chock", "boat trailer", "utility trailer"],
+      "demand_window_months": [4, 5, 6, 7, 8, 9],
+      "early_layout_months": [2, 3],
+      "observation_months": [10],
+      "risk_notes": ["Fitment and load-capacity claims must be conservative."]
+    },
+    {
+      "theme": "garage_organization_winter_indoor_work",
+      "label": "Garage organization and winter indoor work",
+      "related_product_types": ["hook", "bracket", "storage_accessory"],
+      "related_keywords": ["garage hook", "wall hook", "organizer", "storage", "ladder hook"],
+      "demand_window_months": [10, 11, 12, 1, 2],
+      "early_layout_months": [8, 9],
+      "observation_months": [3, 4, 5],
+      "risk_notes": ["Large steel products can be heavy; validate inbound and FBA fees."]
+    },
+    {
+      "theme": "fall_yard_cleanup",
+      "label": "Fall yard cleanup",
+      "related_product_types": ["hose", "connector", "cover", "storage_accessory"],
+      "related_keywords": ["yard cleanup", "hose storage", "leaf", "outdoor storage", "winter prep"],
+      "demand_window_months": [9, 10, 11],
+      "early_layout_months": [7, 8],
+      "observation_months": [6],
+      "risk_notes": ["Tie listing copy to cleanup and storage rather than broad seasonal wording only."]
+    },
+    {
+      "theme": "spring_outdoor_maintenance",
+      "label": "Spring outdoor maintenance",
+      "related_product_types": ["connector", "valve", "hook", "bracket", "hose"],
+      "related_keywords": ["outdoor maintenance", "spring cleanup", "garage", "garden", "hose"],
+      "demand_window_months": [3, 4, 5],
+      "early_layout_months": [1, 2],
+      "observation_months": [6],
+      "risk_notes": ["Broad demand theme; require product-specific validation before purchase."]
+    },
+    {
+      "theme": "snow_winter_maintenance_accessories",
+      "label": "Snow and winter maintenance accessories",
+      "related_product_types": ["winter_tool_accessory", "cover", "freeze_protection"],
+      "related_keywords": ["snow", "ice", "winter maintenance", "scraper", "frost"],
+      "demand_window_months": [11, 12, 1, 2],
+      "early_layout_months": [8, 9, 10],
+      "observation_months": [7],
+      "risk_notes": ["Weather-driven demand varies heavily by region."]
+    },
+    {
+      "theme": "holiday_q4_tool_bundle_season",
+      "label": "Holiday Q4 tool bundle season",
+      "related_product_types": ["hook", "bracket", "connector", "storage_accessory", "grill_accessory"],
+      "related_keywords": ["gift", "bundle", "tool accessory", "garage", "diy"],
+      "demand_window_months": [11, 12],
+      "early_layout_months": [8, 9, 10],
+      "observation_months": [7],
+      "risk_notes": ["Bundle economics need packaging and margin validation."]
+    }
+  ]
+}
