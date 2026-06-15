@@ -1,0 +1,8 @@
+{
+  "provider": "mock",
+  "enabled": false,
+  "apiKey": "",
+  "baseUrl": "https://api.keepa.com",
+  "queueOnly": true,
+  "maxBatchSize": 20
+}

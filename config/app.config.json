@@ -1,0 +1,40 @@
+{
+  "app_name": "Amazon Growth Console",
+  "marketplace": "US",
+  "region": "NA",
+  "sqlite_database_path": "data/amazon_growth_console.sqlite",
+  "raw_report_archive_path": "data/raw_reports/sponsored_products",
+  "cleaned_report_archive_path": "data/cleaned_reports/sponsored_products",
+  "llm_input_archive_path": "data/cleaned_reports/llm_inputs",
+  "llm_output_archive_path": "data/llm_outputs",
+  "api_payload_archive_path": "data/api_payloads",
+  "backup_path": "data/backups",
+  "manual_sync_enabled": true,
+  "scheduled_sync_enabled": false,
+  "sync_frequency": "daily",
+  "default_report_window_days": 30,
+  "retry_count": 3,
+  "retry_delay_seconds": 10,
+  "deepseek": {
+    "base_url": "https://api.deepseek.com",
+    "default_model": "deepseek-v4-flash",
+    "max_tokens": 4000,
+    "temperature": 0.2,
+    "response_format": "json_object"
+  },
+  "logging": {
+    "save_llm_input_full": false,
+    "save_llm_output_full": true,
+    "save_llm_input_hash_only": true,
+    "mask_sensitive_fields": true
+  },
+  "execution": {
+    "low_risk_auto_execution_enabled": false,
+    "require_approval_for_bid_increase": true,
+    "require_approval_for_dayparting_increase": true,
+    "max_keyword_bid_increase_pct": 0.15,
+    "max_keyword_bid_decrease_pct": 0.2,
+    "max_dayparting_increase_pct": 0.15,
+    "max_dayparting_decrease_pct": 0.2
+  }
+}

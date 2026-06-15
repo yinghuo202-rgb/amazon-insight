@@ -1,0 +1,14 @@
+{
+  "provider": "jungle_scout",
+  "enabled": false,
+  "baseUrl": "https://developer.junglescout.com",
+  "marketplace": "us",
+  "keyNameEnv": "JUNGLE_SCOUT_KEY_NAME",
+  "apiKeyEnv": "JUNGLE_SCOUT_API_KEY",
+  "authEnv": "JUNGLE_SCOUT_AUTH",
+  "requestMode": "disabled",
+  "maxBatchSize": 25,
+  "accept": "application/vnd.junglescout.v1+json",
+  "contentType": "application/vnd.api+json",
+  "apiType": "junglescout"
+}

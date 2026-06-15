@@ -1,0 +1,17 @@
+{
+  "provider": "amazon_ads",
+  "enabled": false,
+  "requestMode": "disabled",
+  "region": "NA",
+  "marketplace": "US",
+  "baseUrl": "https://advertising-api.amazon.com",
+  "tokenUrl": "https://api.amazon.com/auth/o2/token",
+  "clientIdEnv": "AMAZON_ADS_CLIENT_ID",
+  "clientSecretEnv": "AMAZON_ADS_CLIENT_SECRET",
+  "refreshTokenEnv": "AMAZON_ADS_REFRESH_TOKEN",
+  "profileIdEnv": "AMAZON_ADS_PROFILE_ID",
+  "defaultReportWindowDays": 14,
+  "reportPollAttempts": 8,
+  "reportPollDelayMs": 5000,
+  "writeActionsEnabled": false
+}

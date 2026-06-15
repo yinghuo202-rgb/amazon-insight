@@ -1,0 +1,17 @@
+.env.local
+api.txt
+config/secrets.local.json
+config/llm.config.local.json
+config/keepa.config.local.json
+config/jungle_scout.config.local.json
+config/amazon_ads.config.local.json
+data/
+input/
+logs/
+*.sqlite
+*.db
+node_modules/
+*.xlsx
+*.xls
+*.csv
+*.tsv
