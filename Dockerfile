@@ -34,7 +34,6 @@ WORKDIR /app
 COPY --from=web-builder /build/.next/standalone ./
 COPY --from=web-builder /build/.next/static ./.next/static
 COPY --from=web-builder /build/public ./public
-COPY --from=web-builder /build/node_modules ./node_modules
 COPY --from=web-builder /build/package.json ./package.json
 COPY --from=web-builder /build/prisma ./prisma
 
