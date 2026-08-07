@@ -1,0 +1,57 @@
+name: ${COMPOSE_PROJECT_NAME:-measureman-commerce}
+
+services:
+  app:
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-latest}"
+    container_name: "${CONTAINER_NAME:-measureman-commerce}"
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      NEXT_PUBLIC_APP_URL: "${PUBLIC_APP_URL:-http://localhost:3000}"
+      DATABASE_URL: "${DATABASE_URL:-file:/data/app/selection.db}"
+      SECRET_KEY: "${SECRET_KEY:-}"
+      AUTH_SESSION_TTL_DAYS: "${AUTH_SESSION_TTL_DAYS:-14}"
+      AUTH_SECURE_COOKIE: "${AUTH_SECURE_COOKIE:-false}"
+      DATABASE_MIGRATE_ON_START: "${DATABASE_MIGRATE_ON_START:-true}"
+      STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
+      STORE_OPS_DATA_ROOT: /data/sources
+      STORE_OPS_RUNTIME_ROOT: /data/runtime
+      STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
+      STORE_OPS_PYTHON: /opt/store-ops-venv/bin/python
+      API_KEY: "${API_KEY:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-disabled}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - "${DATA_PATH:-./data/app}:/data/app"
+      - "${RUNTIME_PATH:-./data/runtime}:/data/runtime"
+      - "${SOURCE_DATA_PATH:-./data/sources}:/data/sources:ro"
+      - "${LOG_PATH:-./logs}:/data/logs"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    security_opt:
+      - no-new-privileges:true
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    container_name: "${WATCHTOWER_CONTAINER_NAME:-measureman-watchtower}"
+    profiles: ["watchtower"]
+    restart: unless-stopped
+    command: ["--label-enable", "--interval", "${WATCHTOWER_INTERVAL:-300}", "--cleanup", "--registry-auth"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "${DOCKER_CONFIG_FILE:-./.docker/config.json}:/config.json:ro"
+    security_opt:
+      - no-new-privileges:true

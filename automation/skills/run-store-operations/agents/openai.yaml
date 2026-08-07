@@ -1,0 +1,4 @@
+interface:
+  display_name: "店铺运营自动化"
+  short_description: "执行店铺表格同步、SKU校验、异常审计、采购与发货单据生成"
+  default_prompt: "Use $run-store-operations to run the local store operations audit and report exceptions."

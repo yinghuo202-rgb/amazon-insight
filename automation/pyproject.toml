@@ -1,0 +1,9 @@
+[project]
+name = "store-operations-automation"
+version = "0.1.0"
+description = "Deterministic local automation for store operation spreadsheets"
+requires-python = ">=3.10"
+dependencies = ["openpyxl>=3.1,<4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

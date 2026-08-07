@@ -1,0 +1,6 @@
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: integrations/amazon-insight/Dockerfile
+    image: "${WEB_IMAGE:-measureman-commerce-web:1.0.0}"

@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model SeedSearch {
+  id                String             @id @default(cuid())
+  keyword           String
+  normalizedKeyword String
+  marketplace       String             @default("us")
+  sourceMode        String             @default("mock")
+  createdAt         DateTime           @default(now())
+  candidateKeywords CandidateKeyword[]
+  candidateProducts CandidateProduct[]
+  analyses          ProductAnalysis[]
+
+  @@index([normalizedKeyword, createdAt])
+}
+
+model CandidateKeyword {
+  id           String     @id @default(cuid())
+  searchId     String
+  search       SeedSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  keyword      String
+  searchVolume Int?
+  trend        String?
+  difficulty   String?
+  relevance    Float?
+  cpc          Float?
+  rawJson      String?
+  createdAt    DateTime   @default(now())
+
+  @@index([searchId])
+}
+
+model CandidateProduct {
+  id             String     @id @default(cuid())
+  searchId       String
+  search         SeedSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  asin           String
+  title          String
+  brand          String?
+  imageUrl       String?
+  price          Float?
+  rating         Float?
+  reviews        Int?
+  category       String?
+  monthlyUnits   Int?
+  monthlyRevenue Float?
+  sourceKeyword  String?
+  relevanceHint  String?
+  rawJson        String?
+  createdAt      DateTime   @default(now())
+
+  @@unique([searchId, asin])
+  @@index([asin])
+  @@index([searchId])
+}
+
+model ProductAnalysis {
+  id                  String               @id @default(cuid())
+  asin                String
+  searchId            String
+  search              SeedSearch           @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  primaryKeyword      String
+  compareAsinsJson    String?
+  lifecycleStage      String
+  lifecycleConfidence String
+  competitionLevel    String
+  opportunityLevel    String
+  summary             String
+  recommendation      String
+  responseJson        String
+  contextJson         String?
+  rawMetricsJson      String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  inspirations        ProductInspiration[]
+
+  @@index([asin])
+  @@index([searchId])
+  @@index([createdAt])
+}
+
+model ProductInspiration {
+  id                       String          @id @default(cuid())
+  asin                     String
+  analysisId               String
+  analysis                 ProductAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  audience                 String?
+  purchaseDriversJson      String
+  valuePropsJson           String
+  painPointsJson           String
+  differentiationIdeasJson String
+  listingAnglesJson        String
+  visualAnglesJson         String
+  generationMetaJson       String
+  manualInputsJson         String?
+  responseJson             String
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  @@index([analysisId])
+  @@index([asin])
+}
+
+model ProductPoolItem {
+  id             String   @id @default(cuid())
+  asin           String   @unique
+  title          String
+  brand          String?
+  imageUrl       String?
+  price          Float?
+  rating         Float?
+  reviews        Int?
+  category       String?
+  monthlyUnits   Int?
+  monthlyRevenue Float?
+  sourceKeyword  String?
+  relevanceHint  String?
+  sourceSearchId String?
+  sourceMode     String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([category])
+  @@index([updatedAt])
+}
+
+model ApiCache {
+  id        String   @id @default(cuid())
+  namespace String
+  key       String
+  value     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([namespace, key])
+  @@index([expiresAt])
+}
+
+model User {
+  id            String              @id @default(cuid())
+  email         String              @unique
+  name          String
+  passwordHash  String
+  role          String              @default("MEMBER")
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  sessions      Session[]
+  memberships   WorkspaceMember[]
+  createdTasks  CollaborationTask[] @relation("TaskCreatedBy")
+  assignedTasks CollaborationTask[] @relation("TaskAssignee")
+  updatedTasks  CollaborationTask[] @relation("TaskUpdatedBy")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Workspace {
+  id        String            @id @default(cuid())
+  name      String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  members   WorkspaceMember[]
+  tasks     CollaborationTask[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        String    @default("MEMBER")
+  joinedAt    DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model CollaborationTask {
+  id          String    @id @default(cuid())
+  workspaceId String
+  sku         String
+  title       String
+  note        String?
+  status      String    @default("OPEN")
+  assigneeId  String?
+  createdById String
+  updatedById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignee    User?     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy   User      @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User      @relation("TaskUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, sku])
+  @@index([assigneeId])
+}

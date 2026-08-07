@@ -1,0 +1,11 @@
+**/.DS_Store
+**/.env
+**/.next
+**/node_modules
+**/outputs
+**/__pycache__
+**/*.pyc
+runtime
+integrations/amazon-insight/dev.db
+integrations/amazon-insight/api.txt
+integrations/amazon-insight/tsconfig.tsbuildinfo
