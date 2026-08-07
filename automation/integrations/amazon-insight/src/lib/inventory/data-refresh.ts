@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { automationRoot } from "@/lib/inventory/document-exports";
+import { runtimePath, sourceDataRoot } from "@/lib/inventory/paths";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 
 export type DataRefreshSource = {
@@ -56,7 +57,7 @@ const reportDefinitions = [
 export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   const root = automationRoot();
   const config = JSON.parse(await readFile(path.join(root, "config", "project.json"), "utf8")) as Record<string, unknown>;
-  const dataRoot = path.resolve(root, String(config.data_root ?? "../"));
+  const dataRoot = sourceDataRoot(String(config.data_root ?? "../"));
   const inventory = (config.inventory_dashboard ?? {}) as Record<string, unknown>;
   const markets = (inventory.markets ?? {}) as Record<string, Record<string, unknown>>;
   const documentSources = (inventory.document_master_sources ?? {}) as Record<string, unknown>;
@@ -90,7 +91,7 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   }));
 
   const reports = await Promise.all(reportDefinitions.map(async ([key, label, relativePath]) => {
-    const info = await stat(path.join(root, relativePath)).catch(() => null);
+    const info = await stat(runtimePath(relativePath.replace(/^runtime\//, ""))).catch(() => null);
     return { key, label, relativePath, exists: Boolean(info), modifiedAt: info?.mtime.toISOString() ?? null, size: info?.size ?? 0 };
   }));
   const { runs, exceptions } = operationHistory();

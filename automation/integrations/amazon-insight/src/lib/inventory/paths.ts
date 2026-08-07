@@ -16,3 +16,21 @@ export function automationRoot() {
     ? path.resolve(configured)
     : path.resolve(integrationProjectRoot(), "..", "..");
 }
+
+export function runtimeRoot() {
+  const configured = process.env.STORE_OPS_RUNTIME_ROOT?.trim();
+  return configured
+    ? path.resolve(configured)
+    : path.join(automationRoot(), "runtime");
+}
+
+export function runtimePath(...segments: string[]) {
+  return path.join(runtimeRoot(), ...segments);
+}
+
+export function sourceDataRoot(configuredFallback = "../") {
+  const configured = process.env.STORE_OPS_DATA_ROOT?.trim();
+  return configured
+    ? path.resolve(configured)
+    : path.resolve(automationRoot(), configuredFallback);
+}

@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
+import { runtimePath } from "@/lib/inventory/paths";
 
 export type ShipmentPlanMarket = "US" | "CA";
 export type ShipmentBatchStatus = "DRAFT" | "EXPORTED" | "ARCHIVED";
@@ -92,7 +92,7 @@ ON shipment_batch_items_v2(market,sku);
 export function shipmentPlanDbPath() {
   return process.env.STORE_OPS_STATE_DB?.trim()
     ? path.resolve(process.env.STORE_OPS_STATE_DB)
-    : path.join(automationRoot(), "runtime", "db", "operations.sqlite3");
+    : runtimePath("db", "operations.sqlite3");
 }
 
 function openDatabase() {

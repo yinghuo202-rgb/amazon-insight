@@ -9,6 +9,7 @@
 ```text
 ghcr.io/<owner>/<repository>:latest
 ghcr.io/<owner>/<repository>:<完整提交 SHA>
+ghcr.io/<owner>/<repository>:v1.0.0
 ```
 
 工作流使用 GitHub 内置 `GITHUB_TOKEN`，不会把 GHCR 密码写入仓库。
@@ -25,9 +26,9 @@ cp .env.example .env
 
 ```env
 IMAGE_REPOSITORY=ghcr.io/你的用户名/你的仓库名
-IMAGE_TAG=latest
+IMAGE_TAG=v1.0.0
 SECRET_KEY=一段足够长的随机字符串
-APP_PORT=3000
+APP_PORT=3001
 ```
 
 私有 GHCR 仓库只在 NAS 登录，令牌保存在 NAS 的 Docker 配置，不提交 GitHub：
@@ -40,7 +41,7 @@ docker compose ps
 docker compose logs -f app
 ```
 
-停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3000/login` 创建管理员账户。
+停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3001/login` 创建管理员账户。
 
 ## 持久化与健康检查
 
@@ -69,7 +70,7 @@ docker compose logs -f app
 
 ## Watchtower 自动更新
 
-Compose 只给 `app` 加 Watchtower 标签。完成 NAS GHCR 登录并生成 `.docker/config.json` 后运行：
+生产环境默认固定版本，不建议直接跟随 `latest`。只有确认新版本数据库兼容并接受自动升级风险时，才启用 Watchtower。Compose 只给 `app` 加 Watchtower 标签；完成 NAS GHCR 登录并生成 `.docker/config.json` 后运行：
 
 ```sh
 docker compose --profile watchtower up -d watchtower

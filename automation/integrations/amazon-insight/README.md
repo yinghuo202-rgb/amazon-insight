@@ -197,6 +197,8 @@ npm run db:push
 npm run db:studio
 ```
 
+`npm run test` 包含依赖 `automation/runtime` 运营快照的本地集成测试；GitHub Actions 使用 `npm run test:ci` 运行不含业务数据的单元测试集合，避免把生产报表提交进仓库。
+
 ## 当前限制
 
 - SP-API 仍然只是占位 adapter，不参与主链路

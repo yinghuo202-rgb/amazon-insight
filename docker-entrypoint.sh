@@ -11,7 +11,7 @@ if [ "$APP_ENV" = "production" ] && [ -z "${SECRET_KEY:-}" ]; then
 fi
 
 if [ "${DATABASE_MIGRATE_ON_START:-true}" = "true" ]; then
-  ./node_modules/.bin/prisma db push --skip-generate
+  /opt/prisma-cli/node_modules/.bin/prisma db push --schema /app/prisma/schema.prisma --skip-generate
 fi
 
 exec "$@"

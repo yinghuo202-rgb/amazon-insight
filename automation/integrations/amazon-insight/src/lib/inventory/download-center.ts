@@ -4,7 +4,7 @@ import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
+import { runtimePath } from "@/lib/inventory/paths";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 
 export type DownloadCategory = "documents" | "creative" | "purchase" | "advertising";
@@ -36,10 +36,10 @@ ON download_events_v1(category,export_id,filename,downloaded_at DESC);
 `;
 
 const roots: Record<DownloadCategory, string> = {
-  documents: path.join(automationRoot(), "runtime", "output", "exports"),
-  creative: path.join(automationRoot(), "runtime", "output", "creative-handoffs"),
-  purchase: path.join(automationRoot(), "runtime", "output", "purchase-plans"),
-  advertising: path.join(automationRoot(), "runtime", "output", "advertising-plans"),
+  documents: runtimePath("output", "exports"),
+  creative: runtimePath("output", "creative-handoffs"),
+  purchase: runtimePath("output", "purchase-plans"),
+  advertising: runtimePath("output", "advertising-plans"),
 };
 
 export async function listDownloadHistory(limit = 2000): Promise<DownloadHistoryItem[]> {

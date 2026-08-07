@@ -52,9 +52,9 @@ cp .env.example .env
 
 ```env
 IMAGE_REPOSITORY=ghcr.io/yinghuo202-rgb/amazon-insight
-IMAGE_TAG=latest
+IMAGE_TAG=v1.0.0
 SECRET_KEY=生成一段足够长的随机字符串
-APP_PORT=3000
+APP_PORT=3001
 ```
 
 私有 GHCR 镜像：
@@ -72,7 +72,7 @@ docker compose ps
 docker compose logs -f app
 ```
 
-首次打开 `http://NAS_IP:3000/login` 创建管理员账户。
+首次打开 `http://NAS_IP:3001/login` 创建管理员账户。
 
 ## 数据迁移与备份
 

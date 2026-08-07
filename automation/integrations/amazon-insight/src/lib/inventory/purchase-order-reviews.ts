@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
+import { runtimePath } from "@/lib/inventory/paths";
 
 export type PurchaseOrderReviewAction = "cancel" | "restore";
 
@@ -43,7 +43,7 @@ ON purchase_order_review_events(sku,po_number,po_date,id DESC);
 export function purchaseOrderReviewDbPath() {
   return process.env.STORE_OPS_STATE_DB?.trim()
     ? path.resolve(process.env.STORE_OPS_STATE_DB)
-    : path.join(automationRoot(), "runtime", "db", "operations.sqlite3");
+    : runtimePath("db", "operations.sqlite3");
 }
 
 function openDatabase() {
