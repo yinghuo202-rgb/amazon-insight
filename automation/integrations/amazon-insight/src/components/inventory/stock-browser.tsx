@@ -204,7 +204,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
   }
 
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <OpsKpi label="筛选 SKU" value={integer(filtered.length)} detail={`全部 ${integer(calculated.length)} 个 SKU`} />
       <OpsKpi label="海外可用库存" value={integer(networkInventory)} detail={`综合覆盖 ${days(weightedCover)}`} />
       <OpsKpi label="共享国内库存池" value={integer(localInventory)} detail={`共享未完工 ${integer(pendingOrders)} 件 · 美加共用`} />

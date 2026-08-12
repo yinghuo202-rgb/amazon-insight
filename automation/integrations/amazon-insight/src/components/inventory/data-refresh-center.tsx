@@ -27,7 +27,7 @@ export function DataRefreshCenter({ initialStatus }: { initialStatus: DataRefres
   const latestRun = status.runs[0] ?? null;
   const topException = [...status.exceptions].sort((left, right) => right.count - left.count)[0];
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <OpsKpi label="已识别数据源" value={`${status.summary.sourceCount} 项`} detail={`${status.summary.missingCount} 项必需源缺失`} tone={status.summary.missingCount ? "danger" : "positive"} />
       <OpsKpi label="标准数据集" value={`${status.summary.reportCount} / ${status.reports.length}`} detail="库存、采购、内容与单据" tone={status.summary.reportCount === status.reports.length ? "positive" : "warning"} />
       <OpsKpi label="开放异常" value={`${status.summary.openExceptionCount} 项`} detail="SKU 映射与源数据异常" tone={status.summary.openExceptionCount ? "warning" : "positive"} />

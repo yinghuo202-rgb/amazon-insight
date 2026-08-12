@@ -72,7 +72,7 @@ export function ContentWorkbench({ data }: { data: ContentListViewModel }) {
   const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="优先拉量" value={integer(data.summary.scaleCount)} detail={`${data.summary.latestMonth} · 有需求、正毛利且库存可承接`} tone="positive" />
       <OpsKpi label="验证后拉量" value={integer(data.summary.watchCount)} detail="先修转化与搜索词，再逐步增加预算" tone="warning" />
       <OpsKpi label="可承接库存" value={integer(data.summary.growthInventory)} detail="US + CA 可用库存，仅统计拉量候选" />

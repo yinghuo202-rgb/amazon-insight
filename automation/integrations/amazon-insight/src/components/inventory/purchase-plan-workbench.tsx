@@ -131,7 +131,7 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
 
   return <div className="space-y-5">
     <div className="flex flex-wrap justify-end gap-2"><Link href="/inventory/purchasing/orders" className="inline-flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:border-amber-600"><Truck className="h-3.5 w-3.5" />进入催货订单</Link><Link href="/inventory/purchasing/backtest" className="inline-flex items-center gap-2 border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-emerald-700 hover:text-emerald-700"><ChartSpline className="h-3.5 w-3.5" />查看采购算法回测</Link></div>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="本轮计划 / 实际" value={`${integer(data.summary.manualPlanQuantity)} / ${integer(data.summary.actualOrderQuantity)} 件`} detail={`差异 ${data.summary.varianceQuantity >= 0 ? "+" : ""}${integer(data.summary.varianceQuantity)} · ${data.summary.discrepancySkuCount} SKU 待复核`} tone={data.summary.discrepancySkuCount ? "warning" : "positive"} />
       <OpsKpi label="下期确认草稿" value={`${integer(draftUnits)} 件`} detail={`${draftSkuCount} SKU · 系统建议 ${integer(data.summary.nextCycleQuantity)} 件 · ${saved ? "已保存" : "未保存"}`} tone={saved ? "positive" : "warning"} />
       <OpsKpi label="库存风险队列" value={`${data.summary.criticalSkuCount + blockedPurchaseRows.length} SKU`} detail={`${data.summary.criticalSkuCount} 紧急 · ${blockedPurchaseRows.length} 清货禁采`} tone={data.summary.criticalSkuCount || blockedPurchaseRows.length ? "danger" : "positive"} />

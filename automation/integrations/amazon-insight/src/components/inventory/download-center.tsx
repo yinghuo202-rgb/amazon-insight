@@ -21,7 +21,7 @@ export function DownloadCenter({ items }: { items: DownloadHistoryItem[] }) {
   const latest = items[0]?.createdAt ?? null;
 
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <OpsKpi label="历史文件" value={`${items.length} 份`} detail="本地生成文件，可重复下载" />
       <OpsKpi label="发货与报运" value={`${items.filter((item) => item.category === "documents").length} 份`} detail="严格模板导出" tone="positive" />
       <OpsKpi label="采购、广告与美工" value={`${items.filter((item) => item.category !== "documents").length} 份`} detail={`占用 ${formatBytes(totalSize)}`} />

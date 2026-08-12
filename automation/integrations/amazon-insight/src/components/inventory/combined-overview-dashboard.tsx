@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Boxes, CircleAlert, ClockAlert, PackageCheck, Store, TrendingDown, TrendingUp, Warehouse } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Boxes, CircleAlert, ClockAlert, Megaphone, PackageCheck, Store, TrendingDown, TrendingUp, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -23,9 +23,26 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
     .map((item) => ({ ...item, gap: Number(item.ACOS) - item.目标ACOS }))
     .sort((left, right) => right.gap - left.gap)[0];
   const prioritySku = dashboard.priorityRows[0];
+  const staleMarketCount = dashboard.snapshots.filter((snapshot) => snapshot.isStale).length;
 
   return <div className="space-y-5">
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1220] text-white shadow-[0_18px_50px_rgba(15,23,42,.16)]">
+      <div className="grid gap-5 px-5 py-5 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-blue-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300">今日经营简报</span><span className={`inline-flex items-center gap-1.5 text-[10px] ${staleMarketCount ? "text-amber-300" : "text-emerald-300"}`}><span className={`h-1.5 w-1.5 rounded-full ${staleMarketCount ? "bg-amber-400" : "bg-emerald-400"}`} />{staleMarketCount ? `${staleMarketCount} 个站点库存快照需更新` : "双站库存快照可用"}</span></div>
+          <h2 className="mt-3 text-lg font-semibold tracking-[-0.02em] sm:text-xl">先处理库存缺口与采购交期，再承接增长机会</h2>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-400 sm:text-sm sm:leading-6">系统已把今天最值得关注的异常收敛为三个执行入口，点击即可进入对应工作台，无需从图表中重复查找。</p>
+        </div>
+        <Link href="/inventory/data" className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3.5 py-2.5 text-xs font-medium text-slate-200 transition hover:border-blue-400/40 hover:bg-blue-500/10 hover:text-white">检查数据新鲜度 <ArrowRight className="h-3.5 w-3.5" /></Link>
+      </div>
+      <div className="grid gap-px border-t border-white/[0.08] bg-white/[0.08] sm:grid-cols-3">
+        <PriorityAction href="/inventory/replenishment" icon={<CircleAlert className="h-4 w-4" />} label="库存优先级" value={`${integer(kpis.criticalSkuCount)} 个紧急 SKU`} detail={`建议发货 ${integer(kpis.suggestedShipmentQty)} 件`} tone="rose" />
+        <PriorityAction href="/inventory/purchasing/orders" icon={<ClockAlert className="h-4 w-4" />} label="采购交期" value={`${integer(dashboard.overdueOrders.length)} 条超期任务`} detail="进入订单队列逐项复核" tone="amber" />
+        <PriorityAction href="/inventory/advertising" icon={<Megaphone className="h-4 w-4" />} label="广告动作" value={`${integer(kpis.advertisingAdjustments)} 项待处理`} detail="按库存约束控量或扩量" tone="blue" />
+      </div>
+    </section>
+
+    <section className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <OpsKpi label="双站海外库存" value={integer(kpis.networkInventory)} detail="FBA、AWD 与调拨中库存" icon={<Warehouse className="h-4 w-4" />} />
       <OpsKpi label="最新月总销量" value={integer(kpis.latestSalesUnits)} detail={salesChange === null ? "缺少环比基期" : `环比 ${salesChange >= 0 ? "+" : ""}${salesChange.toFixed(1)}%`} tone={salesChange !== null && salesChange < 0 ? "warning" : "positive"} icon={salesChange !== null && salesChange < 0 ? <TrendingDown className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />} />
       <OpsKpi label="紧急库存 SKU" value={integer(kpis.criticalSkuCount)} detail={`建议发货 ${integer(kpis.suggestedShipmentQty)} 件`} tone={kpis.criticalSkuCount ? "danger" : "positive"} icon={<CircleAlert className="h-4 w-4" />} />
@@ -35,7 +52,7 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
 
     <OpsCard className="overflow-hidden">
       <OpsCardHeader title="双站销量脉冲" description={latestSales ? `${latestSales.month} 双站销量 ${integer(latestSales.总销量)} 件${salesChange === null ? "" : `，环比${salesChange >= 0 ? "增长" : "下降"} ${Math.abs(salesChange).toFixed(1)}%`}。` : "当前没有可用的双站月度销量。"} action={<div className="flex items-center gap-2"><OpsBadge tone="blue">24M</OpsBadge><span className="font-mono text-[11px] text-slate-400">更新 {formatGeneratedAt(dashboard.generatedAt)}</span></div>} />
-      <div className="h-[430px] px-2 pb-4 pt-5 sm:px-5" role="img" aria-label="美国站、加拿大站与双站总销量趋势">
+      <div className="h-[320px] px-2 pb-4 pt-5 sm:h-[430px] sm:px-5" role="img" aria-label="美国站、加拿大站与双站总销量趋势">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={dashboard.salesTrend} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
             <defs><linearGradient id="totalSalesGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.26} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0.015} /></linearGradient></defs>
@@ -117,5 +134,9 @@ function MarketPanel({ market }: { market: CombinedOverviewViewModel["markets"][
 
 function MarketMetric({ label, value, detail, danger = false }: { label: string; value: string; detail: string; danger?: boolean }) { return <div className="bg-white px-4 py-4"><p className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-400">{label}</p><p className={`mt-2 text-lg font-semibold tracking-[-0.02em] ${danger ? "text-rose-700" : "text-slate-950"}`}>{value}</p><p className="mt-1 text-[11px] text-slate-500">{detail}</p></div>; }
 function SmallMetric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) { return <div><p className="text-[10px] text-slate-400">{label}</p><p className={`mt-0.5 text-xs ${strong ? "font-semibold text-blue-700" : "font-medium text-slate-700"}`}>{value}</p></div>; }
+function PriorityAction({ href, icon, label, value, detail, tone }: { href: string; icon: React.ReactNode; label: string; value: string; detail: string; tone: "rose" | "amber" | "blue" }) {
+  const tones = { rose: "bg-rose-500/15 text-rose-300", amber: "bg-amber-500/15 text-amber-300", blue: "bg-blue-500/15 text-blue-300" };
+  return <Link href={href} className="group flex items-center gap-3 bg-[#0b1220] px-5 py-4 transition hover:bg-slate-900"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${tones[tone]}`}>{icon}</span><div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">{label}</p><p className="mt-1 truncate text-sm font-semibold text-white">{value}</p><p className="mt-0.5 truncate text-[10px] text-slate-400">{detail}</p></div><ArrowUpRight className="ml-auto h-4 w-4 shrink-0 text-slate-600 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-white" /></Link>;
+}
 function formatGeneratedAt(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date); }
 const tooltipStyle = { border: "1px solid #e2e8f0", borderRadius: 12, boxShadow: "0 12px 30px rgba(15,23,42,.1)", fontSize: 12 };

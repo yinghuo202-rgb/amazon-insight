@@ -128,7 +128,7 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
   }
 
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="当前筛选" value={`${filteredRows.length} SKU`} detail={selectedSeries ? `${selectedSeries.name} · ${selectedSeries.kind === "variant" ? "父子系列" : "待归系列"}` : `${view.series.length} 个系列分组`} />
       <OpsKpi label="含税成本覆盖" value={`${costCoverage}/${filteredRows.length}`} detail={`${filteredRows.length ? Math.round(costCoverage / filteredRows.length * 100) : 0}% 已有人民币含税成本`} tone={costCoverage === filteredRows.length ? "positive" : "warning"} />
       <OpsKpi label="平均含税成本" value={averageCost === null ? "—" : `¥${money(averageCost)}`} detail="按当前筛选中已有成本的 SKU 等权计算" />

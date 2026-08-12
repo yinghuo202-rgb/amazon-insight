@@ -84,7 +84,7 @@ async function listCategory(category: DownloadCategory) {
 
 function openEventDatabase() {
   const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
   database.exec(eventSchema);
   return database;
 }

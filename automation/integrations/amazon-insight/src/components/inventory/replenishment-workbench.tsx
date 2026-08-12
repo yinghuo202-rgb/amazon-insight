@@ -248,7 +248,7 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
   }
 
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
       <OpsKpi label="国内可发候选" value={`${replenishmentRows.length} SKU`} detail={`可发 ${integer(candidateUnits)} 件`} tone="warning" />
       <OpsKpi label="季节计划发货" value={`${seasonalShipmentRows.length} SKU`} detail={`${integer(seasonalShipmentUnits)} 件 · 含清货与补货`} tone="warning" />
       <OpsKpi label="当前批次" value={selectedBatch ? selectedBatch.batchNumber : "未建立"} detail={`${activeBatchRows.length} SKU · ${integer(plannedUnits)} 件`} tone="positive" />

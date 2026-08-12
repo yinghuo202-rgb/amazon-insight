@@ -115,7 +115,7 @@ export function MasterDataEditor({ view }: { view: EditorView }) {
   }
 
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="当前数据集" value={mode === "inventory" ? `${market} 库存` : "产品主数据"} detail={`${currentRows.length} 个符合筛选的 SKU`} />
       <OpsKpi label="在线版本" value={`${onlineCount} 条`} detail="保存在本地运营数据库中的人工值" tone={onlineCount ? "positive" : "default"} />
       <OpsKpi label="未保存修改" value={`${dirtyCount} 条`} detail="保存后同步到所有业务页面" tone={dirtyCount ? "warning" : "positive"} />

@@ -50,7 +50,7 @@ function openDatabase() {
   const databasePath = purchaseOrderReviewDbPath();
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
   database.exec(schema);
   return database;
 }

@@ -70,7 +70,7 @@ export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
       <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
       <p>广告活动数据截止 <strong>{data.latestMonth ?? "未识别"}</strong>{advertisingStale ? `，距库存快照相差 ${data.ageDaysAtSnapshot ?? "未知"} 天。当前竞价和预算建议仅作历史参考，请导入最新广告活动报表后再执行。` : "，可用于本期广告调整。"}</p>
     </div>
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="本期广告结果" value={fullCurrency(latest?.spend ?? 0)} detail={`${integer(latest?.orders ?? 0)} 个广告订单 · 花费`} />
       <OpsKpi label="效率 / 目标" value={`${latest?.acos?.toFixed(1) ?? "—"}%`} detail={`目标 ACOS ${targetAcos}%`} tone={(latest?.acos ?? 0) > targetAcos ? "warning" : "positive"} />
       <OpsKpi label="待控量队列" value={`${adjustments.length} 项`} detail={`${stockRisk.length} 项受库存约束`} tone="danger" />
