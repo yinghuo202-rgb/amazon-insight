@@ -43,6 +43,37 @@ docker compose logs -f app
 
 停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3001/login` 创建管理员账户。
 
+## Cloudflare Tunnel（可选）
+
+项目内置了一个独立的 `cloudflare` Compose profile。它不会开放 NAS 管理端口，也不会默认启动；启用后，`cloudflared` 会加入和 `app` 相同的 Docker 网络，Cloudflare Tunnel 的 Published application 应指向 `http://app:3000`。
+
+先在 Cloudflare 控制台创建或轮换 Tunnel Token，再在 NAS 保存到未纳入 Git 的文件：
+
+```sh
+cd /docker/measureman-commerce
+mkdir -p secrets
+vi secrets/cloudflare-token.txt
+chmod 600 secrets/cloudflare-token.txt
+```
+
+在 Cloudflare Tunnel 路由中设置：
+
+```text
+Hostname: ops.example.com
+Service:  http://app:3000
+```
+
+启动应用和 Tunnel：
+
+```sh
+docker compose pull app cloudflared
+docker compose --profile cloudflare up -d app cloudflared
+docker compose ps
+docker compose logs --tail=100 cloudflared
+```
+
+停止 Tunnel：`docker compose --profile cloudflare stop cloudflared`。不要把 Token 写入 `.env`、Compose、GitHub 或聊天记录；只保存在 NAS 的 `secrets/cloudflare-token.txt`。
+
 ## 持久化与健康检查
 
 - `data/app`：SQLite 数据库，包括登录、用户、协作和选品数据。

@@ -55,3 +55,18 @@ services:
       - "${DOCKER_CONFIG_FILE:-./.docker/config.json}:/config.json:ro"
     security_opt:
       - no-new-privileges:true
+
+  cloudflared:
+    image: "${CLOUDFLARE_IMAGE:-cloudflare/cloudflared:latest}"
+    container_name: "${CLOUDFLARE_CONTAINER_NAME:-measureman-cloudflared}"
+    profiles: ["cloudflare"]
+    restart: unless-stopped
+    init: true
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel-token"]
+    volumes:
+      - "${CLOUDFLARE_TUNNEL_TOKEN_FILE:-./secrets/cloudflare-token.txt}:/run/secrets/tunnel-token:ro"
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true

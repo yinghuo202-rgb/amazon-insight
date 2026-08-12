@@ -11,6 +11,7 @@
 - `.github/workflows/docker-image.yml`，推送 `main` 或手动触发后构建并发布 `linux/amd64`、`linux/arm64`。
 - `update.sh`，更新前备份 SQLite、按 `latest` 或提交 SHA 更新应用、清理无引用镜像。
 - 可选 Watchtower profile，只更新带指定标签的 `app` 容器。
+- 可选 Cloudflare Tunnel profile，从 NAS 本地 Token 文件启动 `cloudflared`，与 `app` 共用 Compose 网络。
 - `GET /health` 健康检查接口。
 - 登录、管理员初始化、多用户协作、SKU 订单明细和 NAS 持久化已包含在前端代码中。
 
@@ -55,6 +56,8 @@ IMAGE_REPOSITORY=ghcr.io/yinghuo202-rgb/amazon-insight
 IMAGE_TAG=v1.0.0
 SECRET_KEY=生成一段足够长的随机字符串
 APP_PORT=3001
+PUBLIC_APP_URL=https://ops.example.com
+AUTH_SECURE_COOKIE=true
 ```
 
 私有 GHCR 镜像：
@@ -73,6 +76,36 @@ docker compose logs -f app
 ```
 
 首次打开 `http://NAS_IP:3001/login` 创建管理员账户。
+
+## Cloudflare Tunnel 远程访问
+
+Cloudflare Tunnel 不需要开放 NAS 管理端口或路由器入站端口。先在 Cloudflare 控制台创建 Tunnel 并配置 Published application：
+
+```text
+Hostname: ops.example.com
+Service URL: http://app:3000
+```
+
+不要使用 `http://localhost:3001`：`cloudflared` 运行在独立容器中，`localhost` 指向的是它自己。Token 不写入 `.env` 或仓库，保存为 NAS 上的 `secrets/cloudflare-token.txt`：
+
+```sh
+cd /docker/amazon-insight
+mkdir -p secrets
+vi secrets/cloudflare-token.txt
+chmod 600 secrets/cloudflare-token.txt
+docker compose pull app cloudflared
+docker compose --profile cloudflare up -d app cloudflared
+docker compose ps
+docker compose logs --tail=100 cloudflared
+```
+
+停止远程入口：
+
+```sh
+docker compose --profile cloudflare stop cloudflared
+```
+
+如果 Token 曾经出现在聊天、工单或终端截图中，应在 Cloudflare 控制台轮换后再启动；任何拿到旧 Token 的人都可能运行该 Tunnel。
 
 ## 数据迁移与备份
 
