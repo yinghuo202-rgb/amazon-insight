@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsKpi } from "@/components/inventory/ops-ui";
+import { InventoryStockVisual } from "@/components/inventory/inventory-stock-visual";
 import type { PurchasePlanData, PurchasePlanRow } from "@/lib/inventory/contracts";
 import type { PurchasePlanCycleStatus } from "@/lib/inventory/purchase-plan-store";
 import { days, integer } from "@/lib/inventory/presentation";
@@ -137,6 +138,15 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
       <OpsKpi label="库存风险队列" value={`${data.summary.criticalSkuCount + blockedPurchaseRows.length} SKU`} detail={`${data.summary.criticalSkuCount} 紧急 · ${blockedPurchaseRows.length} 清货禁采`} tone={data.summary.criticalSkuCount || blockedPurchaseRows.length ? "danger" : "positive"} />
       <OpsKpi label="季节修正影响" value={`${urgentPurchaseRows.length} SKU 加量`} detail={`增加 ${integer(seasonalUpliftQuantity)} 件 · 拦截 ${integer(blockedBaseQuantity)} 件`} tone="warning" />
     </div>
+
+    <InventoryStockVisual
+      title="采购决策库存视图"
+      description="把美加海外库存、共享国内库存、未完工订单与窗口需求放在同一尺度中，对比采购草稿是否补在真正的库存缺口上。"
+      mode="combined"
+      actionLabel="采购草稿"
+      referenceLabel="窗口需求"
+      rows={data.rows.map((row) => ({ sku: row.sku, usOverseas: row.usNetworkInventory, caOverseas: row.caNetworkInventory, domestic: row.localInventory, pending: row.pendingOrderQty, action: drafts[row.sku]?.quantity ?? 0, reference: row.projectedDemand }))}
+    />
 
     <OpsCard className="border-blue-200 bg-blue-50/40">
       <div className="grid gap-4 p-5 lg:grid-cols-[1fr_auto] lg:items-center">

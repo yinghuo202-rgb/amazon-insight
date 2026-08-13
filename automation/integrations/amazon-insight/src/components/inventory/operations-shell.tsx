@@ -16,7 +16,6 @@ import {
   PencilLine,
   ShoppingCart,
   Store,
-  SunMedium,
   Users,
   Warehouse,
   X,
@@ -41,7 +40,6 @@ const navigation: Array<{ label: string; items: NavigationItem[] }> = [
     label: "库存与供应",
     items: [
       { href: "/inventory/stock", label: "库存视图", icon: Warehouse },
-      { href: "/inventory/stock/seasonal-clearance", label: "季节库存分析", icon: SunMedium, combined: true },
       { href: "/inventory/purchasing", label: "采购计划", icon: ShoppingCart, combined: true },
       { href: "/inventory/replenishment", label: "发货计划", icon: Boxes },
     ],
@@ -72,7 +70,8 @@ const navigation: Array<{ label: string; items: NavigationItem[] }> = [
 const allNavigationItems = navigation.flatMap((group) => group.items);
 
 function isNavigationActive(item: NavigationItem, pathname: string) {
-  if (item.href === "/inventory" || item.href === "/inventory/stock") return pathname === item.href;
+  if (item.href === "/inventory") return pathname === item.href;
+  if (item.href === "/inventory/stock") return pathname === item.href || pathname.startsWith(`${item.href}/`);
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
@@ -83,7 +82,7 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
   const [selectionOpen, setSelectionOpen] = useState(false);
   const market = searchParams.get("market")?.toUpperCase() === "CA" ? "CA" : "US";
   const currentItem = allNavigationItems.find((item) => isNavigationActive(item, pathname));
-  const combinedOverview = currentItem?.combined ?? false;
+  const combinedOverview = pathname.startsWith("/inventory/stock/seasonal-clearance") || (currentItem?.combined ?? false);
 
   function navigationHref(item: NavigationItem) {
     if (item.combined || item.href === "/inventory") return item.href;

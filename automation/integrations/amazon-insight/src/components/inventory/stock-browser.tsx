@@ -2,7 +2,7 @@
 
 import { ArrowDown, ArrowUp, ArrowUpDown, FileSpreadsheet, Plus, Search, ShoppingCart, SlidersHorizontal } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -35,8 +35,11 @@ type SortDirection = "asc" | "desc";
 type StockSource = "all" | "fba" | "awd" | "domestic" | "pending";
 type SeasonFilter = "all" | SeasonalityBand | "upcoming";
 type PurchaseFilter = "all" | "recommended" | "none";
+type SalesFilter = "all" | "selling" | "zero" | "growing" | "declining";
+type CoverFilter = "all" | "under30" | "30to60" | "60to120" | "over120" | "unknown";
 
-const pageSize = 40;
+const initialVisibleCount = 60;
+const loadMoreCount = 60;
 const riskLabels: Record<InventoryRisk, string> = { critical: "紧急", watch: "关注", healthy: "健康", excess: "过量", data: "数据待补" };
 const riskTones: Record<InventoryRisk, "rose" | "amber" | "emerald" | "slate"> = { critical: "rose", watch: "amber", healthy: "emerald", excess: "slate", data: "amber" };
 const riskRank: Record<InventoryRisk, number> = { critical: 0, watch: 1, data: 2, healthy: 3, excess: 4 };
@@ -73,9 +76,12 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
   const [stockSource, setStockSource] = useState<StockSource>("all");
   const [season, setSeason] = useState<SeasonFilter>("all");
   const [purchaseFilter, setPurchaseFilter] = useState<PurchaseFilter>("all");
+  const [salesFilter, setSalesFilter] = useState<SalesFilter>("all");
+  const [coverFilter, setCoverFilter] = useState<CoverFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("risk");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
-  const [page, setPage] = useState(1);
+  const [visibleCount, setVisibleCount] = useState(initialVisibleCount);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const [planSkus, setPlanSkus] = useState<Set<string>>(new Set());
   const [planBusySku, setPlanBusySku] = useState("");
   const [purchaseBusy, setPurchaseBusy] = useState<"filtered" | "automatic" | "">("");
@@ -98,6 +104,15 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
       if (season !== "all" && (season === "upcoming" ? !row.upcomingPeak : row.seasonality.band !== season)) return false;
       if (purchaseFilter === "recommended" && row.suggestedPurchaseQty <= 0) return false;
       if (purchaseFilter === "none" && row.suggestedPurchaseQty > 0) return false;
+      if (salesFilter === "selling" && row.latestMonthlySales <= 0) return false;
+      if (salesFilter === "zero" && row.latestMonthlySales > 0) return false;
+      if (salesFilter === "growing" && (row.trendPercent ?? 0) <= 10) return false;
+      if (salesFilter === "declining" && (row.trendPercent ?? 0) >= -10) return false;
+      if (coverFilter === "under30" && (row.daysCoverNetwork === null || row.daysCoverNetwork >= 30)) return false;
+      if (coverFilter === "30to60" && (row.daysCoverNetwork === null || row.daysCoverNetwork < 30 || row.daysCoverNetwork >= 60)) return false;
+      if (coverFilter === "60to120" && (row.daysCoverNetwork === null || row.daysCoverNetwork < 60 || row.daysCoverNetwork >= 120)) return false;
+      if (coverFilter === "over120" && (row.daysCoverNetwork === null || row.daysCoverNetwork < 120)) return false;
+      if (coverFilter === "unknown" && row.daysCoverNetwork !== null) return false;
       if (stockSource === "fba" && row.fbaSellable <= 0) return false;
       if (stockSource === "awd" && row.awdAvailable + row.awdOutboundToFba <= 0) return false;
       if (stockSource === "domestic" && row.localInventory <= 0) return false;
@@ -117,11 +132,10 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
       if (sortKey === "seasonality") comparison = (left.seasonality.currentFactor ?? -1) - (right.seasonality.currentFactor ?? -1);
       return comparison * direction || left.sku.localeCompare(right.sku);
     });
-  }, [calculated, prefix, purchaseFilter, query, risk, season, sortDirection, sortKey, stockSource]);
+  }, [calculated, coverFilter, prefix, purchaseFilter, query, risk, salesFilter, season, sortDirection, sortKey, stockSource]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = visible.length < filtered.length;
   const chartRows = [...filtered].sort((a, b) => b.supplyTotal - a.supplyTotal).slice(0, 10).map((row) => ({
     sku: row.sku,
     FBA: row.fbaSellable,
@@ -151,14 +165,26 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
   const filteredPurchaseUnits = filteredPurchaseRows.reduce((sum, row) => sum + row.suggestedPurchaseQty, 0);
   const automaticPurchaseRows = purchasePlan.rows.filter((row) => row.suggestedPurchaseQty > 0);
 
-  function changeFilter(update: () => void) { update(); setPage(1); }
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !hasMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleCount((current) => Math.min(current + loadMoreCount, filtered.length));
+      }
+    }, { rootMargin: "500px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [filtered.length, hasMore]);
+
+  function changeFilter(update: () => void) { update(); setVisibleCount(initialVisibleCount); }
   function changeSort(next: SortKey) {
     if (sortKey === next) setSortDirection((current) => current === "asc" ? "desc" : "asc");
     else { setSortKey(next); setSortDirection(next === "sku" || next === "risk" || next === "cover" ? "asc" : "desc"); }
-    setPage(1);
+    setVisibleCount(initialVisibleCount);
   }
   function resetFilters() {
-    setQuery(""); setRisk("all"); setPrefix("all"); setStockSource("all"); setSeason("all"); setPurchaseFilter("all"); setSortKey("risk"); setSortDirection("asc"); setPage(1);
+    setQuery(""); setRisk("all"); setPrefix("all"); setStockSource("all"); setSeason("all"); setPurchaseFilter("all"); setSalesFilter("all"); setCoverFilter("all"); setSortKey("risk"); setSortDirection("asc"); setVisibleCount(initialVisibleCount);
   }
 
   async function generatePurchaseTable(rows: Array<{ sku: string; suggestedPurchaseQty: number }>, mode: "merge" | "replace", source: "filtered" | "automatic") {
@@ -231,13 +257,15 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
 
     <OpsCard>
       <OpsCardHeader title="筛选与排序" description={`当前命中 ${integer(filtered.length)}/${integer(calculated.length)} 个 SKU，其中 ${critical} 个紧急、${filteredPurchaseRows.length} 个存在采购建议。`} action={<SlidersHorizontal className="h-4 w-4 text-slate-400" />} />
-      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-7">
-        <label className="relative lg:col-span-2"><span className="sr-only">搜索 SKU 或产品</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => changeFilter(() => setQuery(event.target.value))} placeholder="搜索 SKU 或产品名称" className="w-full border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" /></label>
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-9">
+        <label className="relative 2xl:col-span-2"><span className="sr-only">搜索 SKU 或产品</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => changeFilter(() => setQuery(event.target.value))} placeholder="搜索 SKU 或产品名称" className="w-full border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" /></label>
         <FilterSelect label="库存状态" value={risk} onChange={(value) => changeFilter(() => setRisk(value as typeof risk))} options={[['all','全部状态'],['critical','紧急'],['watch','关注'],['healthy','健康'],['excess','库存过量'],['data','数据待补']]} />
         <FilterSelect label="SKU 系列" value={prefix} onChange={(value) => changeFilter(() => setPrefix(value))} options={[["all","全部系列"], ...prefixes.map((item) => [item,item] as [string,string])]} />
         <FilterSelect label="库存来源" value={stockSource} onChange={(value) => changeFilter(() => setStockSource(value as StockSource))} options={[['all','全部来源'],['fba','有 FBA 库存'],['awd','有 AWD 库存'],['domestic','有共享国内现货'],['pending','有共享未完工订单']]} />
         <FilterSelect label="季节位置" value={season} onChange={(value) => changeFilter(() => setSeason(value as SeasonFilter))} options={[['all','全部季节'],['peak','旺季中'],['upcoming','旺季将至'],['steady','相对平稳'],['low','淡季'],['insufficient','样本不足']]} />
         <FilterSelect label="采购建议" value={purchaseFilter} onChange={(value) => changeFilter(() => setPurchaseFilter(value as PurchaseFilter))} options={[['all','全部采购状态'],['recommended','仅看建议采购'],['none','无需采购']]} />
+        <FilterSelect label="销量状态" value={salesFilter} onChange={(value) => changeFilter(() => setSalesFilter(value as SalesFilter))} options={[['all','全部销量状态'],['selling','当前有销量'],['zero','当前零销量'],['growing','销量增长 >10%'],['declining','销量下降 >10%']]} />
+        <FilterSelect label="海外覆盖" value={coverFilter} onChange={(value) => changeFilter(() => setCoverFilter(value as CoverFilter))} options={[['all','全部覆盖区间'],['under30','少于 30 天'],['30to60','30–59 天'],['60to120','60–119 天'],['over120','120 天及以上'],['unknown','覆盖待计算']]} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500"><span>已找到 {integer(filtered.length)} 个 SKU</span><button type="button" onClick={resetFilters} className="font-medium text-emerald-700 hover:underline">清除全部筛选</button></div>
     </OpsCard>
@@ -248,7 +276,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
     </div>
 
     <OpsCard>
-      <OpsCardHeader title="SKU 库存清单" description={`${latestSalesMonth} 当前筛选销量 ${integer(monthlySales)} 件、海外库存 ${integer(networkInventory)} 件，综合覆盖 ${days(weightedCover)}。`} action={<span className="text-xs text-slate-500">第 {safePage} / {pageCount} 页</span>} />
+      <OpsCardHeader title="SKU 库存清单" description={`${latestSalesMonth} 当前筛选销量 ${integer(monthlySales)} 件、海外库存 ${integer(networkInventory)} 件，综合覆盖 ${days(weightedCover)}。`} action={<span className="text-xs text-slate-500">已显示 {integer(visible.length)} / {integer(filtered.length)}</span>} />
       <div className="overflow-x-auto"><table className="w-full min-w-[1740px] text-left text-xs"><thead className="bg-slate-50 text-[10px] uppercase tracking-[0.08em] text-slate-500"><tr>
         <SortableHeader label="SKU / 产品" column="sku" current={sortKey} direction={sortDirection} onSort={changeSort} />
         <SortableHeader label={`${latestSalesMonth} 月销量`} column="monthlySales" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
@@ -263,7 +291,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
         <SortableHeader label="建议采购" column="purchase" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
       </tr></thead><tbody className="divide-y divide-slate-100">{visible.map((row) => <tr key={row.sku} className="hover:bg-slate-50"><td className="px-4 py-3"><Link href={marketHref(`/inventory/sku/${encodeURIComponent(row.sku)}`, data.market)} className="font-mono font-semibold text-emerald-700 hover:underline">{row.sku}</Link><p className="mt-1 max-w-72 truncate text-slate-500">{row.productName}</p></td><td className="px-3 py-3 text-right text-sm font-semibold text-slate-900">{integer(row.latestMonthlySales)}</td><td className="px-3 py-3 text-right">{integer(row.averageThreeMonths)}</td><td className="px-3 py-3"><SalesSparkline history={row.history.slice(-12)} trend={row.trendPercent} /></td><td className="px-3 py-3"><OpsBadge tone={seasonTone(row.seasonality.band, row.upcomingPeak)}>{seasonLabel(row.seasonality.band, row.upcomingPeak)}</OpsBadge><p className="mt-1 text-[10px] text-slate-400">旺季 {row.seasonality.peakMonths.map((month) => `${month}月`).join("/") || "—"}</p></td><td className="px-3 py-3 text-right">{integer(row.fbaSellable)}</td><td className="px-3 py-3 text-right">{integer(row.awdAvailable + row.awdOutboundToFba)}</td><td className="px-3 py-3 text-right font-medium text-blue-700">{integer(row.localInventory)}</td><td className="px-3 py-3 text-right text-amber-700">{integer(row.pendingOrderQty)}</td><td className="px-3 py-3 text-right font-semibold">{integer(row.supplyTotal)}</td><td className="px-3 py-3 text-right">{days(row.daysCoverNetwork)}</td><td className="px-3 py-3"><OpsBadge tone={riskTones[row.riskLevel]}>{riskLabels[row.riskLevel]}</OpsBadge></td><td className="px-4 py-3 text-right font-semibold text-emerald-700">{integer(row.suggestedShipmentQty)}</td><td className="px-4 py-3 text-right">{row.wholeCartonReadyQty > 0 ? <button type="button" disabled={planSkus.has(row.sku) || Boolean(planBusySku)} onClick={() => void addToShipmentPlan(row)} className="inline-flex items-center gap-1 text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"><Plus className="h-3.5 w-3.5" />{planSkus.has(row.sku) ? "已在计划" : planBusySku === row.sku ? "加入中…" : `加入 ${integer(row.wholeCartonReadyQty)} 件`}</button> : <span className="text-slate-400">无整箱国内现货</span>}</td><td className="px-4 py-3 text-right font-semibold text-blue-700">{row.suggestedPurchaseQty > 0 ? integer(row.suggestedPurchaseQty) : <span className="font-normal text-slate-400">—</span>}</td></tr>)}</tbody></table></div>
       {!visible.length ? <div className="p-10 text-center text-sm text-slate-500">没有符合当前筛选条件的 SKU。</div> : null}
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3"><p className="text-xs text-slate-500">每页 {pageSize} 个，共 {integer(filtered.length)} 个</p><div className="flex gap-2"><button type="button" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="border border-slate-200 bg-white px-3 py-1.5 text-xs disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} className="border border-slate-200 bg-white px-3 py-1.5 text-xs disabled:opacity-40">下一页</button></div></div>
+      {visible.length ? <div ref={loadMoreRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500" aria-live="polite">{hasMore ? `继续下滑自动加载，已显示 ${integer(visible.length)} / ${integer(filtered.length)}` : `已显示全部 ${integer(filtered.length)} 个 SKU`}</div> : null}
     </OpsCard>
   </div>;
 }

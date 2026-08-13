@@ -6,6 +6,8 @@ import { loadJsonReport } from "@/lib/inventory/json-report-cache";
 import { applyInventoryOverrides, applyProductMasterOverrides, applyPurchasePlanOverrides, listOperationalDataOverrides } from "@/lib/inventory/operational-data-store";
 import { listLatestPurchaseOrderReviews, purchaseOrderReviewKey, type PurchaseOrderReview } from "@/lib/inventory/purchase-order-reviews";
 import { applyProductCostOverrides, listProductCostOverrides } from "@/lib/inventory/product-cost-store";
+import { applyResearchCandidateOverrides } from "@/lib/inventory/new-product-research";
+import { listResearchCandidateOverrides } from "@/lib/inventory/new-product-research-store";
 
 export type OperationsMarket = "US" | "CA";
 
@@ -117,7 +119,8 @@ export function newProductResearchDataPath() {
 }
 
 export async function loadNewProductResearchData() {
-  return loadJsonReport(newProductResearchDataPath(), (input) => newProductResearchSchema.parse(input));
+  const data = await loadJsonReport(newProductResearchDataPath(), (input) => newProductResearchSchema.parse(input));
+  return applyResearchCandidateOverrides(data, listResearchCandidateOverrides());
 }
 
 export function contentWorkflowDataPath() {
