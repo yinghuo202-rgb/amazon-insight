@@ -9,6 +9,7 @@ import {
   DatabaseZap,
   Download,
   LogOut,
+  Lightbulb,
   Megaphone,
   Menu,
   Paintbrush,
@@ -51,6 +52,7 @@ const navigation: Array<{ label: string; items: NavigationItem[] }> = [
       { href: "/inventory/costs", label: "产品成本", icon: Calculator, combined: true },
       { href: "/inventory/advertising", label: "广告管理", icon: Megaphone },
       { href: "/inventory/content", label: "产品待办", icon: Paintbrush, combined: true },
+      { href: "/inventory/research", label: "新品调研", icon: Lightbulb, combined: true },
     ],
   },
   {
@@ -172,7 +174,7 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
       </aside>
 
       <div className="min-w-0 xl:pl-[264px]">
-        <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/95 shadow-[0_1px_0_rgba(15,23,42,.02)] backdrop-blur-xl xl:hidden">
+        <header className="safe-top sticky top-0 z-50 border-b border-slate-200/80 bg-white/95 shadow-[0_1px_0_rgba(15,23,42,.02)] backdrop-blur-xl xl:hidden">
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <Link href="/inventory" onClick={() => setMobileNavigationOpen(false)} className="flex min-w-0 items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-600 text-[10px] font-black text-white">MM</span><span className="truncate text-sm font-semibold tracking-tight text-slate-950">Measureman Commerce</span></Link>
             <div className="flex shrink-0 items-center gap-2">
@@ -189,8 +191,8 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
 
           {mobileNavigationOpen ? (
             <>
-              <button type="button" aria-label="关闭导航遮罩" onClick={() => setMobileNavigationOpen(false)} className="fixed inset-0 top-[93px] z-40 bg-slate-950/25 backdrop-blur-[2px]" />
-              <div id="mobile-operations-navigation" className="absolute inset-x-0 top-full z-50 max-h-[calc(100dvh-93px)] overflow-y-auto border-t border-slate-200 bg-white px-4 pb-5 pt-4 shadow-2xl shadow-slate-950/15">
+              <button type="button" aria-label="关闭导航遮罩" onClick={() => setMobileNavigationOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 backdrop-blur-[2px]" />
+              <div id="mobile-operations-navigation" className="absolute inset-x-0 top-full z-50 max-h-[calc(100dvh-6rem)] overflow-y-auto border-t border-slate-200 bg-white px-4 pb-5 pt-4 shadow-2xl shadow-slate-950/15">
                 <nav aria-label="运营模块" className="space-y-5">
                   {navigation.map((group) => (
                     <div key={group.label}>

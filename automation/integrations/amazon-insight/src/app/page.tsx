@@ -9,17 +9,17 @@ export default function HomePage() {
   return (
     <div className="flex min-h-screen flex-col pb-16">
       <TopNav />
-      <main className="flex-1 py-8 sm:py-10">
-        <PageContainer className="space-y-8">
+      <main className="flex-1 py-5 sm:py-10">
+        <PageContainer className="space-y-5 sm:space-y-8">
           <HeroPanel
             eyebrow="Measureman · Selection Workspace"
             title="Amazon US 选品研究平台"
             description="从广义关键词出发，筛选候选商品，沉淀选品池，并输出可复核的市场判断与简要报告。"
           />
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px]">
+          <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px]">
             <HomeSearchForm />
-            <section className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-6">
+            <section className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-4 sm:p-6">
               <div className="space-y-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Workspace</p>
                 <div className="space-y-3">
@@ -46,7 +46,7 @@ export default function HomePage() {
             </section>
           </div>
 
-          <section className="grid gap-5 lg:grid-cols-3">
+          <section className="grid gap-4 sm:gap-5 lg:grid-cols-3">
             {[
               {
                 title: "关键词发现",
@@ -64,7 +64,7 @@ export default function HomePage() {
                 icon: <Database className="h-4 w-4 text-[var(--accent)]" />,
               },
             ].map((item) => (
-              <div key={item.title} className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-6">
+              <div key={item.title} className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-4 sm:p-6">
                 <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
                   {item.icon}
                   {item.title}

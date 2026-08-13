@@ -20,7 +20,7 @@ function statusLabel(status: DataSourceStatus["status"]) {
 export function TopNav() {
   return (
     <header className="safe-top print-hidden sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:py-3">
         <Link href="/" className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-black tracking-[0.08em] text-white shadow-md shadow-slate-300">
             MM
@@ -33,21 +33,18 @@ export function TopNav() {
           </div>
         </Link>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between lg:w-auto lg:justify-end">
-          <nav className="flex flex-wrap items-center gap-1 text-sm text-slate-600">
-            <Link href="/" className="rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
+        <div className="min-w-0 sm:flex sm:flex-wrap sm:items-center sm:justify-between lg:w-auto lg:justify-end">
+          <nav className="-mx-1 flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-0.5 text-sm text-slate-600 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <Link href="/" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
               首页
             </Link>
-            <Link href="/pool" className="rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
+            <Link href="/pool" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
               选品池
             </Link>
-            <Link href="/inventory" className="rounded-lg bg-blue-50 px-3 py-2 font-medium text-blue-700 transition hover:bg-blue-100">
+            <Link href="/inventory" className="shrink-0 rounded-lg bg-blue-50 px-3 py-2 font-medium text-blue-700 transition hover:bg-blue-100">
               运营驾驶舱
             </Link>
-            <Link
-              href="/settings"
-              className="rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950"
-            >
+            <Link href="/settings" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
               设置
             </Link>
           </nav>
@@ -79,16 +76,16 @@ export function HeroPanel({
   aside?: ReactNode;
 }) {
   return (
-    <section className="surface-card ambient-ring relative overflow-hidden rounded-2xl border border-[var(--border)] px-6 py-8 sm:px-9 sm:py-10">
+    <section className="surface-card ambient-ring relative overflow-hidden rounded-2xl border border-[var(--border)] px-5 py-6 sm:px-9 sm:py-10">
       <div className="pointer-events-none absolute -left-20 top-0 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(37,99,235,.14),transparent_65%)]" />
       <div className="pointer-events-none absolute right-0 top-0 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(15,118,110,.08),transparent_60%)]" />
       <div className="relative grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-5">
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">{eyebrow}</p>
-          <h1 className="max-w-4xl text-balance text-4xl font-semibold tracking-[-0.045em] text-slate-950 sm:text-5xl">
+          <h1 className="max-w-4xl text-balance text-[2rem] font-semibold leading-tight tracking-[-0.045em] text-slate-950 sm:text-5xl">
             {title}
           </h1>
-          <p className="max-w-2xl text-base leading-8 text-[var(--foreground-soft)] sm:text-lg">{description}</p>
+          <p className="max-w-2xl text-sm leading-7 text-[var(--foreground-soft)] sm:text-lg sm:leading-8">{description}</p>
         </div>
         {aside ? <div className="flex items-end lg:justify-end">{aside}</div> : null}
       </div>
@@ -114,7 +111,7 @@ export function SectionCard({
   return (
     <section
       className={cn(
-        "surface-card ambient-ring rounded-2xl border border-[var(--border)] p-6 sm:p-7",
+        "surface-card ambient-ring rounded-2xl border border-[var(--border)] p-4 sm:p-7",
         className,
       )}
     >

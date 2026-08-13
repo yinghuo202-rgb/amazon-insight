@@ -398,6 +398,25 @@ export const productCatalogSchema = z.object({
   })),
 });
 
+export const newProductResearchSchema = z.object({
+  schemaVersion: z.literal(1),
+  generatedAt: z.string(),
+  source: z.object({ path: z.string(), modifiedAt: z.string(), sha256: z.string(), sheet: z.string() }),
+  summary: z.object({
+    candidateCount: z.number().int().nonnegative(),
+    viableCandidateCount: z.number().int().nonnegative(),
+    averageGrossMargin: z.number(),
+    latestOrderMonth: z.string().nullable(),
+    orderedSkuCount: z.number().int().nonnegative(),
+    plannedUnits: z.number().int().nonnegative(),
+    monthCount: z.number().int().nonnegative(),
+  }),
+  candidates: z.array(z.object({
+    sku: z.string(), name: z.string(), amazonPrice: z.number().nullable(), firstMile: z.number().nullable(), storageFee: z.number().nullable(), commission: z.number().nullable(), orderFee: z.number().nullable(), importDutyRate: z.number().nullable(), purchaseCostRmb: z.number().nullable(), grossProfit: z.number().nullable(), grossMargin: z.number().nullable(), competitorUrl: z.string(),
+  })),
+  monthlyOrders: z.array(z.object({ month: z.string(), sku: z.string(), name: z.string(), orderQuantity: z.number().nullable(), costRmb: z.number().nullable(), status: z.string(), usStatus: z.string(), caStatus: z.string() })),
+});
+
 const contentSectionSchema = z.object({
   section: z.string(),
   channel: z.enum(["main_image", "a_plus"]),
@@ -454,5 +473,6 @@ export type AdvertisingAction = AdvertisingCampaign["action"];
 export type VariantCatalogData = z.infer<typeof variantCatalogSchema>;
 export type ProductCatalogData = z.infer<typeof productCatalogSchema>;
 export type ProductCatalogItem = ProductCatalogData["items"][number];
+export type NewProductResearchData = z.infer<typeof newProductResearchSchema>;
 export type ContentWorkflowData = z.infer<typeof contentWorkflowSchema>;
 export type ContentWorkflowTask = ContentWorkflowData["tasks"][number];

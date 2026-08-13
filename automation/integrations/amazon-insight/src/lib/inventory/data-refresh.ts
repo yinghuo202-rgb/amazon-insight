@@ -52,6 +52,7 @@ const reportDefinitions = [
   ["documents", "订单与单据主数据", "runtime/reports/document_master.json"],
   ["products", "产品与图片目录", "runtime/reports/product_catalog.json"],
   ["content", "Listing 与美工任务", "runtime/reports/content_workflow.json"],
+  ["research", "新品调研", "runtime/reports/new_product_research.json"],
 ] as const;
 
 export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
@@ -70,6 +71,7 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   for (const source of configuredSources) add(source.path, String(source.name ?? source.path), Boolean(source.canonical));
   add(inventory.master_workbook, "库存规划主表");
   add(inventory.product_details_workbook, "产品明细表");
+  add(inventory.new_product_research_workbook, "新品调研表", false);
   add(inventory.sales_workbook, "月度销量主表");
   add(inventory.listing_workbook, "Listing 主表");
   add(inventory.creative_brief_folder, "历史美工对接目录", false);

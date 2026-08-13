@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { contentWorkflowSchema, inventoryDashboardSchema, productCatalogSchema, profitabilityDataSchema, purchasePlanSchema, variantCatalogSchema, type InventoryDashboardData } from "@/lib/inventory/contracts";
+import { contentWorkflowSchema, inventoryDashboardSchema, newProductResearchSchema, productCatalogSchema, profitabilityDataSchema, purchasePlanSchema, variantCatalogSchema, type InventoryDashboardData } from "@/lib/inventory/contracts";
 import { runtimePath } from "@/lib/inventory/paths";
 import { loadJsonReport } from "@/lib/inventory/json-report-cache";
 import { applyInventoryOverrides, applyProductMasterOverrides, applyPurchasePlanOverrides, listOperationalDataOverrides } from "@/lib/inventory/operational-data-store";
@@ -108,6 +108,16 @@ export async function loadBaseProductCatalogData() {
 export async function loadProductCatalogData() {
   const data = applyProductMasterOverrides(await loadBaseProductCatalogData(), listOperationalDataOverrides().products);
   return applyProductCostOverrides(data, listProductCostOverrides());
+}
+
+export function newProductResearchDataPath() {
+  return process.env.STORE_OPS_NEW_PRODUCT_RESEARCH?.trim()
+    ? path.resolve(process.env.STORE_OPS_NEW_PRODUCT_RESEARCH)
+    : runtimePath("reports", "new_product_research.json");
+}
+
+export async function loadNewProductResearchData() {
+  return loadJsonReport(newProductResearchDataPath(), (input) => newProductResearchSchema.parse(input));
 }
 
 export function contentWorkflowDataPath() {

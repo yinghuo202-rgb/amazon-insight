@@ -182,10 +182,13 @@ video {
 }
 
 .ops-root .overflow-x-auto {
+  position: relative;
   overscroll-behavior-inline: contain;
+  scroll-padding-inline: 1rem;
   scrollbar-color: #94a3b8 #f1f5f9;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -239,6 +242,10 @@ video {
 .ops-root table {
   border-collapse: separate;
   border-spacing: 0;
+}
+
+.ops-root .overflow-x-auto > table {
+  margin-bottom: 1px;
 }
 
 .ops-root th {
@@ -338,6 +345,43 @@ video {
 
   .ops-kpi-grid > :last-child:nth-child(odd) {
     grid-column: span 2 / span 2;
+  }
+
+  .ops-root main {
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-top: 1rem;
+  }
+
+  .ops-root .overflow-x-auto {
+    margin-inline: -0.25rem;
+    padding-inline: 0.25rem;
+    scrollbar-gutter: auto;
+  }
+
+  .ops-root .overflow-x-auto::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+    right: 0.25rem;
+    top: 0;
+    bottom: 0.35rem;
+    width: 1.5rem;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.94));
+  }
+
+  .ops-root .overflow-x-auto:focus-within::after {
+    display: none;
+  }
+
+  .ops-root .ops-card {
+    border-radius: 1rem;
+  }
+
+  .ops-root input,
+  .ops-root select,
+  .ops-root textarea {
+    font-size: 16px;
   }
 
   .ops-card:hover {
