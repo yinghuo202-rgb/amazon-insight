@@ -21,7 +21,7 @@ export function TopNav() {
   return (
     <header className="safe-top print-hidden sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-2.5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:py-3">
-        <Link href="/" className="flex min-w-0 items-center gap-3">
+        <Link href="/selection" className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-xs font-black tracking-[0.08em] text-white shadow-md shadow-slate-300">
             MM
           </span>
@@ -35,7 +35,7 @@ export function TopNav() {
 
         <div className="min-w-0 sm:flex sm:flex-wrap sm:items-center sm:justify-between lg:w-auto lg:justify-end">
           <nav className="-mx-1 flex max-w-full flex-nowrap items-center gap-1 overflow-x-auto px-1 pb-0.5 text-sm text-slate-600 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <Link href="/" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
+            <Link href="/selection" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">
               首页
             </Link>
             <Link href="/pool" className="shrink-0 rounded-lg px-3 py-2 transition hover:bg-slate-100 hover:text-slate-950">

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const publicApi = ["/api/auth/login", "/api/auth/bootstrap", "/api/auth/status", "/api/auth/logout"];
+const publicApi = ["/api/auth/login", "/api/auth/bootstrap", "/api/auth/create-member", "/api/auth/status", "/api/auth/logout"];
 
 export default function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
