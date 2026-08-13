@@ -59,7 +59,7 @@ COPY automation/config /opt/store-ops/config
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN /opt/store-ops-venv/bin/pip install --no-cache-dir /opt/store-ops \
-  && mkdir -p /data/app /data/runtime/db /data/logs /data/sources \
+  && mkdir -p /data/app /data/runtime/db /data/runtime/reports /data/runtime/output /data/imported-reports /data/uploads /data/snapshots /data/logs /data/sources \
   && chmod 0755 /usr/local/bin/docker-entrypoint.sh \
   && chown -R node:node /app /data /opt/store-ops /opt/prisma-cli
 

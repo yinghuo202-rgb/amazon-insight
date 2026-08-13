@@ -1,0 +1,74 @@
+name: measureman-commerce
+
+services:
+  app:
+    image: "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+    container_name: "${CONTAINER_NAME}"
+    user: "0:0"
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      NEXT_PUBLIC_APP_URL: "${PUBLIC_APP_URL}"
+      DATABASE_URL: "${DATABASE_URL}"
+      SECRET_KEY: "${SECRET_KEY}"
+      AUTH_SESSION_TTL_DAYS: "${AUTH_SESSION_TTL_DAYS}"
+      AUTH_SECURE_COOKIE: "${AUTH_SECURE_COOKIE}"
+      DATABASE_MIGRATE_ON_START: "${DATABASE_MIGRATE_ON_START}"
+      STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
+      STORE_OPS_DATA_ROOT: /data/sources
+      STORE_OPS_RUNTIME_ROOT: /data/runtime
+      STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
+      STORE_OPS_PYTHON: /opt/store-ops-venv/bin/python
+      STORE_OPS_UPLOAD_ROOT: /data/uploads
+      STORE_OPS_SNAPSHOT_ROOT: /data/snapshots
+      API_KEY: "${API_KEY}"
+      LLM_PROVIDER: "${LLM_PROVIDER}"
+      LLM_API_KEY: "${LLM_API_KEY}"
+    ports:
+      - "${APP_PORT}:3000"
+    volumes:
+      # Both SQLite databases use Docker-managed volumes. This avoids NAS ACL
+      # restrictions that otherwise allow bootstrap but reject later writes.
+      - app_data:/data/app
+      - "${RUNTIME_PATH}/reports:/data/imported-reports:ro"
+      - runtime_reports:/data/runtime/reports
+      - operations_data:/data/runtime/db
+      - runtime_output:/data/runtime/output
+      - upload_data:/data/uploads
+      - data_snapshots:/data/snapshots
+      - "${SOURCE_DATA_PATH}:/data/sources:ro"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    security_opt:
+      - no-new-privileges:true
+
+  cloudflared:
+    image: "${CLOUDFLARE_IMAGE}"
+    container_name: "${CLOUDFLARE_CONTAINER_NAME}"
+    restart: unless-stopped
+    init: true
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  app_data:
+  operations_data:
+  runtime_reports:
+  runtime_output:
+  upload_data:
+  data_snapshots:
