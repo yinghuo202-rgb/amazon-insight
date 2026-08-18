@@ -1,23 +1,28 @@
 import type { NewProductResearchData } from "@/lib/inventory/contracts";
 
 export type ResearchCandidate = NewProductResearchData["candidates"][number];
-export type ResearchCandidateInput = Omit<ResearchCandidate, "grossProfit" | "grossMargin">;
+export type ResearchCandidateInput = Omit<ResearchCandidate, "grossProfit" | "grossMargin" | "totalCostUsd" | "untaxedPriceUsd"> & { untaxedPriceUsd?: number | null };
 
 export const RESEARCH_RMB_PER_USD = 7.2;
+export const RESEARCH_UNTAXED_FACTOR = 0.885;
+
+export function calculateResearchCostBreakdown(input: ResearchCandidateInput) {
+  const purchaseCostUsd = input.purchaseCostRmb === null ? null : input.purchaseCostRmb / RESEARCH_RMB_PER_USD;
+  const untaxedPriceUsd = input.untaxedPriceUsd === undefined || input.untaxedPriceUsd === null
+    ? purchaseCostUsd === null ? null : purchaseCostUsd * RESEARCH_UNTAXED_FACTOR
+    : input.untaxedPriceUsd;
+  const costs = [input.firstMile, input.storageFee, input.commission, input.orderFee, input.importDutyRate, purchaseCostUsd, untaxedPriceUsd];
+  if (input.amazonPrice === null || input.amazonPrice <= 0 || costs.some((value) => value === null)) {
+    return { purchaseCostUsd, untaxedPriceUsd, totalCostUsd: null, grossProfit: null, grossMargin: null };
+  }
+  const totalCostUsd = costs.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  const grossProfit = input.amazonPrice - totalCostUsd;
+  return { purchaseCostUsd, untaxedPriceUsd, totalCostUsd, grossProfit, grossMargin: grossProfit / input.amazonPrice };
+}
 
 export function calculateResearchCandidate(input: ResearchCandidateInput): ResearchCandidate {
-  const costs = [input.firstMile, input.storageFee, input.commission, input.orderFee, input.importDutyRate, input.purchaseCostRmb];
-  if (input.amazonPrice === null || input.amazonPrice <= 0 || costs.some((value) => value === null)) {
-    return { ...input, grossProfit: null, grossMargin: null };
-  }
-  const grossProfit = input.amazonPrice
-    - (input.firstMile ?? 0)
-    - (input.storageFee ?? 0)
-    - (input.commission ?? 0)
-    - (input.orderFee ?? 0)
-    - (input.importDutyRate ?? 0)
-    - (input.purchaseCostRmb ?? 0) / RESEARCH_RMB_PER_USD;
-  return { ...input, grossProfit, grossMargin: grossProfit / input.amazonPrice };
+  const breakdown = calculateResearchCostBreakdown(input);
+  return { ...input, untaxedPriceUsd: breakdown.untaxedPriceUsd, totalCostUsd: breakdown.totalCostUsd, grossProfit: breakdown.grossProfit, grossMargin: breakdown.grossMargin };
 }
 
 export function applyResearchCandidateOverrides(data: NewProductResearchData, overrides: ResearchCandidate[]) {

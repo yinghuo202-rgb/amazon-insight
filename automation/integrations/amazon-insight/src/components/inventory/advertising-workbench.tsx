@@ -7,6 +7,7 @@ import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, 
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
 import { AdvertisingPlanPanel } from "@/components/inventory/advertising-plan-panel";
+import { useInfiniteRows } from "@/components/inventory/use-infinite-rows";
 import { calculateAdvertisingDecision } from "@/lib/inventory/advertising-calculator";
 import { withTargetAcos, type AdvertisingViewModel } from "@/lib/inventory/client-view-models";
 import type { AdvertisingParameters } from "@/lib/inventory/contracts";
@@ -23,13 +24,11 @@ const adjustmentActions = ["PAUSE_STOCK_RISK", "NO_ORDER_REVIEW", "REDUCE_BID_OR
 const growthActions = ["INCREASE_BUDGET", "INCREASE_BID"];
 
 export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
-  const pageSize = 40;
   const fullCurrency = (value: number) => formatCurrency(value, data.currency);
   const [targetAcos, setTargetAcos] = useState(data.parameters.targetAcosPercent);
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("priority");
-  const [page, setPage] = useState(1);
   const parameters: AdvertisingParameters = useMemo(
     () => withTargetAcos(data.parameters, targetAcos),
     [data.parameters, targetAcos],
@@ -52,9 +51,7 @@ export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
     .filter((row) => (actionFilter === "ALL" || row.action === actionFilter)
       && (!normalized || row.campaign.toLowerCase().includes(normalized) || row.sku?.toLowerCase().includes(normalized)))
     .sort((a, b) => sortCampaigns(a, b, sortBy));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const { visible, hasMore, sentinelRef } = useInfiniteRows(filtered, 40);
   const latest = data.monthlySeries.at(-1);
   const adjustments = campaigns.filter((row) => adjustmentActions.includes(row.action));
   const bidGrowth = campaigns.filter((row) => row.action === "INCREASE_BID");
@@ -138,11 +135,11 @@ export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
         <span className="text-xs text-slate-500">{campaigns.length} 项 · 决策、保存与导出请在上方工作台完成</span>
       </summary>
       <div className="flex flex-col gap-3 border-y border-slate-100 p-4 xl:flex-row xl:items-center xl:justify-between">
-        <div><p className="text-xs text-slate-500">显示 {visible.length} / {filtered.length} 项 · 第 {safePage}/{pageCount} 页</p></div>
+        <div><p className="text-xs text-slate-500">显示 {visible.length} / {filtered.length} 项 · {hasMore ? "继续下滑加载" : "已显示全部"}</p></div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索活动或 SKU" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 sm:w-64" /></label>
-          <select value={actionFilter} onChange={(event) => { setActionFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm outline-none"><option value="ALL">全部动作</option>{Object.entries(advertisingActionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-          <select value={sortBy} onChange={(event) => { setSortBy(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm outline-none"><option value="priority">建议优先</option><option value="spend">花费最高</option><option value="orders">订单最多</option><option value="impressions">曝光最多</option></select>
+          <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索活动或 SKU" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 sm:w-64" /></label>
+          <select value={actionFilter} onChange={(event) => setActionFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm outline-none"><option value="ALL">全部动作</option>{Object.entries(advertisingActionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+          <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm outline-none"><option value="priority">建议优先</option><option value="spend">花费最高</option><option value="orders">订单最多</option><option value="impressions">曝光最多</option></select>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -161,7 +158,7 @@ export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
           </tr>)}</tbody>
         </table>
       </div>
-      <div className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3"><button type="button" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs disabled:opacity-40">下一页</button></div>
+      <div ref={sentinelRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500">{hasMore ? "继续下滑加载" : "已显示全部"}</div>
     </details>
   </div>;
 }

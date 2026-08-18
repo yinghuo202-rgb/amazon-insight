@@ -54,6 +54,7 @@ export const inventoryRowSchema = z.object({
   awdOutboundToFba: z.number().int().nonnegative(),
   awdInbound: z.number().int().nonnegative(),
   awdFbaReconciliation: z.number().int().nonnegative(),
+  inTransitInventory: z.number().int().nonnegative().default(0),
   dailySales: z.number().nonnegative(),
   salesByMonth: z.array(z.object({ month: z.string(), units: z.number().nonnegative() })),
   salesHistoryByMonth: z.array(z.object({ month: z.string(), units: z.number().nonnegative() })).default([]),
@@ -188,6 +189,7 @@ export const inventoryDashboardSchema = z.object({
     awdAvailable: z.number().int().nonnegative(),
     awdOutboundToFba: z.number().int().nonnegative(),
     awdInboundNotCounted: z.number().int().nonnegative(),
+    inTransitInventory: z.number().int().nonnegative().default(0),
     localInventory: z.number().int().nonnegative().default(0),
     pendingOrderQty: z.number().int().nonnegative().default(0),
     overdueOrderCount: z.number().int().nonnegative().default(0),
@@ -280,6 +282,8 @@ export const purchasePlanSchema = z.object({
     sheet: z.string().optional(),
     column: z.string().optional(),
     header: z.string().optional(),
+    available: z.boolean().optional(),
+    reason: z.string().optional(),
     documentCount: z.number().int().nonnegative().optional(),
   })),
   rows: z.array(z.object({
@@ -412,7 +416,7 @@ export const newProductResearchSchema = z.object({
     monthCount: z.number().int().nonnegative(),
   }),
   candidates: z.array(z.object({
-    sku: z.string(), name: z.string(), amazonPrice: z.number().nullable(), firstMile: z.number().nullable(), storageFee: z.number().nullable(), commission: z.number().nullable(), orderFee: z.number().nullable(), importDutyRate: z.number().nullable(), purchaseCostRmb: z.number().nullable(), grossProfit: z.number().nullable(), grossMargin: z.number().nullable(), competitorUrl: z.string(),
+    sku: z.string(), name: z.string(), amazonPrice: z.number().nullable(), firstMile: z.number().nullable(), storageFee: z.number().nullable(), commission: z.number().nullable(), orderFee: z.number().nullable(), importDutyRate: z.number().nullable(), purchaseCostRmb: z.number().nullable(), untaxedPriceUsd: z.number().nullable().default(null), totalCostUsd: z.number().nullable().default(null), grossProfit: z.number().nullable(), grossMargin: z.number().nullable(), competitorUrl: z.string(),
   })),
   monthlyOrders: z.array(z.object({ month: z.string(), sku: z.string(), name: z.string(), orderQuantity: z.number().nullable(), costRmb: z.number().nullable(), status: z.string(), usStatus: z.string(), caStatus: z.string() })),
 });

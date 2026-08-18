@@ -16,6 +16,7 @@ const candidateSchema = z.object({
   orderFee: nullableAmount,
   importDutyRate: nullableAmount,
   purchaseCostRmb: nullableAmount,
+  untaxedPriceUsd: nullableAmount.optional(),
   competitorUrl: z.union([z.literal(""), z.string().trim().url().max(2000)]),
 });
 

@@ -170,6 +170,11 @@ def _merge_local_shipments(config: ProjectConfig, document: dict, local_root: Pa
 
     applied = []
     rejected = []
+    history_by_key = {
+        (str(item.get("market", "")), int(item.get("batch", 0) or 0), str(item.get("shipmentDate", "")), str(item.get("sku", ""))): item
+        for item in document.get("shipmentHistory", [])
+        if isinstance(item, dict)
+    }
     lots = document.get("purchaseOrderLots", [])
     logistics = document.setdefault("logistics", {"US": {}, "CA": {}})
     new_keys = {
@@ -210,6 +215,18 @@ def _merge_local_shipments(config: ProjectConfig, document: dict, local_root: Pa
             continue
 
         source_label = f"local://Downloads/{source}"
+        shipment_date = str(batch_events[0].get("shipmentDate", "")) if batch_events else ""
+        for event in batch_events:
+            history_item = {
+                "market": market,
+                "batch": batch,
+                "shipmentDate": shipment_date,
+                "sku": str(event["sku"]),
+                "quantity": int(event["quantity"]),
+                "cartonCount": int(event.get("cartonCount", 0) or 0),
+                "sourcePath": source_label,
+            }
+            history_by_key[(market, batch, shipment_date, str(event["sku"]))] = history_item
         for sku, item in catalog.get(market, {}).items():
             if int(item.get("sourceBatchNumber", 0) or 0) != batch:
                 continue
@@ -250,8 +267,13 @@ def _merge_local_shipments(config: ProjectConfig, document: dict, local_root: Pa
         })
 
     document["purchaseOrderLots"] = lots
+    document["shipmentHistory"] = sorted(
+        history_by_key.values(),
+        key=lambda item: (str(item.get("shipmentDate", "")), int(item.get("batch", 0) or 0), str(item.get("market", "")), str(item.get("sku", ""))),
+    )
     document.setdefault("coverage", {})["logistics"] = {market: len(items) for market, items in logistics.items()}
     document["coverage"]["purchaseOrderLotsAvailable"] = sum(1 for item in lots if int(item.get("availableQuantity", 0) or 0) > 0)
+    document["coverage"]["shipmentHistoryEvents"] = len(document["shipmentHistory"])
     document["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     document["localRefresh"] = {"appliedShipments": applied, "rejectedShipments": rejected}
     return {"applied": applied, "rejected": rejected}
@@ -272,7 +294,13 @@ def _refresh_dashboard(
     fba_header = settings.get("fba_master_header", "FBA库存")
     domestic_sheet = settings.get("domestic_master_sheet", settings.get("master_sheet", "库存规划"))
     sales_sheet = settings.get("sales_master_sheet", fba_sheet)
-    fba, invalid_fba = _read_fba_from_master(inventory_path, fba_sheet, fba_header, normalizer)
+    fba, invalid_fba = _read_fba_from_master(
+        inventory_path,
+        fba_sheet,
+        fba_header,
+        normalizer,
+        settings.get("network_inventory_header", "FBA+在途库存"),
+    )
     master = _read_master(inventory_path, domestic_sheet, normalizer, settings.get("local_inventory_header", "工厂库存及已下订单"))
     sales, sales_months, _ = _read_sales_from_master(
         inventory_path,
@@ -290,10 +318,11 @@ def _refresh_dashboard(
     for lot in purchase_lots:
         lots_by_sku[str(lot.get("sku", ""))].append(lot)
     params = payload.get("parameters", {})
+    configured_params = settings.get("parameters", {})
     replenishment = ReplenishmentParameters(
         lead_time_days=int(params.get("leadTimeDays", 75)),
         review_cycle_days=int(params.get("reviewCycleDays", 7)),
-        target_cover_days=int(params.get("targetCoverDays", 45)),
+        target_cover_days=int(configured_params.get("target_cover_days", 90)),
         safety_stock_days=int(params.get("safetyStockDays", 21)),
         excess_cover_days=int(params.get("excessCoverDays", 240)),
         fba_transfer_trigger_days=int(params.get("fbaTransferTriggerDays", 30)),
@@ -342,6 +371,7 @@ def _refresh_dashboard(
             awd_outbound_to_fba=int(row.get("awdOutboundToFba", 0) or 0),
             carton_quantity=row.get("cartonQty"),
             parameters=replenishment,
+            in_transit_inventory=int(fba_item.get("inTransitInventory", row.get("awdInbound", 0)) or 0),
         ))
         quality = []
         if row["dailySales"] <= 0:
@@ -359,6 +389,7 @@ def _refresh_dashboard(
     rows.sort(key=lambda row: ({"critical": 0, "watch": 1, "data": 2, "healthy": 3, "excess": 4}.get(row["riskLevel"], 5), -int(row["suggestedShipmentQty"]), row["sku"]))
     payload["rows"] = rows
     payload["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    payload.setdefault("parameters", {})["targetCoverDays"] = replenishment.target_cover_days
     awd_date = date.fromisoformat(payload.get("snapshots", {}).get("awdDate", inventory_date.isoformat()))
     if not payload.get("snapshots", {}).get("awdSourceAvailable", False):
         awd_date = inventory_date
@@ -404,6 +435,7 @@ def _refresh_dashboard(
         "awdAvailable": sum(int(row.get("awdAvailable", 0) or 0) for row in rows),
         "awdOutboundToFba": sum(int(row.get("awdOutboundToFba", 0) or 0) for row in rows),
         "awdInboundNotCounted": sum(int(row.get("awdInbound", 0) or 0) for row in rows),
+        "inTransitInventory": sum(int(row.get("inTransitInventory", 0) or 0) for row in rows),
         "localInventory": sum(int(row.get("localInventory", 0) or 0) for row in rows),
         "pendingOrderQty": sum(int(row.get("pendingOrderQty", 0) or 0) for row in rows),
         "overdueOrderCount": sum(1 for row in rows for order in row.get("pendingOrders", []) if order.get("overdue")),

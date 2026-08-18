@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsKpi } from "@/components/inventory/ops-ui";
+import { useInfiniteRows } from "@/components/inventory/use-infinite-rows";
 import { CreativeHandoffExportButton } from "@/components/inventory/creative-handoff-export-button";
 import type { ContentListViewModel } from "@/lib/inventory/client-view-models";
 import { integer } from "@/lib/inventory/presentation";
@@ -12,14 +13,12 @@ import { integer } from "@/lib/inventory/presentation";
 type VariantGroup = ContentListViewModel["groups"][number];
 
 export function ContentWorkbench({ data }: { data: ContentListViewModel }) {
-  const pageSize = 25;
   const [query, setQuery] = useState("");
   const [copyFilter, setCopyFilter] = useState("ALL");
   const [briefFilter, setBriefFilter] = useState("ALL");
   const [growthFilter, setGrowthFilter] = useState("GROWTH");
   const [marketFilter, setMarketFilter] = useState("ALL");
   const [category, setCategory] = useState("ALL");
-  const [page, setPage] = useState(1);
   const normalized = query.trim().toLowerCase();
   const categories = useMemo(() => Array.from(new Set(data.tasks.map((task) => task.category).filter(Boolean))).sort(), [data.tasks]);
   const taskVariant = useMemo(() => {
@@ -67,9 +66,7 @@ export function ContentWorkbench({ data }: { data: ContentListViewModel }) {
       || task.growth.status === growthFilter;
     return matchesQuery && matchesCopy && matchesCategory && matchesBrief && matchesGrowth;
   }).sort((left, right) => right.growth.priorityScore - left.growth.priorityScore || left.sku.localeCompare(right.sku));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const { visible, hasMore, sentinelRef } = useInfiniteRows(filtered, 25);
 
   return <div className="space-y-4">
     <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -113,12 +110,12 @@ export function ContentWorkbench({ data }: { data: ContentListViewModel }) {
       <div className="flex flex-col gap-3 border-b border-slate-100 p-4 xl:flex-row xl:items-center xl:justify-between">
         <div><h2 className="text-sm font-semibold text-slate-950">慢销产品拉量待办</h2><p className="mt-1 text-xs text-slate-500">默认只看可拉量 SKU；销量、利润和库存不满足条件的产品不会误进入加预算名单</p></div>
         <div className="flex flex-col gap-2 lg:flex-row">
-          <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索 SKU、品名或标题" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 sm:w-64" /></label>
-          <select value={growthFilter} onChange={(event) => { setGrowthFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="GROWTH">待拉量</option><option value="SCALE">优先拉量</option><option value="WATCH">验证后拉量</option><option value="CLEARANCE">清货观察</option><option value="HEALTHY">正常销售</option><option value="ALL">全部产品</option></select>
-          <select value={marketFilter} onChange={(event) => { setMarketFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部市场</option><option value="US">美国 US</option><option value="CA">加拿大 CA</option></select>
-          <select value={copyFilter} onChange={(event) => { setCopyFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部文案</option><option value="listing_master">已有 Listing</option><option value="structured_product_draft">待 AI 完善</option></select>
-          <select value={briefFilter} onChange={(event) => { setBriefFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部参考状态</option><option value="ARCHIVE">有历史风格参考</option><option value="GENERATED">无历史风格参考</option></select>
-          <select value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部品类</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 SKU、品名或标题" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 sm:w-64" /></label>
+          <select value={growthFilter} onChange={(event) => setGrowthFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="GROWTH">待拉量</option><option value="SCALE">优先拉量</option><option value="WATCH">验证后拉量</option><option value="CLEARANCE">清货观察</option><option value="HEALTHY">正常销售</option><option value="ALL">全部产品</option></select>
+          <select value={marketFilter} onChange={(event) => setMarketFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部市场</option><option value="US">美国 US</option><option value="CA">加拿大 CA</option></select>
+          <select value={copyFilter} onChange={(event) => setCopyFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部文案</option><option value="listing_master">已有 Listing</option><option value="structured_product_draft">待 AI 完善</option></select>
+          <select value={briefFilter} onChange={(event) => setBriefFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部参考状态</option><option value="ARCHIVE">有历史风格参考</option><option value="GENERATED">无历史风格参考</option></select>
+          <select value={category} onChange={(event) => setCategory(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部品类</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -140,7 +137,7 @@ export function ContentWorkbench({ data }: { data: ContentListViewModel }) {
           })}</tbody>
         </table>
       </div>
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500"><span>显示 {visible.length} / {filtered.length} 个 SKU · 第 {safePage}/{pageCount} 页</span><div className="flex gap-2"><button type="button" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">下一页</button></div></div>
+      <div ref={sentinelRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500">显示 {visible.length} / {filtered.length} 个 SKU · {hasMore ? "继续下滑加载" : "已显示全部"}</div>
     </OpsCard>
 
   </div>;

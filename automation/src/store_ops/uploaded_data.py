@@ -6,11 +6,17 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import openpyxl
+
+from .advertising import AdvertisingParameters, recommend_campaign
+from .jobs.new_product_research import extract_research_rows
+from .jobs.product_catalog import _extract_product_images, _merge_product_details, _read_product_details
+from .replenishment import ReplenishmentParameters, calculate_replenishment
+from .sku import SkuNormalizer
 
 
 TYPE_LABELS = {
@@ -65,6 +71,22 @@ def _field(indexes: dict[str, int], *names: str) -> int | None:
     return None
 
 
+def _inventory_snapshot_date(path: Path) -> date:
+    match = re.search(r"(20\d{6})", path.name)
+    if match:
+        return datetime.strptime(match.group(1), "%Y%m%d").date()
+    return datetime.fromtimestamp(path.stat().st_mtime).date()
+
+
+def _completed_month(snapshot_date: date) -> str:
+    return (snapshot_date.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+
+
+def _base_sku(value: object) -> str | None:
+    match = re.search(r"(?<![A-Z0-9])([A-Z]{2})\s*[-_]?\s*(\d{3})(?!\d)", _text(value).upper())
+    return f"{match.group(1)}{match.group(2)}" if match else None
+
+
 def _detect(path: Path, workbook) -> str:
     name = path.name.lower()
     sheets = {value.strip() for value in workbook.sheetnames}
@@ -112,20 +134,11 @@ def _inventory_preview(workbook) -> dict[str, Any]:
 
 
 def _research_preview(workbook) -> dict[str, Any]:
-    candidates = 0
-    viable = 0
-    if "Sheet1" in workbook.sheetnames:
-        rows = list(workbook["Sheet1"].iter_rows(values_only=True))
-        for index, row in enumerate(rows):
-            if not _text(row[0] if row else None) or index + 1 >= len(rows):
-                continue
-            detail = rows[index + 1]
-            margin = _number(detail[13] if len(detail) > 13 else None)
-            if _number(detail[2] if len(detail) > 2 else None) is not None:
-                candidates += 1
-                viable += int(margin is not None and margin >= 0.3)
+    candidate_rows, monthly_orders = extract_research_rows(workbook)
+    candidates = len(candidate_rows)
+    viable = sum(1 for row in candidate_rows if (row.get("grossMargin") or 0) >= 0.3)
     month_sheets = sorted([value for value in workbook.sheetnames if re.fullmatch(r"\d{1,2}月新品", value.strip())])
-    return {"candidateCount": candidates, "viableCandidateCount": viable, "monthSheets": month_sheets, "impacts": ["新品调研"]}
+    return {"candidateCount": candidates, "viableCandidateCount": viable, "monthlyOrderCount": len(monthly_orders), "monthSheets": month_sheets, "impacts": ["新品调研"]}
 
 
 def _sales_preview(workbook, market: str) -> dict[str, Any]:
@@ -170,7 +183,7 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
             workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
             try:
                 kind = _detect(path, workbook)
-                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research"}, "sheets": workbook.sheetnames})
+                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details"}, "sheets": workbook.sheetnames})
                 if kind == "inventory":
                     item["preview"] = _inventory_preview(workbook)
                 elif kind == "research":
@@ -210,38 +223,20 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
 def _research_report(path: Path) -> dict[str, Any]:
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
     try:
-        candidates: list[dict[str, Any]] = []
-        if "Sheet1" in workbook.sheetnames:
-            rows = list(workbook["Sheet1"].iter_rows(values_only=True))
-            for index, row in enumerate(rows):
-                sku = _text(row[0] if row else None)
-                if not sku or index + 1 >= len(rows):
-                    continue
-                detail = rows[index + 1]
-                price = _number(detail[2] if len(detail) > 2 else None)
-                if price is None:
-                    continue
-                candidates.append({"sku": sku, "name": sku, "amazonPrice": price, "firstMile": _number(detail[3]), "storageFee": _number(detail[4]), "commission": _number(detail[5]), "orderFee": _number(detail[6]), "importDutyRate": _number(detail[8]), "purchaseCostRmb": _number(detail[9]), "grossProfit": _number(detail[12]), "grossMargin": _number(detail[13]), "competitorUrl": _safe_url(row[15] if len(row) > 15 else None) or _safe_url(detail[15] if len(detail) > 15 else None)})
-        monthly: list[dict[str, Any]] = []
-        for sheet_name in workbook.sheetnames:
-            match = re.fullmatch(r"(\d{1,2})月新品", sheet_name.strip())
-            if not match:
-                continue
-            for row in workbook[sheet_name].iter_rows(min_row=3, values_only=True):
-                sku = _text(row[1] if len(row) > 1 else None)
-                if sku:
-                    monthly.append({"month": f"{datetime.now().year}-{int(match.group(1)):02d}", "sku": sku, "name": _text(row[3] if len(row) > 3 else None) or sku, "orderQuantity": _number(row[4] if len(row) > 4 else None), "costRmb": _number(row[5] if len(row) > 5 else None), "status": _text(row[6] if len(row) > 6 else None), "usStatus": _text(row[7] if len(row) > 7 else None), "caStatus": _text(row[8] if len(row) > 8 else None)})
+        candidates, monthly = extract_research_rows(workbook)
     finally:
         workbook.close()
     margins = [item["grossMargin"] for item in candidates if item["grossMargin"] is not None]
     ordered = [item for item in monthly if (item["orderQuantity"] or 0) > 0]
-    return {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": {"path": path.name, "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"), "sha256": _sha256(path), "sheet": "Sheet1"}, "summary": {"candidateCount": len(candidates), "viableCandidateCount": sum(1 for value in margins if value >= 0.3), "averageGrossMargin": sum(margins) / len(margins) if margins else 0, "latestOrderMonth": max((item["month"] for item in ordered), default=None), "orderedSkuCount": len({item["sku"] for item in ordered}), "plannedUnits": int(sum(item["orderQuantity"] or 0 for item in ordered)), "monthCount": len({item["month"] for item in monthly})}, "candidates": candidates, "monthlyOrders": monthly}
+    return {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": {"path": path.name, "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"), "sha256": _sha256(path), "sheet": "多工作表"}, "summary": {"candidateCount": len(candidates), "viableCandidateCount": sum(1 for value in margins if value >= 0.3), "averageGrossMargin": sum(margins) / len(margins) if margins else 0, "latestOrderMonth": max((item["month"] for item in ordered), default=None), "orderedSkuCount": len({item["sku"] for item in ordered}), "plannedUnits": int(sum(item["orderQuantity"] or 0 for item in ordered)), "monthCount": len({item["month"] for item in monthly})}, "candidates": candidates, "monthlyOrders": monthly}
 
 
 def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
     updated: list[str] = []
     try:
+        snapshot_date = _inventory_snapshot_date(path)
+        sales_month = _completed_month(snapshot_date)
         for market, sheet_name, report_name in (("US", "库存规划", "inventory_dashboard.json"), ("CA", "加拿大库存计划 ", "inventory_dashboard.ca.json")):
             report_path = reports_dir / report_name
             if sheet_name not in workbook.sheetnames or not report_path.exists():
@@ -252,6 +247,7 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
             sku_i = _field(indexes, "SKU")
             name_i = _field(indexes, "品名")
             fba_i = _field(indexes, "FBA库存")
+            network_i = _field(indexes, "FBA+在途库存")
             local_i = _field(indexes, "工厂库存及已下订单")
             sales_i = _field(indexes, "最近月销售", "最近月销")
             incoming: dict[str, tuple[Any, ...]] = {}
@@ -259,33 +255,260 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
                 sku = _text(row[sku_i] if sku_i is not None and len(row) > sku_i else None).upper()
                 if sku:
                     incoming[sku] = row
-            month = datetime.now().strftime("%Y-%m")
+            raw_parameters = report.setdefault("parameters", {})
+            raw_parameters["targetCoverDays"] = 90
+            parameters = ReplenishmentParameters(
+                lead_time_days=int(raw_parameters.get("leadTimeDays", 75)),
+                review_cycle_days=int(raw_parameters.get("reviewCycleDays", 7)),
+                target_cover_days=90,
+                safety_stock_days=int(raw_parameters.get("safetyStockDays", 21)),
+                excess_cover_days=int(raw_parameters.get("excessCoverDays", 240)),
+                fba_transfer_trigger_days=int(raw_parameters.get("fbaTransferTriggerDays", 30)),
+            )
             for item in report.get("rows", []):
                 row = incoming.get(_text(item.get("sku")).upper())
                 if not row:
                     continue
                 if name_i is not None and _text(row[name_i]):
                     item["productName"] = _text(row[name_i])
-                if fba_i is not None:
-                    item["fbaSellable"] = max(0, int(_number(row[fba_i]) or 0))
+                fba_value = _number(row[fba_i]) if fba_i is not None else None
+                if fba_value is not None:
+                    item["fbaSellable"] = max(0, int(fba_value))
+                network_value = _number(row[network_i]) if network_i is not None else None
+                if network_value is not None:
+                    item["inTransitInventory"] = max(0, int(network_value) - int(item.get("fbaSellable", 0) or 0))
+                else:
+                    item["inTransitInventory"] = max(0, int(item.get("inTransitInventory", item.get("awdInbound", 0)) or 0))
                 if local_i is not None:
                     item["localInventory"] = max(0, int(_number(row[local_i]) or 0))
                     item["domesticSupplyTotal"] = item["localInventory"] + int(item.get("pendingOrderQty", 0))
                 if sales_i is not None and _number(row[sales_i]) is not None:
                     units = max(0, int(_number(row[sales_i]) or 0))
                     item["dailySales"] = units / 30
-                    history = [entry for entry in item.get("salesHistoryByMonth", []) if entry.get("month") != month]
-                    item["salesHistoryByMonth"] = [*history, {"month": month, "units": units}]
-                    item["salesByMonth"] = [{"month": month, "units": units}]
+                    history = [entry for entry in item.get("salesHistoryByMonth", []) if entry.get("month") != sales_month]
+                    item["salesHistoryByMonth"] = [*history, {"month": sales_month, "units": units}]
+                    item["salesByMonth"] = [{"month": sales_month, "units": units}]
+                decision = calculate_replenishment(
+                    daily_sales=float(item.get("dailySales", 0) or 0),
+                    fba_sellable=int(item.get("fbaSellable", 0) or 0),
+                    awd_available=int(item.get("awdAvailable", 0) or 0),
+                    awd_outbound_to_fba=int(item.get("awdOutboundToFba", 0) or 0),
+                    carton_quantity=item.get("cartonQty"),
+                    parameters=parameters,
+                    in_transit_inventory=int(item.get("inTransitInventory", 0) or 0),
+                )
+                item.update(decision)
+                item["readyToShipQty"] = min(int(item.get("localInventory", 0) or 0), int(item["suggestedShipmentQty"]))
+                item["suggestedProductionQty"] = max(0, int(item["suggestedShipmentQty"]) - int(item.get("domesticSupplyTotal", 0) or 0))
             report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            report["summary"]["fbaSellable"] = sum(int(item.get("fbaSellable", 0)) for item in report["rows"])
-            report["summary"]["localInventory"] = sum(int(item.get("localInventory", 0)) for item in report["rows"])
+            snapshots = report.setdefault("snapshots", {})
+            snapshots["fbaDate"] = snapshot_date.isoformat()
+            snapshots.setdefault("awdSourceAvailable", market == "US")
+            snapshots.setdefault("awdDate", snapshot_date.isoformat())
+            if not snapshots["awdSourceAvailable"]:
+                snapshots["awdDate"] = snapshot_date.isoformat()
+            awd_date = date.fromisoformat(str(snapshots.get("awdDate", snapshot_date.isoformat())))
+            latest_snapshot = max(snapshot_date, awd_date)
+            snapshots["alignmentGapDays"] = abs((snapshot_date - awd_date).days)
+            snapshots["aligned"] = snapshots["alignmentGapDays"] <= 2
+            snapshots["ageDays"] = max(0, (date.today() - latest_snapshot).days)
+            snapshots.setdefault("staleAfterDays", 14)
+            snapshots["isStale"] = snapshots["ageDays"] > int(snapshots["staleAfterDays"])
+            report.setdefault("sales", {})["windowMonths"] = [sales_month]
+            summary = report.setdefault("summary", {})
+            summary["fbaSellable"] = sum(int(item.get("fbaSellable", 0)) for item in report["rows"])
+            summary["inTransitInventory"] = sum(int(item.get("inTransitInventory", 0)) for item in report["rows"])
+            summary["localInventory"] = sum(int(item.get("localInventory", 0)) for item in report["rows"])
+            summary["readyToShipQty"] = sum(int(item.get("readyToShipQty", 0)) for item in report["rows"])
+            summary["suggestedProductionQty"] = sum(int(item.get("suggestedProductionQty", 0)) for item in report["rows"])
+            summary["suggestedShipmentQty"] = sum(int(item.get("suggestedShipmentQty", 0)) for item in report["rows"])
             report.setdefault("localRefresh", {})["uploadedBatch"] = path.name
             _atomic_json(report_path, report)
             updated.append(report_name)
     finally:
         workbook.close()
     return updated
+
+
+def _patch_advertising(path: Path, reports_dir: Path) -> list[str]:
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        sheet = workbook[workbook.sheetnames[0]]
+        rows = sheet.iter_rows(values_only=True)
+        indexes = _header_map(next(rows))
+        required = {
+            "start": _field(indexes, "数据开始时间"),
+            "end": _field(indexes, "数据结束时间"),
+            "market": _field(indexes, "国家"),
+            "campaign": _field(indexes, "广告活动"),
+            "status": _field(indexes, "状态"),
+            "budget": _field(indexes, "预算"),
+            "impressions": _field(indexes, "曝光量"),
+            "clicks": _field(indexes, "点击量"),
+            "spend": _field(indexes, "花费"),
+            "sales": _field(indexes, "广告总销售额"),
+            "orders": _field(indexes, "广告总订单量"),
+        }
+        missing = [name for name, index in required.items() if index is None]
+        if missing:
+            raise ValueError(f"广告报表缺少字段: {', '.join(missing)}")
+        required_indexes = {name: int(index) for name, index in required.items()}
+        for row in rows:
+            market = _text(row[required_indexes["market"]]).upper()
+            start = _text(row[required_indexes["start"]])[:10]
+            campaign = _text(row[required_indexes["campaign"]])
+            if market not in {"US", "CA"} or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}", start) or not campaign:
+                continue
+            month = start[:7]
+            key = (market, month)
+            bucket = grouped.setdefault(key, {
+                "month": month,
+                "spend": 0.0,
+                "advertisingSales": 0.0,
+                "orders": 0,
+                "clicks": 0,
+                "impressions": 0,
+                "campaigns": {},
+                "endDate": start,
+            })
+            spend = float(_number(row[required_indexes["spend"]]) or 0)
+            sales = float(_number(row[required_indexes["sales"]]) or 0)
+            orders = int(_number(row[required_indexes["orders"]]) or 0)
+            clicks = int(_number(row[required_indexes["clicks"]]) or 0)
+            impressions = int(_number(row[required_indexes["impressions"]]) or 0)
+            end = _text(row[required_indexes["end"]])[:10]
+            if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", end):
+                bucket["endDate"] = max(bucket["endDate"], end)
+            bucket["spend"] += spend
+            bucket["advertisingSales"] += sales
+            bucket["orders"] += orders
+            bucket["clicks"] += clicks
+            bucket["impressions"] += impressions
+            item = bucket["campaigns"].setdefault(campaign, {
+                "campaign": campaign,
+                "sku": _base_sku(campaign),
+                "status": _text(row[required_indexes["status"]]),
+                "budget": float(_number(row[required_indexes["budget"]]) or 0),
+                "spend": 0.0,
+                "advertisingSales": 0.0,
+                "orders": 0,
+                "clicks": 0,
+                "impressions": 0,
+                "periodDays": 1,
+            })
+            item["spend"] += spend
+            item["advertisingSales"] += sales
+            item["orders"] += orders
+            item["clicks"] += clicks
+            item["impressions"] += impressions
+            item["periodDays"] = max(item["periodDays"], (date.fromisoformat(bucket["endDate"]) - date.fromisoformat(f"{month}-01")).days + 1)
+    finally:
+        workbook.close()
+
+    updated: list[str] = []
+    for market in ("US", "CA"):
+        market_months = sorted(month for report_market, month in grouped if report_market == market)
+        if not market_months:
+            continue
+        report_name = "inventory_dashboard.json" if market == "US" else "inventory_dashboard.ca.json"
+        report_path = reports_dir / report_name
+        if not report_path.exists():
+            continue
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        latest_month = market_months[-1]
+        advertising = report.setdefault("advertising", {})
+        raw_params = advertising.get("parameters", {})
+        parameters = AdvertisingParameters(
+            target_acos_percent=float(raw_params.get("targetAcosPercent", 30)),
+            minimum_evidence_spend=float(raw_params.get("minimumEvidenceSpend", 20)),
+            no_order_spend=float(raw_params.get("noOrderSpend", 20)),
+            winner_min_orders=int(raw_params.get("winnerMinOrders", 5)),
+            scale_min_orders=int(raw_params.get("scaleMinOrders", 1)),
+            low_volume_max_clicks=int(raw_params.get("lowVolumeMaxClicks", 30)),
+            budget_utilization_threshold_percent=float(raw_params.get("budgetUtilizationThresholdPercent", 80)),
+            scale_max_acos_ratio=float(raw_params.get("scaleMaxAcosRatio", 0.9)),
+        )
+        replacement_months = set(market_months)
+        monthly = [item for item in advertising.get("monthlySeries", []) if item.get("month") not in replacement_months]
+        for month in market_months:
+            bucket = grouped[(market, month)]
+            spend = round(float(bucket["spend"]), 2)
+            sales = round(float(bucket["advertisingSales"]), 2)
+            monthly.append({
+                "month": month,
+                "spend": spend,
+                "advertisingSales": sales,
+                "orders": int(bucket["orders"]),
+                "clicks": int(bucket["clicks"]),
+                "impressions": int(bucket["impressions"]),
+                "acos": round(spend / sales * 100, 2) if sales > 0 else None,
+                "roas": round(sales / spend, 2) if spend > 0 else None,
+            })
+        rows_by_sku = {str(item.get("sku")): item for item in report.get("rows", [])}
+        campaign_rows = []
+        for item in grouped[(market, latest_month)]["campaigns"].values():
+            item["spend"] = round(float(item["spend"]), 2)
+            item["advertisingSales"] = round(float(item["advertisingSales"]), 2)
+            inventory = rows_by_sku.get(str(item.get("sku")))
+            inventory_risk = inventory.get("riskLevel") if inventory else None
+            item["inventoryRisk"] = inventory_risk
+            item["inventoryDaysCover"] = inventory.get("daysCoverNetwork") if inventory else None
+            item.update(recommend_campaign(
+                spend=item["spend"], advertising_sales=item["advertisingSales"], orders=int(item["orders"]),
+                clicks=int(item["clicks"]), impressions=int(item["impressions"]), budget=float(item["budget"]),
+                period_days=int(item["periodDays"]), inventory_risk=inventory_risk, parameters=parameters,
+            ))
+            campaign_rows.append(item)
+        advertising["latestMonth"] = latest_month
+        advertising["monthlySeries"] = sorted(monthly, key=lambda item: str(item.get("month", "")))
+        advertising["campaigns"] = sorted(campaign_rows, key=lambda item: (-float(item["spend"]), str(item["campaign"])))
+        latest_end = date.fromisoformat(grouped[(market, latest_month)]["endDate"])
+        snapshot = date.fromisoformat(str(report.get("snapshots", {}).get("fbaDate", latest_end.isoformat())))
+        advertising["ageDaysAtSnapshot"] = max(0, (snapshot - latest_end).days)
+        report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        report["sources"] = [item for item in report.get("sources", []) if item.get("kind") != "uploaded_advertising_campaign_month"]
+        report["sources"].append({
+            "kind": "uploaded_advertising_campaign_month",
+            "path": path.name,
+            "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+            "sha256": _sha256(path),
+        })
+        _atomic_json(report_path, report)
+        updated.append(report_name)
+    return updated
+
+
+def _patch_product_details(path: Path, reports_dir: Path) -> list[str]:
+    report_path = reports_dir / "product_catalog.json"
+    if not report_path.exists():
+        return []
+    normalizer = SkuNormalizer(r"(?<![A-Z0-9])([A-Z]{2}\s*[-_]?\s*\d{3})(?!\d)", frozenset({"", "SKU", "MSKU"}))
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
+    try:
+        sheet_name = "一店" if "一店" in workbook.sheetnames else workbook.sheetnames[0]
+    finally:
+        workbook.close()
+    current = _read_product_details(path, sheet_name, normalizer)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    existing = {str(item.get("sku")): item for item in report.get("items", [])}
+    merged = _merge_product_details(current, existing)
+    image_output = reports_dir.parent / "output" / "product-images"
+    images = _extract_product_images(path, sheet_name, "B", image_output, normalizer)
+    for sku, image in images.items():
+        if sku in merged:
+            merged[sku].update(image)
+    report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    report["sources"] = [item for item in report.get("sources", []) if item.get("kind") != "product_details"]
+    report["sources"].insert(0, {
+        "kind": "product_details",
+        "path": path.name,
+        "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        "sha256": _sha256(path),
+    })
+    report["items"] = [merged[sku] for sku in sorted(merged)]
+    _atomic_json(report_path, report)
+    return ["product_catalog.json"]
 
 
 def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
@@ -306,6 +529,10 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
             updated.append("new_product_research.json")
         elif item["type"] == "inventory":
             updated.extend(_patch_inventory(source, reports_dir))
+        elif item["type"] == "advertising":
+            updated.extend(_patch_advertising(source, reports_dir))
+        elif item["type"] == "product_details":
+            updated.extend(_patch_product_details(source, reports_dir))
         else:
             skipped.append(item["name"])
     manifest.update({"status": "published", "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataVersion": version, "updatedReports": sorted(set(updated)), "stagedFiles": skipped})

@@ -267,6 +267,7 @@ function recalculateInventorySummary(data: InventoryDashboardData, rows: Invento
     awdAvailable: sum(rows, "awdAvailable"),
     awdOutboundToFba: sum(rows, "awdOutboundToFba"),
     awdInboundNotCounted: sum(rows, "awdInbound"),
+    inTransitInventory: sum(rows, "inTransitInventory"),
     localInventory: sum(rows, "localInventory"),
     pendingOrderQty: sum(rows, "pendingOrderQty"),
     readyToShipQty: sum(rows, "readyToShipQty"),

@@ -133,6 +133,38 @@ export async function loadContentWorkflowData() {
   return loadJsonReport(contentWorkflowDataPath(), (input) => contentWorkflowSchema.parse(input));
 }
 
+export type ShipmentHistoryItem = {
+  market: OperationsMarket;
+  batch: number;
+  shipmentDate: string;
+  sku: string;
+  quantity: number;
+  cartonCount: number;
+  sourcePath: string;
+};
+
+export function documentMasterDataPath() {
+  return process.env.STORE_OPS_DOCUMENT_MASTER?.trim()
+    ? path.resolve(process.env.STORE_OPS_DOCUMENT_MASTER)
+    : runtimePath("reports", "document_master.json");
+}
+
+export async function loadDocumentMasterData() {
+  return loadJsonReport(documentMasterDataPath(), (input) => {
+    const payload = input as { shipmentHistory?: unknown };
+    const shipmentHistory = Array.isArray(payload.shipmentHistory) ? payload.shipmentHistory.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const row = item as Record<string, unknown>;
+      const sku = String(row.sku ?? "").trim().toUpperCase();
+      const market = String(row.market ?? "").toUpperCase() === "CA" ? "CA" : "US";
+      const quantity = Number(row.quantity ?? 0);
+      if (!sku || !Number.isFinite(quantity) || quantity <= 0) return [];
+      return [{ market, batch: Number(row.batch ?? 0), shipmentDate: String(row.shipmentDate ?? ""), sku, quantity: Math.round(quantity), cartonCount: Math.max(0, Math.round(Number(row.cartonCount ?? 0))), sourcePath: String(row.sourcePath ?? "") }] satisfies ShipmentHistoryItem[];
+    }) : [];
+    return { shipmentHistory };
+  });
+}
+
 export function purchasePlanDataPath() {
   return process.env.STORE_OPS_PURCHASE_PLAN?.trim()
     ? path.resolve(process.env.STORE_OPS_PURCHASE_PLAN)

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { OpsPageHeader } from "@/components/inventory/ops-ui";
 import { SkuDetailDashboard } from "@/components/inventory/sku-detail-dashboard";
-import { loadInventoryDashboardData, loadProductCatalogData, loadVariantCatalogData, normalizeOperationsMarket } from "@/lib/inventory/data";
+import { loadDocumentMasterData, loadInventoryDashboardData, loadProductCatalogData, loadVariantCatalogData, normalizeOperationsMarket } from "@/lib/inventory/data";
 import { listLatestPurchaseOrderReviews } from "@/lib/inventory/purchase-order-reviews";
 import { listSkuPurchaseOrderDetails } from "@/lib/inventory/purchase-orders";
 import { buildSkuDetailViewModel } from "@/lib/inventory/sku-detail-view-model";
@@ -16,12 +16,13 @@ export default async function SkuPage({ params, searchParams }: { params: Promis
   const market = normalizeOperationsMarket((await searchParams).market);
   const { sku: rawSku } = await params;
   const sku = decodeURIComponent(rawSku).toUpperCase();
-  const [data, variants, products, purchaseOrders] = await Promise.all([loadInventoryDashboardData(market), loadVariantCatalogData().catch(() => null), loadProductCatalogData().catch(() => null), listSkuPurchaseOrderDetails(sku).catch(() => [])]);
+  const [data, variants, products, purchaseOrders, documentMaster] = await Promise.all([loadInventoryDashboardData(market), loadVariantCatalogData().catch(() => null), loadProductCatalogData().catch(() => null), listSkuPurchaseOrderDetails(sku).catch(() => []), loadDocumentMasterData().catch(() => ({ shipmentHistory: [] }))]);
   const row = data.rows.find((item) => item.sku === sku);
   if (!row) notFound();
   const product = products?.items.find((item) => item.sku === sku) ?? null;
   const dashboard = buildSkuDetailViewModel(data, variants, product, sku);
   if (!dashboard) notFound();
   const canceledOrders = listLatestPurchaseOrderReviews({ sku, action: "cancel" });
-  return <><OpsPageHeader eyebrow="SKU Analysis" title={`${sku} · ${row.productName}`} description="独立查看该 SKU 的销量、库存、产品规格、Listing、全部历史采购订单、补货和广告表现。" /><SkuDetailDashboard dashboard={dashboard} product={product} sku={sku} canceledOrders={canceledOrders} purchaseOrders={purchaseOrders} /></>;
+  const shipmentHistory = documentMaster.shipmentHistory.filter((item) => item.sku === sku);
+  return <><OpsPageHeader eyebrow="SKU Analysis" title={`${sku} · ${row.productName}`} description="独立查看该 SKU 的销量、库存、历史发货、产品规格、Listing、全部历史采购订单、补货和广告表现。" /><SkuDetailDashboard dashboard={dashboard} product={product} sku={sku} canceledOrders={canceledOrders} purchaseOrders={purchaseOrders} shipmentHistory={shipmentHistory} /></>;
 }

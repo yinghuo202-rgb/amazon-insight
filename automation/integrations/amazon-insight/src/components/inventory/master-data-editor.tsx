@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
+import { useInfiniteRows } from "@/components/inventory/use-infinite-rows";
 import type { EditableInventoryRow, EditableProductRow } from "@/lib/inventory/operational-data-editor";
 import type { InventoryOverride, InventoryValues, ProductMasterOverride, ProductMasterValues } from "@/lib/inventory/operational-data-store";
 import type { ProductCostSeries } from "@/lib/inventory/product-costs";
@@ -23,7 +24,6 @@ export function MasterDataEditor({ view }: { view: EditorView }) {
   const [market, setMarket] = useState<"US" | "CA">("US");
   const [seriesFilter, setSeriesFilter] = useState("ALL");
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
   const [inventoryDrafts, setInventoryDrafts] = useState<Record<string, InventoryValues>>(() => Object.fromEntries(view.inventories.map((row) => [inventoryKey(row), inventoryValues(row)])));
   const [inventorySaved, setInventorySaved] = useState<Record<string, InventoryValues>>(() => Object.fromEntries(view.inventories.map((row) => [inventoryKey(row), inventoryValues(row)])));
   const [productDrafts, setProductDrafts] = useState<Record<string, ProductMasterValues>>(() => Object.fromEntries(view.products.map((row) => [row.sku, productValues(row)])));
@@ -44,10 +44,9 @@ export function MasterDataEditor({ view }: { view: EditorView }) {
     && (!normalized || `${row.sku} ${row.chineseName} ${row.englishName} ${row.category} ${row.seriesName}`.toUpperCase().includes(normalized)),
   ), [normalized, seriesFilter, view.products]);
   const currentRows = mode === "inventory" ? filteredInventory : filteredProducts;
-  const pageCount = Math.max(1, Math.ceil(currentRows.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visibleInventory = filteredInventory.slice((safePage - 1) * pageSize, safePage * pageSize);
-  const visibleProducts = filteredProducts.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const { visible: visibleCurrentRows, hasMore, sentinelRef } = useInfiniteRows<EditableInventoryRow | EditableProductRow>(currentRows, pageSize);
+  const visibleInventory = mode === "inventory" ? visibleCurrentRows as EditableInventoryRow[] : [];
+  const visibleProducts = mode === "product" ? visibleCurrentRows as EditableProductRow[] : [];
   const dirtyInventory = view.inventories.filter((row) => !same(inventoryDrafts[inventoryKey(row)], inventorySaved[inventoryKey(row)]));
   const dirtyProducts = view.products.filter((row) => !same(productDrafts[row.sku], productSaved[row.sku]));
   const dirtyCount = mode === "inventory" ? dirtyInventory.length : dirtyProducts.length;
@@ -125,13 +124,13 @@ export function MasterDataEditor({ view }: { view: EditorView }) {
     <OpsCard>
       <div className="flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex w-fit rounded-lg bg-slate-100 p-1">
-          <ModeButton active={mode === "inventory"} onClick={() => { setMode("inventory"); setPage(1); }}><Boxes className="h-4 w-4" />库存数据</ModeButton>
-          <ModeButton active={mode === "product"} onClick={() => { setMode("product"); setPage(1); }}><PackageSearch className="h-4 w-4" />产品主数据</ModeButton>
+          <ModeButton active={mode === "inventory"} onClick={() => setMode("inventory")}><Boxes className="h-4 w-4" />库存数据</ModeButton>
+          <ModeButton active={mode === "product"} onClick={() => setMode("product")}><PackageSearch className="h-4 w-4" />产品主数据</ModeButton>
         </div>
         <div className="grid flex-1 gap-2 sm:grid-cols-2 xl:max-w-4xl xl:grid-cols-[120px_minmax(250px,1fr)_minmax(220px,1fr)]">
-          {mode === "inventory" ? <select aria-label="在线编辑市场" value={market} onChange={(event) => { setMarket(event.target.value as "US" | "CA"); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="US">美国库存</option><option value="CA">加拿大库存</option></select> : <Link href="/inventory/costs" className="inline-flex items-center justify-center border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">产品成本另页维护</Link>}
-          <select aria-label="在线编辑系列筛选" value={seriesFilter} onChange={(event) => { setSeriesFilter(event.target.value); setPage(1); }} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部系列</option>{view.series.map((series) => <option key={series.id} value={series.id}>{series.kind === "variant" ? "系列" : "待归"} · {series.name} · {series.skuCount}</option>)}</select>
-          <label className="relative"><span className="sr-only">搜索在线数据</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索在线数据" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索 SKU、产品或系列" className="w-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm" /></label>
+          {mode === "inventory" ? <select aria-label="在线编辑市场" value={market} onChange={(event) => setMarket(event.target.value as "US" | "CA")} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="US">美国库存</option><option value="CA">加拿大库存</option></select> : <Link href="/inventory/costs" className="inline-flex items-center justify-center border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">产品成本另页维护</Link>}
+          <select aria-label="在线编辑系列筛选" value={seriesFilter} onChange={(event) => setSeriesFilter(event.target.value)} className="border border-slate-200 bg-white px-3 py-2 text-sm"><option value="ALL">全部系列</option>{view.series.map((series) => <option key={series.id} value={series.id}>{series.kind === "variant" ? "系列" : "待归"} · {series.name} · {series.skuCount}</option>)}</select>
+          <label className="relative"><span className="sr-only">搜索在线数据</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input aria-label="搜索在线数据" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 SKU、产品或系列" className="w-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm" /></label>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
@@ -145,7 +144,7 @@ export function MasterDataEditor({ view }: { view: EditorView }) {
     <OpsCard>
       <OpsCardHeader title={mode === "inventory" ? `${market} 库存在线编辑` : "产品主数据在线编辑"} description={`当前筛选 ${currentRows.length} 个 SKU，${onlineCount} 个采用在线值，${dirtyCount ? `${dirtyCount} 个修改尚未保存` : "所有修改均已同步"}。`} action={<OpsBadge tone={dirtyCount ? "amber" : "emerald"}>{dirtyCount ? `${dirtyCount} 项待保存` : "数据已同步"}</OpsBadge>} />
       {mode === "inventory" ? <InventoryTable rows={visibleInventory} drafts={inventoryDrafts} saved={inventorySaved} meta={inventoryMeta} onChange={patchInventory} /> : <ProductTable rows={visibleProducts} drafts={productDrafts} saved={productSaved} meta={productMeta} onChange={patchProduct} />}
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500"><span>显示 {mode === "inventory" ? visibleInventory.length : visibleProducts.length} / {currentRows.length} 项 · 第 {safePage}/{pageCount} 页</span><div className="flex gap-2"><button type="button" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="border border-slate-200 px-3 py-1.5 disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="border border-slate-200 px-3 py-1.5 disabled:opacity-40">下一页</button></div></div>
+      <div ref={sentinelRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500">显示 {mode === "inventory" ? visibleInventory.length : visibleProducts.length} / {currentRows.length} 项 · {hasMore ? "继续下滑加载" : "已显示全部"}</div>
     </OpsCard>
 
     <details className="border border-slate-200 bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold">可编辑与只读数据边界</summary><div className="grid gap-3 border-t border-slate-100 p-4 text-xs leading-5 text-slate-600 md:grid-cols-3"><p><strong className="text-slate-900">库存源字段：</strong>FBA 可售、AWD 可用、AWD 调拨/入库和共享国内库存可在线维护。</p><p><strong className="text-slate-900">产品主数据：</strong>名称、品类、包装、装箱量、单品重量和外箱尺寸可在线维护。</p><p><strong className="text-slate-900">只读派生数据：</strong>销量、订单、覆盖天数、风险、发货和采购建议由系统根据源字段重新计算。</p></div></details>

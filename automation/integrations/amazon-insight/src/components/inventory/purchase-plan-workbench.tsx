@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsKpi } from "@/components/inventory/ops-ui";
 import { InventoryStockVisual } from "@/components/inventory/inventory-stock-visual";
+import { useInfiniteRows } from "@/components/inventory/use-infinite-rows";
 import type { PurchasePlanData, PurchasePlanRow } from "@/lib/inventory/contracts";
 import type { PurchasePlanCycleStatus } from "@/lib/inventory/purchase-plan-store";
 import { days, integer } from "@/lib/inventory/presentation";
@@ -42,7 +43,6 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
   const reconciliationRows = useMemo(() => data.rows.filter((row) => row.manualPlannedQty > 0 || row.actualOrderedQty > 0).sort((a, b) => Math.abs(b.varianceQty) - Math.abs(a.varianceQty) || b.actualOrderedQty - a.actualOrderedQty), [data.rows]);
   const [view, setView] = useState<View>("next");
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
   const [drafts, setDrafts] = useState<Record<string, DraftValue>>(() => Object.fromEntries(nextCandidates.map((row) => [row.sku, { quantity: row.suggestedPurchaseQty, note: row.seasonalAction?.reason ?? "" }])));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -68,9 +68,7 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
   const visibleNext = nextCandidates.filter((row) => !normalizedQuery || `${row.sku} ${row.productName} ${row.factory}`.toUpperCase().includes(normalizedQuery));
   const visibleReconciliation = reconciliationRows.filter((row) => !normalizedQuery || `${row.sku} ${row.productName} ${row.factory} ${row.orders.map((order) => order.poNumber).join(" ")}`.toUpperCase().includes(normalizedQuery));
   const currentRows = view === "next" ? visibleNext : visibleReconciliation;
-  const pageCount = Math.max(1, Math.ceil(currentRows.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const pageStart = (safePage - 1) * pageSize;
+  const { visible, hasMore, sentinelRef } = useInfiniteRows(currentRows, pageSize);
   const draftUnits = nextCandidates.reduce((sum, row) => sum + (drafts[row.sku]?.quantity ?? 0), 0);
   const draftSkuCount = nextCandidates.filter((row) => (drafts[row.sku]?.quantity ?? 0) > 0).length;
   const blockedPurchaseRows = seasonalActions.filter((action) => action.blockPurchase);
@@ -165,11 +163,11 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
 
     <OpsCard>
       <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex gap-1 rounded-lg bg-slate-100 p-1"><ViewButton active={view === "next"} onClick={() => { setView("next"); setPage(1); }}>下期采购草稿</ViewButton><ViewButton active={view === "reconcile"} onClick={() => { setView("reconcile"); setPage(1); }}>本轮采购复盘</ViewButton></div>
-        <label className="relative w-full lg:w-80"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索 SKU、产品、供应商或订单号" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500" /></label>
+        <div className="flex gap-1 rounded-lg bg-slate-100 p-1"><ViewButton active={view === "next"} onClick={() => setView("next")}>下期采购草稿</ViewButton><ViewButton active={view === "reconcile"} onClick={() => setView("reconcile")}>本轮采购复盘</ViewButton></div>
+        <label className="relative w-full lg:w-80"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 SKU、产品、供应商或订单号" className="w-full border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500" /></label>
       </div>
-      {view === "next" ? <NextPlanTable rows={visibleNext.slice(pageStart, pageStart + pageSize)} drafts={drafts} onChange={updateDraft} editable={cycleStatus === "DRAFT"} /> : <ReconciliationTable rows={visibleReconciliation.slice(pageStart, pageStart + pageSize)} />}
-      <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500"><span>{currentRows.length} 个 SKU · 第 {safePage}/{pageCount} 页</span><div className="flex gap-2"><button type="button" disabled={safePage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">下一页</button></div></div>
+      {view === "next" ? <NextPlanTable rows={visible as PurchaseCandidate[]} drafts={drafts} onChange={updateDraft} editable={cycleStatus === "DRAFT"} /> : <ReconciliationTable rows={visible as PurchasePlanRow[]} />}
+      <div ref={sentinelRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500">显示 {visible.length} / {currentRows.length} 个 SKU · {hasMore ? "继续下滑加载" : "已显示全部"}</div>
     </OpsCard>
 
     <details className="group border border-slate-200 bg-white"><summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 marker:content-none"><span className="flex items-center gap-2 text-sm font-semibold text-slate-900"><ShoppingCart className="h-4 w-4 text-emerald-700" />数据口径与自动化来源</span><span className="text-xs text-slate-500">{data.sources.length} 个来源 · 点击查看</span></summary><div className="grid gap-3 border-t border-slate-100 p-4 md:grid-cols-2 xl:grid-cols-4">{data.sources.map((source) => <div key={`${source.kind}-${source.path}-${source.sheet ?? ""}`} className="border border-slate-200 bg-slate-50 px-3 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{source.kind}</p><p className="mt-1 truncate text-xs font-medium text-slate-700" title={source.path}>{source.path}</p>{source.sheet ? <p className="mt-1 text-[10px] text-slate-500">{source.sheet} · {source.column} 列 · {source.header}</p> : null}</div>)}</div></details>

@@ -32,7 +32,7 @@ import {
 
 type SortKey = "risk" | "sku" | "monthlySales" | "inventory" | "cover" | "shipment" | "purchase" | "seasonality";
 type SortDirection = "asc" | "desc";
-type StockSource = "all" | "fba" | "awd" | "domestic" | "pending";
+type StockSource = "all" | "fba" | "awd" | "transit" | "domestic" | "pending";
 type SeasonFilter = "all" | SeasonalityBand | "upcoming";
 type PurchaseFilter = "all" | "recommended" | "none";
 type SalesFilter = "all" | "selling" | "zero" | "growing" | "declining";
@@ -62,9 +62,9 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
       latestMonthlySales: latestMonthlyUnits(history, latestSalesMonth),
       averageThreeMonths: trailingAverage(history, 3),
       trendPercent: salesTrendPercent(history, 3),
-      networkInventory: row.fbaSellable + row.awdAvailable + row.awdOutboundToFba,
-      availableInventory: row.fbaSellable + row.awdAvailable + row.awdOutboundToFba + row.localInventory,
-      supplyTotal: row.fbaSellable + row.awdAvailable + row.awdOutboundToFba + row.localInventory + row.pendingOrderQty,
+      networkInventory: row.eligibleInventoryPosition,
+      availableInventory: row.eligibleInventoryPosition + row.localInventory,
+      supplyTotal: row.eligibleInventoryPosition + row.localInventory + row.pendingOrderQty,
       suggestedPurchaseQty: purchaseBySku.get(row.sku)?.suggestedPurchaseQty ?? 0,
       wholeCartonReadyQty: Math.floor(row.readyToShipQty / Math.max(1, row.cartonQty ?? 1)) * Math.max(1, row.cartonQty ?? 1),
     };
@@ -115,6 +115,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
       if (coverFilter === "unknown" && row.daysCoverNetwork !== null) return false;
       if (stockSource === "fba" && row.fbaSellable <= 0) return false;
       if (stockSource === "awd" && row.awdAvailable + row.awdOutboundToFba <= 0) return false;
+      if (stockSource === "transit" && row.inTransitInventory <= 0) return false;
       if (stockSource === "domestic" && row.localInventory <= 0) return false;
       if (stockSource === "pending" && row.pendingOrderQty <= 0) return false;
       return true;
@@ -140,9 +141,11 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
     sku: row.sku,
     FBA: row.fbaSellable,
     AWD: row.awdAvailable + row.awdOutboundToFba,
+    在途: row.inTransitInventory,
     国内现货: row.localInventory,
     未完工: row.pendingOrderQty,
     月销量: row.latestMonthlySales,
+    "90天需求": Math.ceil(row.dailySales * data.parameters.targetCoverDays),
   }));
   const aggregateHistory = aggregateCalendarSeasonality(filtered.map((row) => row.history));
   const aggregateSeasonality = buildSeasonalityProfile(aggregateHistory, currentMonth);
@@ -156,7 +159,11 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
   const networkInventory = filtered.reduce((sum, row) => sum + row.networkInventory, 0);
   const localInventory = filtered.reduce((sum, row) => sum + row.localInventory, 0);
   const pendingOrders = filtered.reduce((sum, row) => sum + row.pendingOrderQty, 0);
+  const inTransit = filtered.reduce((sum, row) => sum + row.inTransitInventory, 0);
+  const awdInventory = filtered.reduce((sum, row) => sum + row.awdAvailable + row.awdOutboundToFba, 0);
+  const totalSupply = networkInventory + localInventory + pendingOrders;
   const dailySales = filtered.reduce((sum, row) => sum + row.dailySales, 0);
+  const targetDemand = Math.ceil(dailySales * data.parameters.targetCoverDays);
   const weightedCover = dailySales > 0 ? networkInventory / dailySales : null;
   const critical = filtered.filter((row) => row.riskLevel === "critical").length;
   const topSupplyRow = [...filtered].sort((left, right) => right.supplyTotal - left.supplyTotal)[0];
@@ -232,8 +239,8 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
   return <div className="space-y-5">
     <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <OpsKpi label="筛选 SKU" value={integer(filtered.length)} detail={`全部 ${integer(calculated.length)} 个 SKU`} />
-      <OpsKpi label="海外可用库存" value={integer(networkInventory)} detail={`综合覆盖 ${days(weightedCover)}`} />
-      <OpsKpi label="共享国内库存池" value={integer(localInventory)} detail={`共享未完工 ${integer(pendingOrders)} 件 · 美加共用`} />
+      <OpsKpi label="FBA + AWD + 在途" value={integer(networkInventory)} detail={`综合覆盖 ${days(weightedCover)} · 在途 ${integer(inTransit)}`} />
+      <OpsKpi label="全链路供应" value={integer(totalSupply)} detail={`国内现货 ${integer(localInventory)} · 未完工 ${integer(pendingOrders)}`} />
       <OpsKpi label={`${latestSalesMonth} 月销量`} value={integer(monthlySales)} detail="当前可识别的最新实际月份" tone="positive" />
       <OpsKpi label="紧急 SKU" value={integer(critical)} detail="库存覆盖短于海运船期" tone={critical ? "danger" : "positive"} />
       <OpsKpi label="季节位置" value={seasonLabel(aggregateSeasonality.band, (aggregateSeasonality.nextQuarterFactor ?? 0) >= 1.15)} detail={`当前 ${currentMonth} 月 · 指数 ${formatFactor(aggregateSeasonality.currentFactor)}`} tone={aggregateSeasonality.band === "peak" ? "warning" : "default"} />
@@ -261,7 +268,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
         <label className="relative 2xl:col-span-2"><span className="sr-only">搜索 SKU 或产品</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => changeFilter(() => setQuery(event.target.value))} placeholder="搜索 SKU 或产品名称" className="w-full border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" /></label>
         <FilterSelect label="库存状态" value={risk} onChange={(value) => changeFilter(() => setRisk(value as typeof risk))} options={[['all','全部状态'],['critical','紧急'],['watch','关注'],['healthy','健康'],['excess','库存过量'],['data','数据待补']]} />
         <FilterSelect label="SKU 系列" value={prefix} onChange={(value) => changeFilter(() => setPrefix(value))} options={[["all","全部系列"], ...prefixes.map((item) => [item,item] as [string,string])]} />
-        <FilterSelect label="库存来源" value={stockSource} onChange={(value) => changeFilter(() => setStockSource(value as StockSource))} options={[['all','全部来源'],['fba','有 FBA 库存'],['awd','有 AWD 库存'],['domestic','有共享国内现货'],['pending','有共享未完工订单']]} />
+        <FilterSelect label="库存来源" value={stockSource} onChange={(value) => changeFilter(() => setStockSource(value as StockSource))} options={[['all','全部来源'],['fba','有 FBA 库存'],['awd','有 AWD 库存'],['transit','有在途库存'],['domestic','有共享国内现货'],['pending','有共享未完工订单']]} />
         <FilterSelect label="季节位置" value={season} onChange={(value) => changeFilter(() => setSeason(value as SeasonFilter))} options={[['all','全部季节'],['peak','旺季中'],['upcoming','旺季将至'],['steady','相对平稳'],['low','淡季'],['insufficient','样本不足']]} />
         <FilterSelect label="采购建议" value={purchaseFilter} onChange={(value) => changeFilter(() => setPurchaseFilter(value as PurchaseFilter))} options={[['all','全部采购状态'],['recommended','仅看建议采购'],['none','无需采购']]} />
         <FilterSelect label="销量状态" value={salesFilter} onChange={(value) => changeFilter(() => setSalesFilter(value as SalesFilter))} options={[['all','全部销量状态'],['selling','当前有销量'],['zero','当前零销量'],['growing','销量增长 >10%'],['declining','销量下降 >10%']]} />
@@ -271,7 +278,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
     </OpsCard>
 
     <div className="grid gap-4 xl:grid-cols-[1.45fr_.75fr]">
-      <OpsCard><OpsCardHeader title="主要 SKU 库存结构" description={topSupplyRow ? `${topSupplyRow.sku} 供应总量最高（${integer(topSupplyRow.supplyTotal)} 件），${latestSalesMonth} 销量为 ${integer(topSupplyRow.latestMonthlySales)} 件。` : "当前筛选没有可展示的库存 SKU。"} /><div className="h-[330px] p-4" role="img" aria-label="主要 SKU 的 FBA、AWD、国内现货、未完工订单与月销量对比图"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartRows} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}><CartesianGrid stroke="#e5e7eb" vertical={false} /><XAxis dataKey="sku" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis yAxisId="stock" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis yAxisId="sales" orientation="right" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip /><Legend wrapperStyle={{ fontSize: 11 }} /><Bar yAxisId="stock" dataKey="FBA" stackId="stock" fill="#0f766e" /><Bar yAxisId="stock" dataKey="AWD" stackId="stock" fill="#38bdf8" /><Bar yAxisId="stock" dataKey="国内现货" stackId="stock" fill="#2563eb" /><Bar yAxisId="stock" dataKey="未完工" stackId="stock" fill="#d97706" /><Line yAxisId="sales" type="monotone" dataKey="月销量" stroke="#be123c" strokeWidth={2} dot={{ r: 2 }} /></ComposedChart></ResponsiveContainer></div></OpsCard>
+      <OpsCard><OpsCardHeader title="库存供应链全景" description={topSupplyRow ? `${topSupplyRow.sku} 全链路供应 ${integer(topSupplyRow.supplyTotal)} 件；虚线为 ${data.parameters.targetCoverDays} 天目标需求，月销量用于观察当前销售节奏。` : "当前筛选没有可展示的库存 SKU。"} /><div className="h-[350px] p-4" role="img" aria-label={`主要 SKU 的 FBA、AWD、在途、国内现货、未完工订单与 ${data.parameters.targetCoverDays} 天需求对比图`}><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chartRows} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}><CartesianGrid stroke="#e5e7eb" vertical={false} /><XAxis dataKey="sku" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis yAxisId="stock" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis yAxisId="sales" orientation="right" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value, name) => [`${integer(Number(value))} 件`, name]} /><Legend wrapperStyle={{ fontSize: 11 }} /><Bar yAxisId="stock" dataKey="FBA" name="FBA 可售" stackId="stock" fill="#0f766e" /><Bar yAxisId="stock" dataKey="AWD" name="AWD 可用/转出" stackId="stock" fill="#38bdf8" /><Bar yAxisId="stock" dataKey="在途" name="在途库存" stackId="stock" fill="#06b6d4" /><Bar yAxisId="stock" dataKey="国内现货" name="国内现货" stackId="stock" fill="#2563eb" /><Bar yAxisId="stock" dataKey="未完工" name="未完工订单" stackId="stock" fill="#d97706" /><Line yAxisId="stock" type="monotone" dataKey="90天需求" name={`${data.parameters.targetCoverDays} 天需求`} stroke="#be123c" strokeWidth={2.5} strokeDasharray="6 4" dot={{ r: 2 }} /><Line yAxisId="sales" type="monotone" dataKey="月销量" name={`${latestSalesMonth} 月销量`} stroke="#7c3aed" strokeWidth={2} dot={{ r: 2 }} /></ComposedChart></ResponsiveContainer></div><div className="grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-5"><SupplyLegend label="FBA" value={filtered.reduce((sum, row) => sum + row.fbaSellable, 0)} tone="bg-emerald-600" /><SupplyLegend label="AWD" value={awdInventory} tone="bg-sky-400" /><SupplyLegend label="在途" value={inTransit} tone="bg-cyan-500" /><SupplyLegend label="国内现货" value={localInventory} tone="bg-blue-600" /><SupplyLegend label="未完工订单" value={pendingOrders} tone="bg-amber-500" /></div><div className={`border-t px-4 py-3 text-xs ${totalSupply >= targetDemand ? "border-emerald-100 bg-emerald-50 text-emerald-800" : "border-rose-100 bg-rose-50 text-rose-800"}`}>当前筛选全链路供应 {integer(totalSupply)} 件，{data.parameters.targetCoverDays} 天需求 {integer(targetDemand)} 件，{totalSupply >= targetDemand ? "整体达到目标覆盖" : "仍有供应缺口，优先检查在途和国内订单"}。</div></OpsCard>
       <OpsCard><OpsCardHeader title="季节销量指数" description={aggregateSeasonality.currentFactor === null ? "当前筛选样本不足，暂不能判断季节位置。" : `当前 ${currentMonth} 月指数 ${formatFactor(aggregateSeasonality.currentFactor)}，历史旺季集中在 ${peakMonths || "暂无明确月份"}。`} /><div className="h-[330px] p-4" role="img" aria-label="一月至十二月的季节销量指数"><ResponsiveContainer width="100%" height="100%"><BarChart data={seasonChart} margin={{ top: 18, right: 4, left: -18, bottom: 0 }}><CartesianGrid stroke="#e5e7eb" vertical={false} /><XAxis dataKey="month" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis domain={[0, "dataMax + 20"]} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => [`${value}%`, "季节指数"]} /><Bar dataKey="index" radius={[3,3,0,0]}>{seasonChart.map((point) => <Cell key={point.month} fill={point.monthNumber === currentMonth ? "#0f766e" : point.index >= 120 ? "#d97706" : "#94a3b8"} />)}</Bar></BarChart></ResponsiveContainer></div><div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">历史旺季：{aggregateSeasonality.peakMonths.map((month) => `${month}月`).join("、") || "样本不足"} · 未来三个月指数 {formatFactor(aggregateSeasonality.nextQuarterFactor)}</div></OpsCard>
     </div>
 
@@ -282,14 +289,14 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
         <SortableHeader label={`${latestSalesMonth} 月销量`} column="monthlySales" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
         <th className="px-3 py-3 text-right">近3月均销</th><th className="px-3 py-3">销量趋势</th>
         <SortableHeader label="季节性" column="seasonality" current={sortKey} direction={sortDirection} onSort={changeSort} />
-        <th className="px-3 py-3 text-right">FBA</th><th className="px-3 py-3 text-right">AWD</th><th className="px-3 py-3 text-right">共享国内现货</th><th className="px-3 py-3 text-right">共享未完工</th>
+        <th className="px-3 py-3 text-right">FBA</th><th className="px-3 py-3 text-right">AWD</th><th className="px-3 py-3 text-right">在途</th><th className="px-3 py-3 text-right">共享国内现货</th><th className="px-3 py-3 text-right">共享未完工</th>
         <SortableHeader label="供应总量" column="inventory" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
         <SortableHeader label="海外覆盖" column="cover" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
         <SortableHeader label="状态" column="risk" current={sortKey} direction={sortDirection} onSort={changeSort} />
         <SortableHeader label="建议发货" column="shipment" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
         <th className="px-4 py-3 text-right">发货计划</th>
         <SortableHeader label="建议采购" column="purchase" current={sortKey} direction={sortDirection} onSort={changeSort} align="right" />
-      </tr></thead><tbody className="divide-y divide-slate-100">{visible.map((row) => <tr key={row.sku} className="hover:bg-slate-50"><td className="px-4 py-3"><Link href={marketHref(`/inventory/sku/${encodeURIComponent(row.sku)}`, data.market)} className="font-mono font-semibold text-emerald-700 hover:underline">{row.sku}</Link><p className="mt-1 max-w-72 truncate text-slate-500">{row.productName}</p></td><td className="px-3 py-3 text-right text-sm font-semibold text-slate-900">{integer(row.latestMonthlySales)}</td><td className="px-3 py-3 text-right">{integer(row.averageThreeMonths)}</td><td className="px-3 py-3"><SalesSparkline history={row.history.slice(-12)} trend={row.trendPercent} /></td><td className="px-3 py-3"><OpsBadge tone={seasonTone(row.seasonality.band, row.upcomingPeak)}>{seasonLabel(row.seasonality.band, row.upcomingPeak)}</OpsBadge><p className="mt-1 text-[10px] text-slate-400">旺季 {row.seasonality.peakMonths.map((month) => `${month}月`).join("/") || "—"}</p></td><td className="px-3 py-3 text-right">{integer(row.fbaSellable)}</td><td className="px-3 py-3 text-right">{integer(row.awdAvailable + row.awdOutboundToFba)}</td><td className="px-3 py-3 text-right font-medium text-blue-700">{integer(row.localInventory)}</td><td className="px-3 py-3 text-right text-amber-700">{integer(row.pendingOrderQty)}</td><td className="px-3 py-3 text-right font-semibold">{integer(row.supplyTotal)}</td><td className="px-3 py-3 text-right">{days(row.daysCoverNetwork)}</td><td className="px-3 py-3"><OpsBadge tone={riskTones[row.riskLevel]}>{riskLabels[row.riskLevel]}</OpsBadge></td><td className="px-4 py-3 text-right font-semibold text-emerald-700">{integer(row.suggestedShipmentQty)}</td><td className="px-4 py-3 text-right">{row.wholeCartonReadyQty > 0 ? <button type="button" disabled={planSkus.has(row.sku) || Boolean(planBusySku)} onClick={() => void addToShipmentPlan(row)} className="inline-flex items-center gap-1 text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"><Plus className="h-3.5 w-3.5" />{planSkus.has(row.sku) ? "已在计划" : planBusySku === row.sku ? "加入中…" : `加入 ${integer(row.wholeCartonReadyQty)} 件`}</button> : <span className="text-slate-400">无整箱国内现货</span>}</td><td className="px-4 py-3 text-right font-semibold text-blue-700">{row.suggestedPurchaseQty > 0 ? integer(row.suggestedPurchaseQty) : <span className="font-normal text-slate-400">—</span>}</td></tr>)}</tbody></table></div>
+      </tr></thead><tbody className="divide-y divide-slate-100">{visible.map((row) => <tr key={row.sku} className="hover:bg-slate-50"><td className="px-4 py-3"><Link href={marketHref(`/inventory/sku/${encodeURIComponent(row.sku)}`, data.market)} className="font-mono font-semibold text-emerald-700 hover:underline">{row.sku}</Link><p className="mt-1 max-w-72 truncate text-slate-500">{row.productName}</p></td><td className="px-3 py-3 text-right text-sm font-semibold text-slate-900">{integer(row.latestMonthlySales)}</td><td className="px-3 py-3 text-right">{integer(row.averageThreeMonths)}</td><td className="px-3 py-3"><SalesSparkline history={row.history.slice(-12)} trend={row.trendPercent} /></td><td className="px-3 py-3"><OpsBadge tone={seasonTone(row.seasonality.band, row.upcomingPeak)}>{seasonLabel(row.seasonality.band, row.upcomingPeak)}</OpsBadge><p className="mt-1 text-[10px] text-slate-400">旺季 {row.seasonality.peakMonths.map((month) => `${month}月`).join("/") || "—"}</p></td><td className="px-3 py-3 text-right">{integer(row.fbaSellable)}</td><td className="px-3 py-3 text-right">{integer(row.awdAvailable + row.awdOutboundToFba)}</td><td className="px-3 py-3 text-right font-medium text-cyan-700">{integer(row.inTransitInventory)}</td><td className="px-3 py-3 text-right font-medium text-blue-700">{integer(row.localInventory)}</td><td className="px-3 py-3 text-right text-amber-700">{integer(row.pendingOrderQty)}</td><td className="px-3 py-3 text-right font-semibold">{integer(row.supplyTotal)}</td><td className="px-3 py-3 text-right">{days(row.daysCoverNetwork)}</td><td className="px-3 py-3"><OpsBadge tone={riskTones[row.riskLevel]}>{riskLabels[row.riskLevel]}</OpsBadge></td><td className="px-4 py-3 text-right font-semibold text-emerald-700">{integer(row.suggestedShipmentQty)}</td><td className="px-4 py-3 text-right">{row.wholeCartonReadyQty > 0 ? <button type="button" disabled={planSkus.has(row.sku) || Boolean(planBusySku)} onClick={() => void addToShipmentPlan(row)} className="inline-flex items-center gap-1 text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"><Plus className="h-3.5 w-3.5" />{planSkus.has(row.sku) ? "已在计划" : planBusySku === row.sku ? "加入中…" : `加入 ${integer(row.wholeCartonReadyQty)} 件`}</button> : <span className="text-slate-400">无整箱国内现货</span>}</td><td className="px-4 py-3 text-right font-semibold text-blue-700">{row.suggestedPurchaseQty > 0 ? integer(row.suggestedPurchaseQty) : <span className="font-normal text-slate-400">—</span>}</td></tr>)}</tbody></table></div>
       {!visible.length ? <div className="p-10 text-center text-sm text-slate-500">没有符合当前筛选条件的 SKU。</div> : null}
       {visible.length ? <div ref={loadMoreRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500" aria-live="polite">{hasMore ? `继续下滑自动加载，已显示 ${integer(visible.length)} / ${integer(filtered.length)}` : `已显示全部 ${integer(filtered.length)} 个 SKU`}</div> : null}
     </OpsCard>
@@ -308,6 +315,10 @@ function SortableHeader({ label, column, current, direction, onSort, align = "le
 function SalesSparkline({ history, trend }: { history: Array<{ month: string; units: number }>; trend: number | null }) {
   const maximum = Math.max(1, ...history.map((point) => point.units));
   return <div className="flex items-center gap-2"><div className="flex h-7 w-24 items-end gap-[2px]" aria-label={`最近 ${history.length} 个月销量趋势`}>{history.map((point) => <span key={point.month} className="min-w-0 flex-1 bg-emerald-500/70" style={{ height: `${Math.max(8, point.units / maximum * 100)}%` }} />)}</div><span className={`w-12 text-right text-[10px] font-medium ${trend === null ? "text-slate-400" : trend > 10 ? "text-emerald-700" : trend < -10 ? "text-rose-700" : "text-slate-500"}`}>{trend === null ? "—" : `${trend >= 0 ? "+" : ""}${trend.toFixed(0)}%`}</span></div>;
+}
+
+function SupplyLegend({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return <div className="bg-white px-3 py-2.5"><div className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`h-2 w-2 ${tone}`} />{label}</div><p className="mt-1 font-mono text-sm font-semibold text-slate-900">{integer(value)}</p></div>;
 }
 
 function seasonLabel(band: SeasonalityBand, upcomingPeak: boolean) { return upcomingPeak ? "旺季将至" : seasonLabels[band]; }

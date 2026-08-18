@@ -8,7 +8,9 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
 import { CanceledPurchaseOrders, OrderLine } from "@/components/inventory/pending-orders";
 import { SkuOrderHistory } from "@/components/inventory/sku-order-history";
+import { SkuShipmentHistory } from "@/components/inventory/sku-shipment-history";
 import type { ProductCatalogItem } from "@/lib/inventory/contracts";
+import type { ShipmentHistoryItem } from "@/lib/inventory/data";
 import type { PurchaseOrderReview } from "@/lib/inventory/purchase-order-reviews";
 import type { SkuPurchaseOrderDetail } from "@/lib/inventory/purchase-orders";
 import {
@@ -24,7 +26,7 @@ import {
 } from "@/lib/inventory/presentation";
 import type { SkuDetailViewModel } from "@/lib/inventory/sku-detail-view-model";
 
-export function SkuDetailDashboard({ dashboard, product, sku, canceledOrders, purchaseOrders }: { dashboard: SkuDetailViewModel; product: ProductCatalogItem | null; sku: string; canceledOrders: PurchaseOrderReview[]; purchaseOrders: SkuPurchaseOrderDetail[] }) {
+export function SkuDetailDashboard({ dashboard, product, sku, canceledOrders, purchaseOrders, shipmentHistory }: { dashboard: SkuDetailViewModel; product: ProductCatalogItem | null; sku: string; canceledOrders: PurchaseOrderReview[]; purchaseOrders: SkuPurchaseOrderDetail[]; shipmentHistory: ShipmentHistoryItem[] }) {
   const { row, variant, engineeringSpecifications, campaigns } = dashboard;
   const fullCurrency = (value: number) => formatCurrency(value, dashboard.currency);
   const adSpend = campaigns.reduce((sum, item) => sum + item.spend, 0);
@@ -39,7 +41,7 @@ export function SkuDetailDashboard({ dashboard, product, sku, canceledOrders, pu
     { label: "FBA 可售", value: row.fbaSellable, fill: "#0f766e" },
     { label: "AWD 可用", value: row.awdAvailable, fill: "#64748b" },
     { label: "AWD→FBA", value: row.awdOutboundToFba, fill: "#d97706" },
-    { label: "AWD 入库", value: row.awdInbound, fill: "#94a3b8" },
+    { label: "在途库存", value: row.inTransitInventory, fill: "#06b6d4" },
     { label: "共享国内现货", value: row.localInventory, fill: "#2563eb" },
     { label: "共享未完工订单", value: row.pendingOrderQty, fill: "#d97706" },
   ];
@@ -61,6 +63,8 @@ export function SkuDetailDashboard({ dashboard, product, sku, canceledOrders, pu
     {row.pendingOrders.length ? <details id="pending-orders" className={`rounded-2xl border bg-white ${row.pendingOrders.some((order) => order.overdue) ? "border-rose-200" : "border-slate-200"}`}><summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4"><div><p className="text-sm font-semibold text-slate-900">进行中采购订单</p><p className="mt-1 text-xs text-slate-500">点击查看下单日期、订单数量、未完工数量和订单号；逾期任务可人工核查后取消</p></div><OpsBadge tone={row.pendingOrders.some((order) => order.overdue) ? "rose" : "blue"}>{integer(row.pendingOrderQty)} 件 · {row.pendingOrders.length} 单</OpsBadge></summary><div className="grid gap-x-5 border-t border-slate-100 px-5 py-1 md:grid-cols-2 xl:grid-cols-3">{row.pendingOrders.map((order) => <OrderLine key={`${order.poNumber}-${order.poDate}`} order={order} sku={sku} market={dashboard.market} />)}</div></details> : null}
 
     <CanceledPurchaseOrders reviews={canceledOrders} />
+
+    <SkuShipmentHistory history={shipmentHistory} sku={sku} />
 
     <SkuOrderHistory orders={purchaseOrders} sku={sku} />
 

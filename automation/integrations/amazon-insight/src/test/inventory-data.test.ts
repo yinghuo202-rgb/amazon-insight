@@ -32,7 +32,7 @@ describe("multi-market inventory data", () => {
     expect(inventory?.domesticSupplyTotal).toBeGreaterThanOrEqual(0);
     expect(inventory?.salesHistoryByMonth).toHaveLength(31);
     expect(inventory?.salesHistoryByMonth[0]).toEqual({ month: "2024-01", units: 1238 });
-    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 1488 });
+    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 1492 });
     expect(data.summary.overduePurchaseOrderCount).toBeGreaterThan(0);
     expect(data.rows.some((row) => row.pendingOrders.some((order) => order.overdue && order.poNumber && order.orderedQuantity > 0))).toBe(true);
     expect(product?.fnsku).toBe("X0027UQ1I7");
@@ -51,7 +51,7 @@ describe("multi-market inventory data", () => {
     expect(data.sales.historyMonths).toHaveLength(31);
     expect(inventory?.salesHistoryByMonth).toHaveLength(31);
     expect(inventory?.salesHistoryByMonth[0]).toEqual({ month: "2024-01", units: 58 });
-    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 323 });
+    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 266 });
   });
 
   it("loads copy, main-image, and A+ draft tasks from product and creative sources", async () => {
@@ -99,7 +99,12 @@ describe("multi-market inventory data", () => {
     expect(data.summary.varianceQuantity).toBe(actualOrderQuantity - manualPlanQuantity);
     expect(data.summary.manualPlanSkuCount).toBe(data.rows.filter((row) => row.manualPlannedQty > 0).length);
     expect(data.summary.actualOrderSkuCount).toBe(data.rows.filter((row) => row.actualOrderedQty > 0).length);
-    expect(ma007?.caPlannedQty).toBe(500);
+    expect(data.parameters.demandHorizonDays).toBe(90);
+    expect(ma007?.caPlannedQty).toBe(0);
+    expect(data.sources.filter((source) => source.kind.endsWith("purchase_allocation"))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "us_purchase_allocation", available: false }),
+      expect.objectContaining({ kind: "ca_purchase_allocation", available: false }),
+    ]));
     expect(ma007?.pendingOrderQty).toBeGreaterThanOrEqual(ma007?.actualOrderedQty ?? 0);
     expect(ma007?.unreflectedLatestOrderQty).toBeGreaterThanOrEqual(0);
   });

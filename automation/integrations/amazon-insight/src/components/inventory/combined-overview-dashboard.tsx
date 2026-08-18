@@ -24,6 +24,7 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
     .sort((left, right) => right.gap - left.gap)[0];
   const prioritySku = dashboard.priorityRows[0];
   const staleMarketCount = dashboard.snapshots.filter((snapshot) => snapshot.isStale).length;
+  const recommendations = buildOverviewRecommendations(dashboard);
 
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-2xl border border-slate-800 bg-[#0b1220] text-white shadow-[0_18px_50px_rgba(15,23,42,.16)]">
@@ -31,7 +32,7 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-blue-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300">今日经营简报</span><span className={`inline-flex items-center gap-1.5 text-[10px] ${staleMarketCount ? "text-amber-300" : "text-emerald-300"}`}><span className={`h-1.5 w-1.5 rounded-full ${staleMarketCount ? "bg-amber-400" : "bg-emerald-400"}`} />{staleMarketCount ? `${staleMarketCount} 个站点库存快照需更新` : "双站库存快照可用"}</span></div>
           <h2 className="mt-3 text-lg font-semibold tracking-[-0.02em] sm:text-xl">先处理库存缺口与采购交期，再承接增长机会</h2>
-          <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-400 sm:text-sm sm:leading-6">系统已把今天最值得关注的异常收敛为三个执行入口，点击即可进入对应工作台，无需从图表中重复查找。</p>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-400 sm:text-sm sm:leading-6">系统已按数据新鲜度、库存缺口、采购交期、广告效率和销量偏差，整理出今天最需要调整的五条建议。</p>
         </div>
         <Link href="/inventory/data" className="inline-flex w-fit items-center gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3.5 py-2.5 text-xs font-medium text-slate-200 transition hover:border-blue-400/40 hover:bg-blue-500/10 hover:text-white">检查数据新鲜度 <ArrowRight className="h-3.5 w-3.5" /></Link>
       </div>
@@ -41,6 +42,17 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
         <PriorityAction href="/inventory/advertising" icon={<Megaphone className="h-4 w-4" />} label="广告动作" value={`${integer(kpis.advertisingAdjustments)} 项待处理`} detail="按库存约束控量或扩量" tone="blue" />
       </div>
     </section>
+
+    <OpsCard className="overflow-hidden border-blue-200 bg-blue-50/20">
+      <OpsCardHeader title="最需要调整的五条建议" description="按风险优先级排序；点击建议可直接进入对应工作台执行。" action={<OpsBadge tone="blue">今日简报</OpsBadge>} />
+      <div className="divide-y divide-blue-100">
+        {recommendations.map((recommendation, index) => <Link key={`${recommendation.title}-${index}`} href={recommendation.href} className="group grid gap-3 px-4 py-4 transition hover:bg-white/80 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
+          <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-semibold ${recommendation.rankTone}`}>{index + 1}</span>
+          <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold text-slate-900">{recommendation.title}</p><OpsBadge tone={recommendation.badgeTone}>{recommendation.badge}</OpsBadge></div><p className="mt-1 text-xs leading-5 text-slate-600">{recommendation.detail}</p></div>
+          <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 group-hover:text-blue-900">去处理 <ArrowUpRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" /></span>
+        </Link>)}
+      </div>
+    </OpsCard>
 
     <section className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <OpsKpi label="双站海外库存" value={integer(kpis.networkInventory)} detail="FBA、AWD 与调拨中库存" icon={<Warehouse className="h-4 w-4" />} />
@@ -126,6 +138,49 @@ export function CombinedOverviewDashboard({ dashboard }: { dashboard: CombinedOv
       <OpsCard className={`overflow-hidden ${dashboard.overdueOrders.length ? "border-rose-200" : ""}`}><OpsCardHeader title="采购交期队列" description={dashboard.overdueOrders.length ? `${dashboard.overdueOrders.length} 条去重任务超过交期` : "当前没有超期采购任务"} action={<ClockAlert className={`h-4 w-4 ${dashboard.overdueOrders.length ? "text-rose-600" : "text-emerald-600"}`} />} />{dashboard.overdueOrders.length ? <div className="divide-y divide-slate-100">{dashboard.overdueOrders.slice(0, 8).map((order) => <Link key={order.key} href={marketHref(`/inventory/sku/${encodeURIComponent(order.sku)}#pending-orders`, order.markets.includes("US") ? "US" : "CA")} className="block px-5 py-3.5 hover:bg-rose-50/60"><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="font-mono text-xs font-semibold">{order.sku}</span><OpsBadge>{order.markets.join(" / ")}</OpsBadge></div><OpsBadge tone="rose">逾期 {order.overdueDays} 天</OpsBadge></div><p className="mt-1.5 text-[11px] text-slate-500">{order.poNumber} · 待完成 {integer(order.remainingQuantity)} 件 · {order.poDate}</p></Link>)}</div> : <div className="grid min-h-52 place-items-center p-8 text-center"><div><PackageCheck className="mx-auto h-8 w-8 text-emerald-500" /><p className="mt-3 text-sm font-semibold text-slate-800">采购交期正常</p><p className="mt-1 text-xs text-slate-500">共享国内供应池没有已识别的超期任务。</p></div></div>}</OpsCard>
     </div>
   </div>;
+}
+
+type OverviewRecommendation = {
+  title: string;
+  detail: string;
+  href: string;
+  badge: string;
+  badgeTone: "rose" | "amber" | "blue" | "emerald" | "slate";
+  rankTone: string;
+  score: number;
+};
+
+function buildOverviewRecommendations(dashboard: CombinedOverviewViewModel): OverviewRecommendation[] {
+  const recommendations: OverviewRecommendation[] = [];
+  const stale = dashboard.snapshots.filter((snapshot) => snapshot.isStale);
+  const priority = dashboard.priorityRows[0];
+  const overdue = dashboard.overdueOrders[0];
+  const advertisingGap = dashboard.advertisingEfficiency
+    .filter((item) => item.ACOS !== null)
+    .map((item) => ({ ...item, gap: Number(item.ACOS) - item.目标ACOS }))
+    .sort((left, right) => right.gap - left.gap)[0];
+  const actualMonths = dashboard.annualPerformance.filter((point) => point.美国站 + point.加拿大站 > 0);
+  const actualYtd = actualMonths.reduce((sum, point) => sum + point.美国站 + point.加拿大站, 0);
+  const planYtd = actualMonths.reduce((sum, point) => sum + point.计划销量, 0);
+  const planVariance = planYtd > 0 ? (actualYtd - planYtd) / planYtd * 100 : null;
+
+  if (stale.length) recommendations.push({ title: "先更新库存快照", detail: `${stale.map((item) => item.label).join("、")} 数据已过期，先重新导入 FBA / AWD 库存后再执行发货与采购。`, href: "/inventory/data", badge: "数据过期", badgeTone: "rose", rankTone: "bg-rose-100 text-rose-700", score: 100 });
+  else recommendations.push({ title: "保持库存快照每日更新", detail: "当前双站快照可用，继续在执行发货或采购前确认数据日期一致。", href: "/inventory/data", badge: "数据正常", badgeTone: "emerald", rankTone: "bg-emerald-100 text-emerald-700", score: 36 });
+
+  if (priority) recommendations.push({ title: `优先处理 ${priority.sku} 的库存缺口`, detail: `${priority.market} 站当前海外覆盖 ${days(priority.daysCover)}，建议先安排 ${integer(priority.suggestedShipmentQty)} 件，并在发货计划中确认来源。`, href: marketHref("/inventory/replenishment", priority.market), badge: "紧急库存", badgeTone: "rose", rankTone: "bg-rose-100 text-rose-700", score: 96 });
+  else recommendations.push({ title: "继续监控库存风险队列", detail: "当前没有紧急库存 SKU，保持按覆盖天数和在途库存复核补货建议。", href: "/inventory/stock", badge: "库存正常", badgeTone: "emerald", rankTone: "bg-emerald-100 text-emerald-700", score: 34 });
+
+  if (overdue) recommendations.push({ title: `催办采购订单 ${overdue.poNumber}`, detail: `${overdue.sku} 尚有 ${integer(overdue.remainingQuantity)} 件未完成，已超过交期 ${integer(overdue.overdueDays)} 天，建议今天确认供应商和预计到货日。`, href: "/inventory/purchasing/orders", badge: "已超期", badgeTone: "amber", rankTone: "bg-amber-100 text-amber-700", score: 92 });
+  else recommendations.push({ title: "维持采购交期复核", detail: "当前没有已识别的超期采购任务，继续在订单队列核对未完工数量与预计到货日期。", href: "/inventory/purchasing/orders", badge: "交期正常", badgeTone: "emerald", rankTone: "bg-emerald-100 text-emerald-700", score: 32 });
+
+  if (advertisingGap && advertisingGap.gap > 0) recommendations.push({ title: `下调${advertisingGap.market}站高 ACOS 活动`, detail: `当前 ACOS ${Number(advertisingGap.ACOS).toFixed(1)}%，高于目标 ${advertisingGap.gap.toFixed(1)} 个百分点；先控预算或竞价，再观察库存承接能力。`, href: "/inventory/advertising", badge: "广告超标", badgeTone: "blue", rankTone: "bg-blue-100 text-blue-700", score: 84 });
+  else recommendations.push({ title: "保持广告与库存联动", detail: "当前没有明显高于目标的站点 ACOS，扩量前继续确认库存覆盖和广告订单证据。", href: "/inventory/advertising", badge: "广告可控", badgeTone: "emerald", rankTone: "bg-emerald-100 text-emerald-700", score: 30 });
+
+  if (planVariance !== null && planVariance < -10) recommendations.push({ title: "修正销量计划与实际偏差", detail: `双站累计销量较同期计划低 ${Math.abs(planVariance).toFixed(1)}%，建议在采购计划中下调需求假设，并同步检查慢销 SKU。`, href: "/inventory/purchasing", badge: "低于计划", badgeTone: "amber", rankTone: "bg-amber-100 text-amber-700", score: 78 });
+  else if ((dashboard.kpis.salesChangePercent ?? 0) < -10) recommendations.push({ title: "复核最近月销量下滑", detail: `双站最近月销量环比下降 ${Math.abs(dashboard.kpis.salesChangePercent ?? 0).toFixed(1)}%，建议先检查广告、价格和 Listing 转化，再决定是否加大采购。`, href: "/inventory/content", badge: "销量下滑", badgeTone: "amber", rankTone: "bg-amber-100 text-amber-700", score: 74 });
+  else recommendations.push({ title: "按当前计划推进采购", detail: "销量与计划没有出现明显偏差，采购数量继续按库存覆盖、在途和复核周期滚动调整。", href: "/inventory/purchasing", badge: "计划稳定", badgeTone: "slate", rankTone: "bg-slate-100 text-slate-700", score: 28 });
+
+  return recommendations.sort((left, right) => right.score - left.score).slice(0, 5);
 }
 
 function MarketPanel({ market }: { market: CombinedOverviewViewModel["markets"][number] }) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyResearchCandidateOverrides, calculateResearchCandidate } from "@/lib/inventory/new-product-research";
+import { applyResearchCandidateOverrides, calculateResearchCandidate, calculateResearchCostBreakdown } from "@/lib/inventory/new-product-research";
 import type { NewProductResearchData } from "@/lib/inventory/contracts";
 
 const input = {
@@ -13,6 +13,7 @@ const input = {
   orderFee: 8,
   importDutyRate: 1,
   purchaseCostRmb: 72,
+  untaxedPriceUsd: 0,
   competitorUrl: "https://www.amazon.com/dp/example",
 };
 
@@ -27,6 +28,14 @@ describe("new product research editing", () => {
     const result = calculateResearchCandidate({ ...input, storageFee: null });
     expect(result.grossProfit).toBeNull();
     expect(result.grossMargin).toBeNull();
+  });
+
+  it("uses the table's RMB-to-USD cost formula in the compact calculator", () => {
+    const result = calculateResearchCostBreakdown({ ...input, untaxedPriceUsd: 8.85 });
+    expect(result.purchaseCostUsd).toBeCloseTo(10, 6);
+    expect(result.untaxedPriceUsd).toBeCloseTo(8.85, 6);
+    expect(result.totalCostUsd).toBeCloseTo(36.35, 6);
+    expect(result.grossProfit).toBeCloseTo(3.64, 2);
   });
 
   it("merges stored edits with source candidates and recalculates the summary", () => {
