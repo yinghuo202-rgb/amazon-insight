@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -253,8 +254,12 @@ def build_report(config: ProjectConfig, workbook_path: Path) -> dict:
 
 
 def run(config: ProjectConfig, db: StateDb) -> dict:
-    relative = str(config.inventory_dashboard.get("new_product_research_workbook", "新品调研表8.13.xlsx"))
-    source = (config.data_root / relative).resolve()
+    configured_source = os.environ.get("STORE_OPS_NEW_PRODUCT_RESEARCH_WORKBOOK", "").strip()
+    if configured_source:
+        source = Path(configured_source).expanduser().resolve()
+    else:
+        relative = str(config.inventory_dashboard.get("new_product_research_workbook", "新品调研表8.13.xlsx"))
+        source = (config.data_root / relative).resolve()
     if not source.exists():
         raise FileNotFoundError(f"新品调研源文件不存在: {source}")
     report = build_report(config, source)

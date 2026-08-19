@@ -27,6 +27,9 @@ fi
 # the web layer after the report is loaded.
 research_source="/data/sources/新品调研表8.13.xlsx"
 research_report="/data/runtime/reports/new_product_research.json"
+if [ ! -f "$research_source" ] && [ -d /data/sources ]; then
+  research_source=$(find /data/sources -type f \( -iname '*新品调研*.xlsx' -o -iname '*new*research*.xlsx' \) -print -quit 2>/dev/null || true)
+fi
 if [ -f "$research_source" ]; then
   research_candidate_count=$(/opt/store-ops-venv/bin/python -c 'import json,sys; p=sys.argv[1];
 try:
@@ -38,7 +41,8 @@ except Exception:
   esac
   if [ "$research_candidate_count" -le 5 ]; then
     echo "Rebuilding legacy new-product research report"
-    /opt/store-ops-venv/bin/python -m store_ops --config /opt/store-ops/config/project.json build-new-product-research >/dev/null
+    STORE_OPS_NEW_PRODUCT_RESEARCH_WORKBOOK="$research_source" \
+      /opt/store-ops-venv/bin/python -m store_ops --config /opt/store-ops/config/project.json build-new-product-research >/dev/null
   fi
 fi
 
