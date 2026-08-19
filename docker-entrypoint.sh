@@ -7,18 +7,12 @@ set -eu
 
 mkdir -p /data/runtime/reports /data/uploads /data/snapshots
 if [ -d /data/imported-reports ]; then
-  # A persistent runtime volume may already contain only part of the report
-  # set. Seed each missing file independently so product data pages can be
-  # restored without overwriting reports that were refreshed online.
-  for source_report in /data/imported-reports/*.json; do
-    [ -f "$source_report" ] || continue
-    report_name=${source_report##*/}
-    target_report="/data/runtime/reports/$report_name"
-    if [ ! -f "$target_report" ]; then
-      echo "Seeding missing runtime report: $report_name"
-      cp -p "$source_report" "$target_report"
-    fi
-  done
+  # Seed missing reports and enrich two legacy snapshots without replacing
+  # newer online-maintained data: research keeps the larger parsed candidate
+  # set, while document master only backfills absent shipment-history rows.
+  /opt/store-ops-venv/bin/python -m store_ops.report_seed \
+    --imported-dir /data/imported-reports \
+    --runtime-dir /data/runtime/reports
 fi
 
 # Older releases only parsed Sheet1 and left a five-row research snapshot in

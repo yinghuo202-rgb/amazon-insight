@@ -19,6 +19,43 @@ def dashboard(market: str):
 
 
 class UploadedDataTests(unittest.TestCase):
+    def test_shipment_upload_adds_sku_history_to_document_master(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            batch = root / "batch-ship123456"
+            source = batch / "source"
+            reports = root / "reports"
+            snapshots = root / "snapshots"
+            source.mkdir(parents=True)
+            reports.mkdir()
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Measureman"
+            sheet["B2"] = "产品编号"
+            sheet["B3"] = "MA001"
+            sheet["D3"] = 10
+            sheet["K3"] = 120
+            workbook.save(source / "CM320-US2026.7.10发货清单.xlsx")
+            (reports / "document_master.json").write_text(json.dumps({
+                "generatedAt": "2026-08-01T00:00:00+00:00",
+                "logistics": {"US": {}, "CA": {}},
+                "shipmentHistory": [],
+                "coverage": {"shipmentHistoryEvents": 0},
+                "sources": {"shipments": []},
+            }), encoding="utf-8")
+
+            preview = inspect_batch(batch)
+
+            self.assertEqual(preview["files"][0]["type"], "shipment")
+            self.assertTrue(preview["files"][0]["publishable"])
+            self.assertEqual(preview["files"][0]["preview"]["shipmentEventCount"], 1)
+            published = publish_batch(batch, reports, snapshots)
+            self.assertEqual(published["updatedReports"], ["document_master.json"])
+            report = json.loads((reports / "document_master.json").read_text())
+            self.assertEqual(report["coverage"]["shipmentHistoryEvents"], 1)
+            self.assertEqual(report["shipmentHistory"][0]["sku"], "MA001")
+            self.assertEqual(report["shipmentHistory"][0]["quantity"], 120)
+
     def test_inventory_upload_previews_publishes_and_restores(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

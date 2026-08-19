@@ -13,6 +13,8 @@ from typing import Any
 import openpyxl
 
 from .advertising import AdvertisingParameters, recommend_campaign
+from .config import ProjectConfig
+from .jobs.document_master import _read_shipments
 from .jobs.new_product_research import extract_research_rows
 from .jobs.product_catalog import _extract_product_images, _merge_product_details, _read_product_details
 from .replenishment import ReplenishmentParameters, calculate_replenishment
@@ -28,6 +30,7 @@ TYPE_LABELS = {
     "sales_ca": "加拿大销售报告",
     "advertising": "广告活动报告",
     "monthly_analysis": "月度分析",
+    "shipment": "发货明细",
     "unknown": "未识别文件",
 }
 
@@ -90,6 +93,8 @@ def _base_sku(value: object) -> str | None:
 def _detect(path: Path, workbook) -> str:
     name = path.name.lower()
     sheets = {value.strip() for value in workbook.sheetnames}
+    if "发货清单" in name and "Measureman" in workbook.sheetnames:
+        return "shipment"
     if "新品调研" in name or any(re.fullmatch(r"\d{1,2}月新品", value) for value in sheets):
         return "research"
     if "库存规划" in name or "库存规划" in sheets:
@@ -141,6 +146,35 @@ def _research_preview(workbook) -> dict[str, Any]:
     return {"candidateCount": candidates, "viableCandidateCount": viable, "monthlyOrderCount": len(monthly_orders), "monthSheets": month_sheets, "impacts": ["新品调研"]}
 
 
+def _shipment_config(root: Path) -> ProjectConfig:
+    root = root.resolve()
+    return ProjectConfig(
+        config_path=root / "config.json",
+        project_root=root,
+        data_root=root,
+        runtime_root=root / "runtime",
+        sku_pattern=r"(?<![A-Z0-9])([A-Z]{2}\s*[-_]?\s*\d{3})(?!\d)",
+        ignore_values=frozenset({"", "SKU", "MSKU"}),
+        sources=(),
+        inventory_dashboard={"document_master_sources": {"shipment_root": "."}},
+    )
+
+
+def _shipment_preview(path: Path) -> dict[str, Any]:
+    config = _shipment_config(path.parent)
+    normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
+    _, _, events, _, _ = _read_shipments(config, normalizer)
+    events = [item for item in events if Path(str(item.get("sourcePath", ""))).name == path.name]
+    return {
+        "skuCount": len({item["sku"] for item in events}),
+        "shipmentEventCount": len(events),
+        "markets": sorted({item["market"] for item in events}),
+        "batches": sorted({item["batch"] for item in events}),
+        "units": sum(int(item["quantity"]) for item in events),
+        "impacts": ["SKU 历史发货", "库存详情"],
+    }
+
+
 def _sales_preview(workbook, market: str) -> dict[str, Any]:
     sheet = workbook["Report"]
     header = tuple(cell.value for cell in next(sheet.iter_rows(min_row=2, max_row=2)))
@@ -183,11 +217,13 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
             workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
             try:
                 kind = _detect(path, workbook)
-                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details"}, "sheets": workbook.sheetnames})
+                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details", "shipment"}, "sheets": workbook.sheetnames})
                 if kind == "inventory":
                     item["preview"] = _inventory_preview(workbook)
                 elif kind == "research":
                     item["preview"] = _research_preview(workbook)
+                elif kind == "shipment":
+                    item["preview"] = _shipment_preview(path)
                 elif kind == "sales_us":
                     item["preview"] = _sales_preview(workbook, "US")
                 elif kind == "sales_ca":
@@ -511,6 +547,54 @@ def _patch_product_details(path: Path, reports_dir: Path) -> list[str]:
     return ["product_catalog.json"]
 
 
+def _patch_shipments(source_dir: Path, reports_dir: Path, uploaded_names: list[str]) -> list[str]:
+    report_path = reports_dir / "document_master.json"
+    if not report_path.exists():
+        return []
+    config = _shipment_config(source_dir)
+    normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
+    catalog, _, events, sources, _ = _read_shipments(config, normalizer)
+    if not events:
+        return []
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    history = {
+        (str(item.get("market", "")), int(item.get("batch", 0) or 0), str(item.get("shipmentDate", "")), str(item.get("sku", ""))): item
+        for item in report.get("shipmentHistory", [])
+        if isinstance(item, dict)
+    }
+    for item in events:
+        history[(item["market"], int(item["batch"]), item["shipmentDate"], item["sku"])] = item
+    report["shipmentHistory"] = sorted(
+        history.values(),
+        key=lambda item: (str(item.get("shipmentDate", "")), int(item.get("batch", 0) or 0), str(item.get("market", "")), str(item.get("sku", ""))),
+    )
+    logistics = report.setdefault("logistics", {"US": {}, "CA": {}})
+    for market in ("US", "CA"):
+        market_catalog = logistics.setdefault(market, {})
+        for sku, item in catalog.get(market, {}).items():
+            prior = market_catalog.get(sku)
+            prior_batch = int(prior.get("sourceBatchNumber", 0) or 0) if isinstance(prior, dict) else 0
+            if prior is None or int(item.get("sourceBatchNumber", 0) or 0) >= prior_batch:
+                market_catalog[sku] = item
+    report_sources = report.setdefault("sources", {})
+    report_sources["shipments"] = sorted({
+        str(value)
+        for value in [*(report_sources.get("shipments", []) if isinstance(report_sources.get("shipments"), list) else []), *sources]
+        if value
+    })
+    coverage = report.setdefault("coverage", {})
+    coverage["shipmentHistoryEvents"] = len(report["shipmentHistory"])
+    coverage["logistics"] = {market: len(logistics.get(market, {})) for market in ("US", "CA")}
+    report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    local_refresh = report.get("localRefresh")
+    if not isinstance(local_refresh, dict):
+        local_refresh = {}
+        report["localRefresh"] = local_refresh
+    local_refresh["uploadedShipmentFiles"] = sorted(uploaded_names)
+    _atomic_json(report_path, report)
+    return ["document_master.json"]
+
+
 def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
     manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
     version = f"data-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{batch_dir.name[-6:]}"
@@ -522,6 +606,7 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
     reports_dir.mkdir(parents=True, exist_ok=True)
     updated: list[str] = []
     skipped: list[str] = []
+    shipment_names: list[str] = []
     for item in manifest["files"]:
         source = batch_dir / "source" / item["name"]
         if item["type"] == "research":
@@ -533,8 +618,15 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
             updated.extend(_patch_advertising(source, reports_dir))
         elif item["type"] == "product_details":
             updated.extend(_patch_product_details(source, reports_dir))
+        elif item["type"] == "shipment":
+            shipment_names.append(item["name"])
         else:
             skipped.append(item["name"])
+    if shipment_names:
+        shipment_updates = _patch_shipments(batch_dir / "source", reports_dir, shipment_names)
+        updated.extend(shipment_updates)
+        if not shipment_updates:
+            skipped.extend(shipment_names)
     manifest.update({"status": "published", "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataVersion": version, "updatedReports": sorted(set(updated)), "stagedFiles": skipped})
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     (snapshots_dir / version / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
