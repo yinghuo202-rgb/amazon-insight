@@ -20,8 +20,9 @@ const input = {
 describe("new product research editing", () => {
   it("calculates gross profit and margin from editable costs", () => {
     const result = calculateResearchCandidate(input);
-    expect(result.grossProfit).toBeCloseTo(12.49, 2);
-    expect(result.grossMargin).toBeCloseTo(0.3123, 3);
+    expect(result.untaxedPriceUsd).toBeCloseTo(8.85, 2);
+    expect(result.grossProfit).toBeCloseTo(3.64, 2);
+    expect(result.grossMargin).toBeCloseTo(0.0912, 3);
   });
 
   it("keeps profitability empty until every cost is present", () => {
@@ -53,6 +54,6 @@ describe("new product research editing", () => {
     expect(result.candidates).toHaveLength(2);
     expect(result.candidates.find((item) => item.sku === "NP001")?.amazonPrice).toBe(50);
     expect(result.summary.candidateCount).toBe(2);
-    expect(result.summary.viableCandidateCount).toBe(2);
+    expect(result.summary.viableCandidateCount).toBe(1);
   });
 });

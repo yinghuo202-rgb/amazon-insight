@@ -8,7 +8,7 @@ export const RESEARCH_UNTAXED_FACTOR = 0.885;
 
 export function calculateResearchCostBreakdown(input: ResearchCandidateInput) {
   const purchaseCostUsd = input.purchaseCostRmb === null ? null : input.purchaseCostRmb / RESEARCH_RMB_PER_USD;
-  const untaxedPriceUsd = input.untaxedPriceUsd === undefined || input.untaxedPriceUsd === null
+  const untaxedPriceUsd = input.untaxedPriceUsd === undefined || input.untaxedPriceUsd === null || input.untaxedPriceUsd <= 0
     ? purchaseCostUsd === null ? null : purchaseCostUsd * RESEARCH_UNTAXED_FACTOR
     : input.untaxedPriceUsd;
   const costs = [input.firstMile, input.storageFee, input.commission, input.orderFee, input.importDutyRate, purchaseCostUsd, untaxedPriceUsd];
@@ -26,10 +26,9 @@ export function calculateResearchCandidate(input: ResearchCandidateInput): Resea
 }
 
 export function applyResearchCandidateOverrides(data: NewProductResearchData, overrides: ResearchCandidate[]) {
-  if (!overrides.length) return data;
   const bySku = new Map(data.candidates.map((item) => [item.sku, item] as const));
   for (const item of overrides) bySku.set(item.sku, item);
-  const candidates = [...bySku.values()];
+  const candidates = [...bySku.values()].map((item) => calculateResearchCandidate(item));
   const margins = candidates.flatMap((item) => item.grossMargin === null ? [] : [item.grossMargin]);
   return {
     ...data,

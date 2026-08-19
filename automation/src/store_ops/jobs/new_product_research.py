@@ -97,6 +97,9 @@ def _cost_candidate(sheet_name: str, row_number: int, header: dict[str, int], ro
     name = fallback_name or _name_from_url(link_value) or asin or f"{sheet_name} 第 {row_number} 行"
     first_mile_i = header.get("海运入FBA仓成本", header.get("头程"))
     untaxed_i = header.get("未税价格")
+    untaxed_price = _number(row[untaxed_i]) if untaxed_i is not None and len(row) > untaxed_i else None
+    if untaxed_price is not None and untaxed_price <= 0:
+        untaxed_price = None
     candidate = {
         "sku": sku,
         "name": name,
@@ -107,7 +110,7 @@ def _cost_candidate(sheet_name: str, row_number: int, header: dict[str, int], ro
         "orderFee": _number(row[header["订单处理费"]]) if "订单处理费" in header and len(row) > header["订单处理费"] else None,
         "importDutyRate": _number(row[header["进口税"]]) if "进口税" in header and len(row) > header["进口税"] else None,
         "purchaseCostRmb": purchase_rmb,
-        "untaxedPriceUsd": _number(row[untaxed_i]) if untaxed_i is not None and len(row) > untaxed_i else 0.0,
+        "untaxedPriceUsd": untaxed_price,
         "grossProfit": _number(row[header["利润"]]) if "利润" in header and len(row) > header["利润"] else None,
         "grossMargin": _number(row[header["利润率"]]) if len(row) > header["利润率"] else None,
         "competitorUrl": url,
@@ -168,7 +171,7 @@ def _candidate_rows(sheet, seen: set[str] | None = None) -> list[dict]:
                     "orderFee": _number(detail[6] if len(detail) > 6 else None),
                     "importDutyRate": _number(detail[8] if len(detail) > 8 else None),
                     "purchaseCostRmb": purchase,
-                    "untaxedPriceUsd": 0.0,
+                    "untaxedPriceUsd": None,
                     "grossProfit": profit,
                     "grossMargin": margin,
                     "competitorUrl": _safe_url(row[15] if len(row) > 15 else None) or _safe_url(detail[15] if len(detail) > 15 else None),

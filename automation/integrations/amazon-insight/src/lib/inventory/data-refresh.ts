@@ -114,7 +114,7 @@ export async function runFullDataRefresh() {
   const root = automationRoot();
   const before = await getDataRefreshStatus();
   if (before.summary.missingCount) throw new Error(`存在 ${before.summary.missingCount} 个必需数据源缺失，请先补齐后再重建。`);
-  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-document-master", "build-inventory-dashboard-data"];
+  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-new-product-research", "build-document-master", "build-inventory-dashboard-data"];
   const results = [];
   for (const command of commands) results.push(await runPythonJob(root, command));
   return { status: "completed", commands: results, snapshot: await getDataRefreshStatus() };

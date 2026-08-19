@@ -23,6 +23,9 @@ class NewProductResearchExtractionTests(unittest.TestCase):
         candidates, orders = extract_research_rows(workbook)
 
         self.assertEqual(len(candidates), 2)
+        self.assertAlmostEqual(candidates[0]["untaxedPriceUsd"], 8.85)
+        self.assertAlmostEqual(candidates[0]["totalCostUsd"], 36.35)
+        self.assertAlmostEqual(candidates[0]["grossProfit"], 3.64)
         self.assertEqual(candidates[1]["sku"], "B0123456789")
         self.assertEqual(candidates[1]["purchaseCostRmb"], 72)
         self.assertAlmostEqual(candidates[1]["totalCostUsd"], 33.55)
