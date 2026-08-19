@@ -6,9 +6,19 @@ set -eu
 : "${AUTH_SESSION_TTL_DAYS:=14}"
 
 mkdir -p /data/runtime/reports /data/uploads /data/snapshots
-if [ -d /data/imported-reports ] && ! find /data/runtime/reports -maxdepth 1 -name '*.json' -print -quit | grep -q .; then
-  echo "Seeding runtime reports from /data/imported-reports"
-  cp -p /data/imported-reports/*.json /data/runtime/reports/ 2>/dev/null || true
+if [ -d /data/imported-reports ]; then
+  # A persistent runtime volume may already contain only part of the report
+  # set. Seed each missing file independently so product data pages can be
+  # restored without overwriting reports that were refreshed online.
+  for source_report in /data/imported-reports/*.json; do
+    [ -f "$source_report" ] || continue
+    report_name=${source_report##*/}
+    target_report="/data/runtime/reports/$report_name"
+    if [ ! -f "$target_report" ]; then
+      echo "Seeding missing runtime report: $report_name"
+      cp -p "$source_report" "$target_report"
+    fi
+  done
 fi
 
 if [ ! -f /data/runtime/db/operations.sqlite3 ]; then
