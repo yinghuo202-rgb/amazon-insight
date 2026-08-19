@@ -23,6 +23,10 @@ export default async function SkuPage({ params, searchParams }: { params: Promis
   const dashboard = buildSkuDetailViewModel(data, variants, product, sku);
   if (!dashboard) notFound();
   const canceledOrders = listLatestPurchaseOrderReviews({ sku, action: "cancel" });
-  const shipmentHistory = documentMaster.shipmentHistory.filter((item) => item.sku === sku);
+  // Older NAS snapshots may not contain shipmentHistory yet. Treat that as
+  // an empty history instead of crashing the entire SKU detail route.
+  const shipmentHistory = Array.isArray(documentMaster?.shipmentHistory)
+    ? documentMaster.shipmentHistory.filter((item) => item.sku === sku)
+    : [];
   return <><OpsPageHeader eyebrow="SKU Analysis" title={`${sku} · ${row.productName}`} description="独立查看该 SKU 的销量、库存、历史发货、产品规格、Listing、全部历史采购订单、补货和广告表现。" /><SkuDetailDashboard dashboard={dashboard} product={product} sku={sku} canceledOrders={canceledOrders} purchaseOrders={purchaseOrders} shipmentHistory={shipmentHistory} /></>;
 }
