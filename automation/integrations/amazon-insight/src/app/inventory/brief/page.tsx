@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 
-import { CombinedOverviewDashboard } from "@/components/inventory/combined-overview-dashboard";
+import { OperationsBriefPanel } from "@/components/inventory/combined-overview-dashboard";
 import { OpsPageHeader } from "@/components/inventory/ops-ui";
 import { buildCombinedOverviewViewModel } from "@/lib/inventory/dashboard-view-model";
 import { loadInventoryDashboardData, loadProfitabilityData, loadVariantCatalogData } from "@/lib/inventory/data";
 
-export const metadata: Metadata = { title: "双站运营总览", description: "同时查看美国站和加拿大站的库存、销售、补货和广告异常。" };
+export const metadata: Metadata = { title: "经营简报", description: "基于历史销量、销售毛利和库存覆盖的父体、子 SKU 与未来三个月增收机会分析。" };
 export const dynamic = "force-dynamic";
 
-export default async function InventoryPage() {
+export default async function OperationsBriefPage() {
   const [us, ca, profitability, variants] = await Promise.all([
     loadInventoryDashboardData("US"),
     loadInventoryDashboardData("CA"),
@@ -16,5 +16,8 @@ export default async function InventoryPage() {
     loadVariantCatalogData().catch(() => undefined),
   ]);
   const dashboard = buildCombinedOverviewViewModel(us, ca, profitability, variants);
-  return <><OpsPageHeader eyebrow="US + CA · Command Center" title="双站运营驾驶舱" description="以销量、库存、季节供需和执行风险为主线，统一查看美国站与加拿大站的经营状态，再进入各业务页面完成动作。" /><CombinedOverviewDashboard dashboard={dashboard} /></>;
+  return <>
+    <OpsPageHeader eyebrow="OPERATIONS BRIEF · 90-DAY OUTLOOK" title="经营简报" description="按父体展开每个子 SKU 的销量、销售额、利润、库存覆盖和经营问题，并用历史销量趋势筛选未来三个月值得优先扩量的 SKU。" />
+    <OperationsBriefPanel brief={dashboard.operationsBrief} />
+  </>;
 }

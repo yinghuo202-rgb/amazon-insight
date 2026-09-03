@@ -30,9 +30,9 @@ describe("multi-market inventory data", () => {
     expect(inventory).toBeDefined();
     expect((inventory?.localInventory ?? 0) + (inventory?.pendingOrderQty ?? 0)).toBe(inventory?.domesticSupplyTotal);
     expect(inventory?.domesticSupplyTotal).toBeGreaterThanOrEqual(0);
-    expect(inventory?.salesHistoryByMonth).toHaveLength(31);
+    expect(inventory?.salesHistoryByMonth).toHaveLength(32);
     expect(inventory?.salesHistoryByMonth[0]).toEqual({ month: "2024-01", units: 1238 });
-    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 1492 });
+    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-08", units: 1512 });
     expect(data.summary.overduePurchaseOrderCount).toBeGreaterThan(0);
     expect(data.rows.some((row) => row.pendingOrders.some((order) => order.overdue && order.poNumber && order.orderedQuantity > 0))).toBe(true);
     expect(product?.fnsku).toBe("X0027UQ1I7");
@@ -48,10 +48,10 @@ describe("multi-market inventory data", () => {
     const data = await loadInventoryDashboardData("CA");
     const inventory = data.rows.find((row) => row.sku === "MA007");
 
-    expect(data.sales.historyMonths).toHaveLength(31);
-    expect(inventory?.salesHistoryByMonth).toHaveLength(31);
+    expect(data.sales.historyMonths).toHaveLength(32);
+    expect(inventory?.salesHistoryByMonth).toHaveLength(32);
     expect(inventory?.salesHistoryByMonth[0]).toEqual({ month: "2024-01", units: 58 });
-    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-07", units: 266 });
+    expect(inventory?.salesHistoryByMonth.at(-1)).toEqual({ month: "2026-08", units: 112 });
   });
 
   it("loads copy, main-image, and A+ draft tasks from product and creative sources", async () => {

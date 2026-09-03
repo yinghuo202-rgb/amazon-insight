@@ -13,12 +13,15 @@ from typing import Any
 import openpyxl
 
 from .advertising import AdvertisingParameters, recommend_campaign
-from .config import ProjectConfig
+from .config import ProjectConfig, load_config
+from .db import StateDb
 from .jobs.document_master import _read_shipments
 from .jobs.new_product_research import extract_research_rows
 from .jobs.product_catalog import _extract_product_images, _merge_product_details, _read_product_details
 from .replenishment import ReplenishmentParameters, calculate_replenishment
 from .sku import SkuNormalizer
+from .jobs.profitability_snapshot import run as run_profitability_snapshot
+from .jobs.sales_history import run as run_sales_history
 
 
 TYPE_LABELS = {
@@ -28,6 +31,7 @@ TYPE_LABELS = {
     "product_cost": "产品成本",
     "sales_us": "美国销售报告",
     "sales_ca": "加拿大销售报告",
+    "sales_mx": "墨西哥销售报告",
     "advertising": "广告活动报告",
     "monthly_analysis": "月度分析",
     "shipment": "发货明细",
@@ -107,6 +111,10 @@ def _detect(path: Path, workbook) -> str:
         return "advertising"
     if "月度分析" in name or "仓租详情" in " ".join(sheets):
         return "monthly_analysis"
+    if "销售和毛利报告" in name and "SKU销售汇总" in workbook.sheetnames:
+        if "-mx" in name.lower():
+            return "sales_mx"
+        return "sales_ca" if "-ca" in name.lower() else "sales_us"
     if "report" in name and "Report" in workbook.sheetnames:
         return "sales_ca" if "-ca-" in name else "sales_us"
     return "unknown"
@@ -195,6 +203,20 @@ def _sales_preview(workbook, market: str) -> dict[str, Any]:
     return {"market": market, "skuCount": count, "units": units, "revenue": round(revenue, 2), "impacts": ["运营总览", "库存销量"]}
 
 
+def _profitability_preview(workbook, market: str) -> dict[str, Any]:
+    sheet = workbook["SKU销售汇总"]
+    count = 0
+    units = 0
+    sales = 0.0
+    for row in sheet.iter_rows(min_row=4, values_only=True):
+        if not _text(row[0] if row else None):
+            continue
+        count += 1
+        units += int(_number(row[1] if len(row) > 1 else None) or 0)
+        sales += _number(row[2] if len(row) > 2 else None) or 0
+    return {"market": market, "skuCount": count, "units": units, "sales": round(sales, 2), "impacts": ["运营总览", "利润分析", "销量历史"]}
+
+
 def _generic_preview(workbook, kind: str) -> dict[str, Any]:
     sheets = [{"name": name, "rows": workbook[name].max_row, "columns": workbook[name].max_column} for name in workbook.sheetnames if name != "WpsReserved_CellImgList"]
     impacts = {
@@ -217,17 +239,16 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
             workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
             try:
                 kind = _detect(path, workbook)
-                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details", "shipment"}, "sheets": workbook.sheetnames})
+                item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details", "shipment", "sales_us", "sales_ca", "sales_mx"}, "sheets": workbook.sheetnames})
                 if kind == "inventory":
                     item["preview"] = _inventory_preview(workbook)
                 elif kind == "research":
                     item["preview"] = _research_preview(workbook)
                 elif kind == "shipment":
                     item["preview"] = _shipment_preview(path)
-                elif kind == "sales_us":
-                    item["preview"] = _sales_preview(workbook, "US")
-                elif kind == "sales_ca":
-                    item["preview"] = _sales_preview(workbook, "CA")
+                elif kind in {"sales_us", "sales_ca", "sales_mx"}:
+                    market = {"sales_us": "US", "sales_ca": "CA", "sales_mx": "MX"}[kind]
+                    item["preview"] = _profitability_preview(workbook, market) if "SKU销售汇总" in workbook.sheetnames else _sales_preview(workbook, market)
                 else:
                     item["preview"] = _generic_preview(workbook, kind)
             finally:
@@ -607,6 +628,7 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
     updated: list[str] = []
     skipped: list[str] = []
     shipment_names: list[str] = []
+    monthly_sources: list[Path] = []
     for item in manifest["files"]:
         source = batch_dir / "source" / item["name"]
         if item["type"] == "research":
@@ -620,6 +642,11 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
             updated.extend(_patch_product_details(source, reports_dir))
         elif item["type"] == "shipment":
             shipment_names.append(item["name"])
+        elif item["type"] in {"sales_us", "sales_ca", "sales_mx"}:
+            incoming = reports_dir.parent / "incoming" / "monthly-sales-reports"
+            incoming.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, incoming / source.name)
+            monthly_sources.append(source)
         else:
             skipped.append(item["name"])
     if shipment_names:
@@ -627,6 +654,23 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
         updated.extend(shipment_updates)
         if not shipment_updates:
             skipped.extend(shipment_names)
+    if monthly_sources:
+        automation_root = Path(os.environ.get("STORE_OPS_AUTOMATION_ROOT", "")).expanduser() if os.environ.get("STORE_OPS_AUTOMATION_ROOT") else Path(__file__).resolve().parents[2]
+        config = load_config(automation_root / "config" / "project.json")
+        database = StateDb(config.runtime_root / "db" / "operations.sqlite3")
+        database.init()
+        previous_profitability_root = os.environ.get("STORE_OPS_PROFITABILITY_ROOT")
+        os.environ["STORE_OPS_PROFITABILITY_ROOT"] = str(reports_dir.parent / "incoming" / "monthly-sales-reports")
+        try:
+            run_profitability_snapshot(config, database)
+            run_sales_history(config, database)
+        finally:
+            database.close()
+            if previous_profitability_root is None:
+                os.environ.pop("STORE_OPS_PROFITABILITY_ROOT", None)
+            else:
+                os.environ["STORE_OPS_PROFITABILITY_ROOT"] = previous_profitability_root
+        updated.extend(["profitability.json", "inventory_dashboard.json", "inventory_dashboard.ca.json"])
     manifest.update({"status": "published", "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataVersion": version, "updatedReports": sorted(set(updated)), "stagedFiles": skipped})
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     (snapshots_dir / version / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

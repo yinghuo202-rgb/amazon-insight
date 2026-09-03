@@ -132,9 +132,11 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
                 (config.data_root / str(value)).resolve()
                 for value in settings.get("sales_history_additional_folders", [])
             )
-            for folder in folders:
-                if not folder.exists():
-                    raise FileNotFoundError(folder)
+            runtime_folder = config.runtime_root / "incoming" / "monthly-sales-reports"
+            folders = [folder for folder in [*folders, runtime_folder] if folder.exists()]
+            folders = list(dict.fromkeys(folders))
+            if not folders:
+                raise FileNotFoundError(runtime_folder)
 
             current_sales, _, actual_sales, source_paths, history_by_sku = _read_monthly_sales_reports(
                 folders,

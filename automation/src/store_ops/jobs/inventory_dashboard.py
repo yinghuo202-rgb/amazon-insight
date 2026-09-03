@@ -663,8 +663,13 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
             awd_path, awd_date = None, fba_date
         sales_path = (config.data_root / settings["sales_workbook"]).resolve()
         advertising_folder = (config.data_root / settings["advertising_folder"]).resolve()
+        runtime_monthly_folder = config.runtime_root / "incoming" / "monthly-sales-reports"
         monthly_sales_folder = (config.data_root / settings["sales_monthly_folder"]).resolve() if settings.get("sales_monthly_folder") else None
+        if monthly_sales_folder is not None and not monthly_sales_folder.exists() and runtime_monthly_folder.exists():
+            monthly_sales_folder = runtime_monthly_folder
         history_monthly_folder = (config.data_root / settings["sales_history_monthly_folder"]).resolve() if settings.get("sales_history_monthly_folder") else monthly_sales_folder
+        if history_monthly_folder is not None and not history_monthly_folder.exists() and runtime_monthly_folder.exists():
+            history_monthly_folder = runtime_monthly_folder
         additional_history_folders = [
             (config.data_root / str(value)).resolve()
             for value in settings.get("sales_history_additional_folders", [])

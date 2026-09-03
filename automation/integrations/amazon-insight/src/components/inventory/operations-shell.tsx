@@ -4,6 +4,7 @@ import {
   Boxes,
   Calculator,
   ChartNoAxesCombined,
+  ClipboardList,
   ChevronRight,
   DatabaseZap,
   Download,
@@ -34,7 +35,10 @@ type NavigationItem = {
 const navigation: Array<{ label: string; items: NavigationItem[] }> = [
   {
     label: "指挥中心",
-    items: [{ href: "/inventory", label: "运营总览", icon: ChartNoAxesCombined, combined: true }],
+    items: [
+      { href: "/inventory", label: "运营总览", icon: ChartNoAxesCombined, combined: true },
+      { href: "/inventory/brief", label: "经营简报", icon: ClipboardList, combined: true },
+    ],
   },
   {
     label: "库存与供应",
