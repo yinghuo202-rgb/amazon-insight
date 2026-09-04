@@ -39,6 +39,9 @@ export function buildCombinedOverviewViewModel(
     suggestedShipmentQty: row.suggestedShipmentQty,
     action: row.action,
   }))).sort((left, right) => right.suggestedShipmentQty - left.suggestedShipmentQty).slice(0, 10);
+  const revenueTrend = mergeRevenueHistory(us, ca);
+  const revenueFocusRows = buildRevenueFocusRows({ us, ca, profitability, variants });
+  const revenueKpis = buildRevenueKpis({ us, ca, profitability });
 
   return {
     generatedAt: [us.generatedAt, ca.generatedAt].sort().at(-1) ?? us.generatedAt,
@@ -93,9 +96,130 @@ export function buildCombinedOverviewViewModel(
     markets: markets.map(toMarketSummary),
     overdueOrders,
     priorityRows,
+    revenueTrend,
+    revenueKpis,
+    revenueFocusRows,
     operationsBrief: buildOperationsBrief({ us, ca, profitability, variants }),
   };
 }
+
+type RevenueMarket = "US" | "CA";
+
+export type RevenueFocusRow = {
+  market: RevenueMarket;
+  currency: string;
+  sku: string;
+  parentSku: string;
+  productName: string;
+  productSales: number;
+  actualProfit: number | null;
+  actualMargin: number | null;
+  recent3AvgUnits: number | null;
+  previous3AvgUnits: number | null;
+  trendPercent: number | null;
+  daysCoverNetwork: number | null;
+  signals: string[];
+  href: string;
+};
+
+function mergeRevenueHistory(us: InventoryDashboardData, ca: InventoryDashboardData) {
+  const year = Math.max(us.businessPerformance.actualYear, ca.businessPerformance.actualYear);
+  const latestActualMonth = [...us.businessPerformance.series, ...ca.businessPerformance.series]
+    .filter((point) => point.actualUnits > 0 || point.actualRevenue > 0)
+    .map((point) => Number(point.month))
+    .filter((month) => Number.isFinite(month))
+    .sort((left, right) => right - left)[0] ?? 12;
+  return Array.from({ length: latestActualMonth }, (_, index) => {
+    const month = String(index + 1).padStart(2, "0");
+    const usPoint = us.businessPerformance.series.find((point) => point.month === month);
+    const caPoint = ca.businessPerformance.series.find((point) => point.month === month);
+    return {
+      month: `${year}-${month}`,
+      美国站销售额: usPoint?.actualRevenue ?? 0,
+      加拿大站销售额: caPoint?.actualRevenue ?? 0,
+    };
+  });
+}
+
+function buildRevenueKpis({ us, ca, profitability }: { us: InventoryDashboardData; ca: InventoryDashboardData; profitability?: ProfitabilityData }) {
+  const latestReportMonth = [...(profitability?.sources ?? [])].sort((left, right) => right.reportMonth.localeCompare(left.reportMonth))[0]?.reportMonth ?? null;
+  const latestProfit = (market: RevenueMarket) => (profitability?.rows ?? [])
+    .filter((row) => row.market === market && (!latestReportMonth || row.reportMonth === latestReportMonth))
+    .reduce((summary, row) => ({
+      productSales: summary.productSales + row.productSales,
+      actualProfit: summary.actualProfit + row.actualProfit,
+      advertisingCost: summary.advertisingCost + row.advertisingCost,
+    }), { productSales: 0, actualProfit: 0, advertisingCost: 0 });
+  const usLatest = latestProfit("US");
+  const caLatest = latestProfit("CA");
+  return {
+    reportMonth: latestReportMonth,
+    latest: {
+      US: { productSales: us.businessPerformance.summary.latestMonthRevenue, currency: us.currency, actualProfit: usLatest.actualProfit, advertisingCost: usLatest.advertisingCost },
+      CA: { productSales: ca.businessPerformance.summary.latestMonthRevenue, currency: ca.currency, actualProfit: caLatest.actualProfit, advertisingCost: caLatest.advertisingCost },
+    },
+    annual: {
+      US: { productSales: us.businessPerformance.summary.annualActualRevenue, currency: us.currency },
+      CA: { productSales: ca.businessPerformance.summary.annualActualRevenue, currency: ca.currency },
+    },
+  };
+}
+
+function buildRevenueFocusRows({ us, ca, profitability, variants }: { us: InventoryDashboardData; ca: InventoryDashboardData; profitability?: ProfitabilityData; variants?: VariantCatalogData }): RevenueFocusRow[] {
+  const latestReportMonth = [...(profitability?.sources ?? [])].sort((left, right) => right.reportMonth.localeCompare(left.reportMonth))[0]?.reportMonth ?? null;
+  const profitMap = new Map<string, ProfitabilityData["rows"][number]>();
+  for (const row of profitability?.rows ?? []) {
+    if (latestReportMonth && row.reportMonth !== latestReportMonth) continue;
+    profitMap.set(`${row.market}:${row.sku}`, row);
+  }
+  const variantMap = new Map<string, VariantCatalogData["items"][number]>();
+  for (const item of variants?.items ?? []) variantMap.set(`${String(item.market).toUpperCase()}:${item.sku}`, item);
+  const rows: RevenueFocusRow[] = [];
+  for (const [market, data] of [["US", us], ["CA", ca]] as const) {
+    for (const row of data.rows) {
+      const profit = profitMap.get(`${market}:${row.sku}`);
+      if (!profit) continue;
+      const history = row.salesHistoryByMonth.slice().sort((left, right) => left.month.localeCompare(right.month));
+      const recent = history.length >= 3 ? average(history.slice(-3).map((point) => point.units)) : null;
+      const previous = history.length >= 6 ? average(history.slice(-6, -3).map((point) => point.units)) : null;
+      const trend = recent !== null && previous !== null && previous > 0 ? (recent - previous) / previous * 100 : null;
+      const signals: string[] = [];
+      if (profit.productSales >= data.businessPerformance.summary.latestMonthRevenue * 0.02) signals.push("销售额贡献高");
+      if (trend !== null && trend >= 20) signals.push("近3月销量上升");
+      if (trend !== null && trend <= -20) signals.push("近3月销量下降");
+      if (profit.actualMargin !== null && profit.actualMargin < 0.1) signals.push("利润率偏低");
+      if (row.daysCoverNetwork !== null && row.daysCoverNetwork < 45) signals.push("库存覆盖不足45天");
+      if (row.daysCoverNetwork !== null && row.daysCoverNetwork > 180) signals.push("库存覆盖超过180天");
+      if (!signals.length) signals.push("销售额处于稳定区间");
+      rows.push({
+        market,
+        currency: data.currency,
+        sku: row.sku,
+        parentSku: variantMap.get(`${market}:${row.sku}`)?.parentSku || "未识别父体",
+        productName: row.productName,
+        productSales: profit.productSales,
+        actualProfit: profit.actualProfit,
+        actualMargin: profit.actualMargin,
+        recent3AvgUnits: recent,
+        previous3AvgUnits: previous,
+        trendPercent: trend,
+        daysCoverNetwork: row.daysCoverNetwork,
+        signals,
+        href: `/inventory/sku/${encodeURIComponent(row.sku)}${market === "CA" ? "?market=CA" : ""}`,
+      });
+    }
+  }
+  return rows
+    .sort((left, right) => focusRank(right) - focusRank(left) || right.productSales - left.productSales)
+    .slice(0, 12);
+}
+
+function focusRank(row: RevenueFocusRow) {
+  const signalWeight = row.signals.reduce((score, signal) => score + (signal === "销售额贡献高" ? 30 : signal.includes("上升") || signal.includes("下降") ? 20 : 15), 0);
+  return signalWeight + Math.min(40, Math.log10(Math.max(1, row.productSales)) * 8) + Math.min(30, Math.abs(row.trendPercent ?? 0) * 0.3);
+}
+
+function average(values: number[]) { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0; }
 
 type BriefMarket = "US" | "CA" | "MX";
 type BriefIssueLevel = "critical" | "watch" | "healthy";
@@ -326,7 +450,6 @@ function buildGrowthCandidates({
     .slice(0, 30);
 }
 
-function average(values: number[]) { return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0; }
 function integerValue(value: number) { return Math.round(value).toLocaleString("en-US"); }
 
 export type GrowthCandidate = {

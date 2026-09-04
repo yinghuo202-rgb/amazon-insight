@@ -56,4 +56,20 @@ describe("inventory client view models", () => {
     expect(dashboard.operationsBrief.parents.flatMap((parent) => parent.children).some((child) => child.issues.includes("实际利润为负"))).toBe(true);
     expect(dashboard.operationsBrief.growthCandidates.every((candidate) => candidate.trendPercent >= 8 && candidate.actualMargin >= 0.1)).toBe(true);
   });
+
+  it("keeps the revenue overview focused and exposes direct SKU evidence links", async () => {
+    const [us, ca, profitability, variants] = await Promise.all([
+      loadInventoryDashboardData("US"),
+      loadInventoryDashboardData("CA"),
+      loadProfitabilityData(),
+      loadVariantCatalogData(),
+    ]);
+    const dashboard = buildCombinedOverviewViewModel(us, ca, profitability, variants);
+
+    expect(dashboard.revenueTrend).toHaveLength(8);
+    expect(dashboard.revenueTrend.at(-1)?.month).toBe(`${us.businessPerformance.actualYear}-08`);
+    expect(dashboard.revenueKpis.latest.US.productSales).toBe(us.businessPerformance.summary.latestMonthRevenue);
+    expect(dashboard.revenueFocusRows.length).toBeLessThanOrEqual(12);
+    expect(dashboard.revenueFocusRows.every((row) => row.href.startsWith("/inventory/sku/") && row.productSales >= 0)).toBe(true);
+  });
 });
