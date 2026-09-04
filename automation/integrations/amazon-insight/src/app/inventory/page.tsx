@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
 
-import { CombinedOverviewDashboard } from "@/components/inventory/combined-overview-dashboard";
+import { RevenueOverviewDashboard } from "@/components/inventory/revenue-overview-dashboard";
 import { OpsPageHeader } from "@/components/inventory/ops-ui";
 import { buildCombinedOverviewViewModel } from "@/lib/inventory/dashboard-view-model";
-import { loadInventoryDashboardData } from "@/lib/inventory/data";
+import { loadInventoryDashboardData, loadProfitabilityData, loadVariantCatalogData } from "@/lib/inventory/data";
 
-export const metadata: Metadata = { title: "双站运营总览", description: "同时查看美国站和加拿大站的库存、销售、补货和广告异常。" };
+export const metadata: Metadata = { title: "销售额运营总览", description: "以销售额为主口径查看美国站和加拿大站的经营变化，并通过搜索打开单个 SKU 综合工作台。" };
 export const dynamic = "force-dynamic";
 
 export default async function InventoryPage() {
-  const [us, ca] = await Promise.all([loadInventoryDashboardData("US"), loadInventoryDashboardData("CA")]);
-  const dashboard = buildCombinedOverviewViewModel(us, ca);
-  return <><OpsPageHeader eyebrow="US + CA · Command Center" title="双站运营驾驶舱" description="以销量、库存、季节供需和执行风险为主线，统一查看美国站与加拿大站的经营状态，再进入各业务页面完成动作。" /><CombinedOverviewDashboard dashboard={dashboard} /></>;
+  const [us, ca, profitability, variants] = await Promise.all([
+    loadInventoryDashboardData("US"),
+    loadInventoryDashboardData("CA"),
+    loadProfitabilityData().catch(() => undefined),
+    loadVariantCatalogData().catch(() => undefined),
+  ]);
+  const dashboard = buildCombinedOverviewViewModel(us, ca, profitability, variants);
+  return <><OpsPageHeader eyebrow="US + CA · REVENUE COMMAND CENTER" title="销售额运营总览" description="以产品销售额、利润、库存覆盖和重点变化为主线；总览不铺开全部 SKU，输入任意 SKU 即可进入综合证据工作台。" /><RevenueOverviewDashboard dashboard={dashboard} /></>;
 }

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS domestic_inventory_overrides_v1 (
 
 function openDatabase() {
   const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
   database.exec(schema);
   return database;
 }
@@ -267,6 +267,7 @@ function recalculateInventorySummary(data: InventoryDashboardData, rows: Invento
     awdAvailable: sum(rows, "awdAvailable"),
     awdOutboundToFba: sum(rows, "awdOutboundToFba"),
     awdInboundNotCounted: sum(rows, "awdInbound"),
+    inTransitInventory: sum(rows, "inTransitInventory"),
     localInventory: sum(rows, "localInventory"),
     pendingOrderQty: sum(rows, "pendingOrderQty"),
     readyToShipQty: sum(rows, "readyToShipQty"),

@@ -22,18 +22,14 @@ export function roundUpToPack(quantity: number, cartonQuantity: number | null) {
 export function calculateInventoryDecision(
   row: Pick<
     InventoryRow,
-    "dailySales" | "fbaSellable" | "awdAvailable" | "awdOutboundToFba" | "cartonQty"
+    "dailySales" | "fbaSellable" | "awdAvailable" | "awdOutboundToFba" | "inTransitInventory" | "cartonQty"
   >,
   parameters: InventoryParameters,
 ): InventoryDecision {
-  const eligibleInventoryPosition = row.fbaSellable + row.awdAvailable + row.awdOutboundToFba;
+  const eligibleInventoryPosition = row.fbaSellable + row.awdAvailable + row.awdOutboundToFba + row.inTransitInventory;
   const daysCoverFba = row.dailySales > 0 ? row.fbaSellable / row.dailySales : null;
   const daysCoverNetwork = row.dailySales > 0 ? eligibleInventoryPosition / row.dailySales : null;
-  const horizonDays =
-    parameters.leadTimeDays +
-    parameters.reviewCycleDays +
-    parameters.targetCoverDays +
-    parameters.safetyStockDays;
+  const horizonDays = parameters.targetCoverDays;
   const grossNeed = Math.max(0, row.dailySales * horizonDays - eligibleInventoryPosition);
   const suggestedShipmentQty = roundUpToPack(grossNeed, row.cartonQty);
   const transferNeed = Math.max(
@@ -68,7 +64,7 @@ export function calculateInventoryDecision(
     reason = `FBA 仅覆盖约 ${Math.round(daysCoverFba)} 天，可先从 AWD 调拨。`;
   } else if (suggestedShipmentQty > 0) {
     action = "SEA_SHIP";
-    reason = `按 ${horizonDays} 天补货视窗计算，建议安排海运补货。`;
+    reason = `按库存与在途合计覆盖 ${horizonDays} 天计算，建议安排海运补货。`;
   } else {
     action = "NO_ACTION";
     reason = "当前可计入库存可覆盖补货视窗，暂不新增发货。";
@@ -79,7 +75,7 @@ export function calculateInventoryDecision(
   else if (daysCoverNetwork !== null && daysCoverNetwork < parameters.leadTimeDays) riskLevel = "critical";
   else if (
     daysCoverNetwork !== null &&
-    daysCoverNetwork < parameters.leadTimeDays + parameters.targetCoverDays
+    daysCoverNetwork < parameters.targetCoverDays
   ) riskLevel = "watch";
   else if (daysCoverNetwork !== null && daysCoverNetwork > parameters.excessCoverDays) riskLevel = "excess";
   else riskLevel = "healthy";

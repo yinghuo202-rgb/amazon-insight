@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { automationRoot } from "@/lib/inventory/document-exports";
+import { runtimePath, sourceDataRoot } from "@/lib/inventory/paths";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 
 export type DataRefreshSource = {
@@ -51,12 +52,13 @@ const reportDefinitions = [
   ["documents", "订单与单据主数据", "runtime/reports/document_master.json"],
   ["products", "产品与图片目录", "runtime/reports/product_catalog.json"],
   ["content", "Listing 与美工任务", "runtime/reports/content_workflow.json"],
+  ["research", "新品调研", "runtime/reports/new_product_research.json"],
 ] as const;
 
 export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   const root = automationRoot();
   const config = JSON.parse(await readFile(path.join(root, "config", "project.json"), "utf8")) as Record<string, unknown>;
-  const dataRoot = path.resolve(root, String(config.data_root ?? "../"));
+  const dataRoot = sourceDataRoot(String(config.data_root ?? "../"));
   const inventory = (config.inventory_dashboard ?? {}) as Record<string, unknown>;
   const markets = (inventory.markets ?? {}) as Record<string, Record<string, unknown>>;
   const documentSources = (inventory.document_master_sources ?? {}) as Record<string, unknown>;
@@ -69,6 +71,7 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   for (const source of configuredSources) add(source.path, String(source.name ?? source.path), Boolean(source.canonical));
   add(inventory.master_workbook, "库存规划主表");
   add(inventory.product_details_workbook, "产品明细表");
+  add(inventory.new_product_research_workbook, "新品调研表", false);
   add(inventory.sales_workbook, "月度销量主表");
   add(inventory.listing_workbook, "Listing 主表");
   add(inventory.creative_brief_folder, "历史美工对接目录", false);
@@ -90,7 +93,7 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   }));
 
   const reports = await Promise.all(reportDefinitions.map(async ([key, label, relativePath]) => {
-    const info = await stat(path.join(root, relativePath)).catch(() => null);
+    const info = await stat(runtimePath(relativePath.replace(/^runtime\//, ""))).catch(() => null);
     return { key, label, relativePath, exists: Boolean(info), modifiedAt: info?.mtime.toISOString() ?? null, size: info?.size ?? 0 };
   }));
   const { runs, exceptions } = operationHistory();
@@ -111,7 +114,7 @@ export async function runFullDataRefresh() {
   const root = automationRoot();
   const before = await getDataRefreshStatus();
   if (before.summary.missingCount) throw new Error(`存在 ${before.summary.missingCount} 个必需数据源缺失，请先补齐后再重建。`);
-  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-document-master", "build-inventory-dashboard-data"];
+  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-new-product-research", "build-document-master", "build-inventory-dashboard-data"];
   const results = [];
   for (const command of commands) results.push(await runPythonJob(root, command));
   return { status: "completed", commands: results, snapshot: await getDataRefreshStatus() };

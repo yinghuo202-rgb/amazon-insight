@@ -17,12 +17,13 @@ from .jobs.local_sources import run as run_local_sources
 from .jobs.profitability_snapshot import run as run_profitability_snapshot
 from .jobs.sales_history import run as run_sales_history
 from .jobs.monthly_reports import run as run_monthly_reports
+from .jobs.new_product_research import run as run_new_product_research
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="store-ops")
     parser.add_argument("--config",required=True)
-    parser.add_argument("command",choices=["init","audit-skus","build-inventory-dashboard-data","build-profitability-data","build-product-catalog","build-content-workflow","build-document-master","build-purchase-plan","refresh-local-sources","refresh-sales-history","import-monthly-reports","export-documents","status"])
+    parser.add_argument("command",choices=["init","audit-skus","build-inventory-dashboard-data","build-profitability-data","build-product-catalog","build-content-workflow","build-document-master","build-purchase-plan","build-new-product-research","refresh-local-sources","refresh-sales-history","import-monthly-reports","export-documents","status"])
     parser.add_argument("--request")
     parser.add_argument("--local-root")
     parser.add_argument("--source", action="append", default=[])
@@ -51,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = run_content_workflow(config,db)
         elif args.command=="build-purchase-plan":
             payload = run_purchase_plan(config,db)
+        elif args.command=="build-new-product-research":
+            payload = run_new_product_research(config,db)
         elif args.command=="refresh-local-sources":
             if not args.local_root:
                 parser.error("refresh-local-sources 需要 --local-root")

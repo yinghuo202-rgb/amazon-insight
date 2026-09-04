@@ -178,7 +178,6 @@ def _read_shipments(config: ProjectConfig, normalizer: SkuNormalizer):
             if "产品编号" not in _text(sheet["B2"].value).replace("　", ""):
                 continue
             sources.append(_source_label(config, path))
-            is_incremental = any(path.resolve().is_relative_to(candidate.resolve()) for candidate in incremental_roots)
             for row in range(3, min(sheet.max_row, 500) + 1):
                 sku = _base_sku(normalizer, sheet.cell(row, 2).value)
                 quantity = _number(sheet.cell(row, 11).value)
@@ -186,14 +185,15 @@ def _read_shipments(config: ProjectConfig, normalizer: SkuNormalizer):
                 if not sku or quantity is None or quantity <= 0 or carton is None or carton <= 0:
                     continue
                 batch_quantities[(market, batch, sku)] = int(round(quantity))
-                if not is_incremental:
-                    shipment_events.append({
-                        "market": market,
-                        "batch": batch,
-                        "shipmentDate": _business_date(path).isoformat(),
-                        "sku": sku,
-                        "quantity": int(round(quantity)),
-                    })
+                shipment_events.append({
+                    "market": market,
+                    "batch": batch,
+                    "shipmentDate": _business_date(path).isoformat(),
+                    "sku": sku,
+                    "quantity": int(round(quantity)),
+                    "cartonCount": int(round(carton)),
+                    "sourcePath": _source_label(config, path),
+                })
                 item = {
                     "sku": sku,
                     "cartonQty": int(round(carton)),
@@ -685,6 +685,7 @@ def _load_master_seed(config: ProjectConfig) -> dict:
             + sum(int(value) for value in coverage.get("declarationProfiles", {}).values())
             + int(coverage.get("purchaseOrderLots", 0))
             + int(coverage.get("shipmentRegisterEvents", 0))
+            + int(coverage.get("shipmentHistoryEvents", 0))
         )
         if score > best_score:
             best, best_score = payload, score
@@ -781,6 +782,14 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
         for item in shipment_register:
             register_by_key[(item.get("market"), item.get("batch"), item.get("shipmentDate"), item.get("companyNumber"))] = item
         shipment_register = list(register_by_key.values())
+        seed_history = seed_master.get("shipmentHistory", [])
+        history_by_key = {
+            (item.get("market"), item.get("batch"), item.get("shipmentDate"), item.get("sku")): item
+            for item in seed_history
+        }
+        for item in shipment_events:
+            history_by_key[(item.get("market"), item.get("batch"), item.get("shipmentDate"), item.get("sku"))] = item
+        shipment_history = list(history_by_key.values())
 
         payload = {
             "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -788,12 +797,14 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
             "declarationProfiles": profiles,
             "purchaseOrderLots": sorted(po_lots, key=lambda item: (item["poDate"], item["poNumber"], item["sku"])),
             "shipmentRegister": sorted(shipment_register, key=lambda item: (item["shipmentDate"], item["batch"])),
+            "shipmentHistory": sorted(shipment_history, key=lambda item: (item["shipmentDate"], item["batch"], item["market"], item["sku"])),
             "coverage": {
                 "logistics": {market: len(items) for market, items in logistics.items()},
                 "declarationProfiles": {market: len(items) for market, items in profiles.items()},
                 "purchaseOrderLots": len(po_lots),
                 "purchaseOrderLotsAvailable": sum(1 for item in po_lots if item["availableQuantity"] > 0),
                 "shipmentRegisterEvents": len(shipment_register),
+                "shipmentHistoryEvents": len(shipment_history),
             },
             "sources": {
                 "shipments": shipment_sources,

@@ -6,6 +6,9 @@ data/
 logs/
 backups/
 .docker/
+secrets/
+automation/runtime/
+**/__pycache__/
 **/node_modules/
 **/.next/
 *.log

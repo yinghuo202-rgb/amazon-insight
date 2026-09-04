@@ -2,7 +2,7 @@
 
 import { Calculator, CheckCircle2, RotateCcw, Save, Search, Sigma } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
 import { PRODUCT_COST_VAT_RATE } from "@/lib/inventory/product-cost-policy";
@@ -25,7 +25,8 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
   const [query, setQuery] = useState("");
   const [exchangeRate, setExchangeRate] = useState(view.parameters.exchangeRate);
   const [batchPercent, setBatchPercent] = useState(0);
-  const [page, setPage] = useState(1);
+  const [visibleCount, setVisibleCount] = useState(pageSize);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
 
@@ -39,9 +40,8 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
   const dirtySkus = useMemo(() => view.rows
     .filter((row) => !sameCosts(drafts[row.sku], savedValues[row.sku]))
     .map((row) => row.sku), [drafts, savedValues, view.rows]);
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visibleRows = filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const visibleRows = filteredRows.slice(0, visibleCount);
+  const hasMore = visibleRows.length < filteredRows.length;
   const selectedSeries = view.series.find((item) => item.id === seriesFilter);
   const costCoverage = filteredRows.filter((row) => drafts[row.sku]?.purchaseCostRmbTaxIncluded !== null).length;
   const averageCost = average(filteredRows.flatMap((row) => {
@@ -49,6 +49,16 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
     return value === null || value === undefined ? [] : [value];
   }));
   const filteredOverrides = filteredRows.filter((row) => overrideMeta[row.sku]).length;
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !hasMore) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) setVisibleCount((current) => Math.min(current + pageSize, filteredRows.length));
+    }, { rootMargin: "500px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [filteredRows.length, hasMore]);
 
   function patchCost(sku: string, field: keyof ProductCostValues, value: number | null) {
     setDrafts((current) => ({
@@ -128,7 +138,7 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
   }
 
   return <div className="space-y-5">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="当前筛选" value={`${filteredRows.length} SKU`} detail={selectedSeries ? `${selectedSeries.name} · ${selectedSeries.kind === "variant" ? "父子系列" : "待归系列"}` : `${view.series.length} 个系列分组`} />
       <OpsKpi label="含税成本覆盖" value={`${costCoverage}/${filteredRows.length}`} detail={`${filteredRows.length ? Math.round(costCoverage / filteredRows.length * 100) : 0}% 已有人民币含税成本`} tone={costCoverage === filteredRows.length ? "positive" : "warning"} />
       <OpsKpi label="平均含税成本" value={averageCost === null ? "—" : `¥${money(averageCost)}`} detail="按当前筛选中已有成本的 SKU 等权计算" />
@@ -138,8 +148,8 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
     <OpsCard>
       <OpsCardHeader title="系列筛选与成本换算" description={`当前筛选 ${filteredRows.length} 个 SKU，含税成本覆盖 ${filteredRows.length ? Math.round(costCoverage / filteredRows.length * 100) : 0}%，${filteredRows.length - costCoverage ? `仍有 ${filteredRows.length - costCoverage} 个待补成本` : "成本已全部覆盖"}。`} action={<Calculator className="h-5 w-5 text-emerald-700" />} />
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6 xl:items-end">
-        <label className="xl:col-span-2"><span className="mb-1.5 block text-[11px] font-medium text-slate-500">产品系列</span><select aria-label="产品系列筛选" value={seriesFilter} onChange={(event) => { setSeriesFilter(event.target.value); setPage(1); }} className="w-full border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-600"><option value="ALL">全部系列 · {view.rows.length} SKU</option>{view.series.map((series) => <option key={series.id} value={series.id}>{series.kind === "variant" ? "系列" : "待归"} · {series.name} · {series.skuCount}</option>)}</select></label>
-        <label className="relative xl:col-span-2"><span className="mb-1.5 block text-[11px] font-medium text-slate-500">搜索</span><Search className="pointer-events-none absolute bottom-2.5 left-3 h-4 w-4 text-slate-400" /><input aria-label="搜索产品成本" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="SKU、产品、变体" className="w-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" /></label>
+        <label className="xl:col-span-2"><span className="mb-1.5 block text-[11px] font-medium text-slate-500">产品系列</span><select aria-label="产品系列筛选" value={seriesFilter} onChange={(event) => setSeriesFilter(event.target.value)} className="w-full border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-600"><option value="ALL">全部系列 · {view.rows.length} SKU</option>{view.series.map((series) => <option key={series.id} value={series.id}>{series.kind === "variant" ? "系列" : "待归"} · {series.name} · {series.skuCount}</option>)}</select></label>
+        <label className="relative xl:col-span-2"><span className="mb-1.5 block text-[11px] font-medium text-slate-500">搜索</span><Search className="pointer-events-none absolute bottom-2.5 left-3 h-4 w-4 text-slate-400" /><input aria-label="搜索产品成本" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="SKU、产品、变体" className="w-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-emerald-600" /></label>
         <div><span className="mb-1.5 block text-[11px] font-medium text-slate-500">增值税率</span><div aria-label="增值税率 13% 固定" className="border border-emerald-200 bg-emerald-50 px-3 py-2 text-right font-mono text-sm font-semibold text-emerald-800">{PRODUCT_COST_VAT_RATE}%（固定）</div></div>
         <NumberControl label="人民币 / 美元" ariaLabel="人民币美元汇率" value={exchangeRate} step={0.0001} onChange={setExchangeRate} />
         <NumberControl label="整系列调整 %" ariaLabel="整系列成本调整百分比" value={batchPercent} step={1} onChange={setBatchPercent} />
@@ -160,7 +170,7 @@ export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
         const dirty = !sameCosts(values, savedValues[row.sku]);
         return <tr key={row.sku} className={dirty ? "bg-amber-50/40" : "hover:bg-slate-50"}><td className="px-4 py-3"><Link href={`/inventory/sku/${encodeURIComponent(row.sku)}`} className="font-mono font-semibold text-emerald-700 hover:underline">{row.sku}</Link><p className="mt-1 max-w-72 truncate text-slate-600" title={row.productName}>{row.productName}</p><p className="mt-1 text-[10px] text-slate-400">{row.category}</p></td><td className="px-3 py-3"><p className="max-w-64 truncate font-medium text-slate-700" title={row.seriesName}>{row.seriesName}</p><p className="mt-1 text-[10px] text-slate-400">{row.parentSku ? `${row.parentSku} · ${row.variantValue || "变体待补"}` : "尚未建立父子系列"}</p></td><td className="px-3 py-3"><OpsBadge tone={dirty ? "amber" : overrideMeta[row.sku] ? "blue" : values.purchaseCostRmbTaxIncluded === null ? "rose" : "slate"}>{dirty ? "待保存" : overrideMeta[row.sku] ? "人工成本" : values.purchaseCostRmbTaxIncluded === null ? "成本缺失" : "源数据"}</OpsBadge></td><CostInput ariaLabel={`${row.sku} 含税人民币成本`} value={values.purchaseCostRmbTaxIncluded} onChange={(value) => patchCost(row.sku, "purchaseCostRmbTaxIncluded", value)} /><CostInput ariaLabel={`${row.sku} 未税人民币成本`} value={values.purchaseCostRmbTaxExcluded} onChange={(value) => patchCost(row.sku, "purchaseCostRmbTaxExcluded", value)} /><CostInput ariaLabel={`${row.sku} 美元成本`} value={values.purchaseCostUsd} onChange={(value) => patchCost(row.sku, "purchaseCostUsd", value)} /><td className="px-3 py-3 text-right font-mono text-slate-500">{inferredVat(values)}</td><td className="px-4 py-3"><p className="text-[11px] text-slate-600">{overrideMeta[row.sku] ? dateTime(overrideMeta[row.sku]) : "产品目录"}</p>{dirty ? <p className="mt-1 flex items-center gap-1 text-[10px] text-amber-700"><CheckCircle2 className="h-3 w-3" />保存后覆盖</p> : null}</td></tr>;
       })}</tbody></table></div>
-      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500"><span>显示 {visibleRows.length} / {filteredRows.length} 项 · 第 {safePage}/{pageCount} 页</span><div className="flex gap-2"><button type="button" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">上一页</button><button type="button" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="border border-slate-200 bg-white px-3 py-1.5 disabled:opacity-40">下一页</button></div></div>
+      <div ref={loadMoreRef} className="border-t border-slate-100 px-4 py-3 text-center text-xs text-slate-500">显示 {visibleRows.length} / {filteredRows.length} 项 · {hasMore ? "继续下滑加载" : "已显示全部"}</div>
     </OpsCard>
 
     <details className="border border-slate-200 bg-white"><summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">成本口径与系列分组说明</summary><div className="grid gap-3 border-t border-slate-100 p-4 text-xs leading-5 text-slate-600 md:grid-cols-3"><p><strong className="text-slate-900">含税 → 未税：</strong>固定按 13% 增值税计算，即含税人民币 ÷ 1.13；保存时后台会再次校验该口径。</p><p><strong className="text-slate-900">人民币 → 美元：</strong>不含税人民币 ÷ 当前人民币/美元汇率；页面默认汇率按现有不含税美元成本中位数反推。</p><p><strong className="text-slate-900">系列：</strong>优先采用真实父子系列；未建父子关系的产品暂按品类分组，并标记为“待归系列”。</p></div></details>

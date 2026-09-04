@@ -1,11 +1,13 @@
 import path from "node:path";
 
-import { contentWorkflowSchema, inventoryDashboardSchema, productCatalogSchema, profitabilityDataSchema, purchasePlanSchema, variantCatalogSchema, type InventoryDashboardData } from "@/lib/inventory/contracts";
-import { automationRoot } from "@/lib/inventory/paths";
+import { contentWorkflowSchema, inventoryDashboardSchema, newProductResearchSchema, productCatalogSchema, profitabilityDataSchema, purchasePlanSchema, variantCatalogSchema, type InventoryDashboardData } from "@/lib/inventory/contracts";
+import { runtimePath } from "@/lib/inventory/paths";
 import { loadJsonReport } from "@/lib/inventory/json-report-cache";
 import { applyInventoryOverrides, applyProductMasterOverrides, applyPurchasePlanOverrides, listOperationalDataOverrides } from "@/lib/inventory/operational-data-store";
 import { listLatestPurchaseOrderReviews, purchaseOrderReviewKey, type PurchaseOrderReview } from "@/lib/inventory/purchase-order-reviews";
 import { applyProductCostOverrides, listProductCostOverrides } from "@/lib/inventory/product-cost-store";
+import { applyResearchCandidateOverrides } from "@/lib/inventory/new-product-research";
+import { listResearchCandidateOverrides } from "@/lib/inventory/new-product-research-store";
 
 export type OperationsMarket = "US" | "CA";
 
@@ -19,7 +21,7 @@ export function inventoryDashboardDataPath(market: OperationsMarket = "US") {
     : process.env.STORE_OPS_DASHBOARD_DATA?.trim();
   return environmentPath
     ? path.resolve(environmentPath)
-    : path.join(automationRoot(), "runtime", "reports", market === "CA" ? "inventory_dashboard.ca.json" : "inventory_dashboard.json");
+    : runtimePath("reports", market === "CA" ? "inventory_dashboard.ca.json" : "inventory_dashboard.json");
 }
 
 export async function loadBaseInventoryDashboardData(market: OperationsMarket = "US") {
@@ -39,7 +41,7 @@ export async function loadInventoryDashboardData(market: OperationsMarket = "US"
 export function profitabilityDataPath() {
   return process.env.STORE_OPS_PROFITABILITY_DATA?.trim()
     ? path.resolve(process.env.STORE_OPS_PROFITABILITY_DATA)
-    : path.join(automationRoot(), "runtime", "reports", "profitability.json");
+    : runtimePath("reports", "profitability.json");
 }
 
 export async function loadProfitabilityData() {
@@ -88,7 +90,7 @@ export function applyPurchaseOrderReviews(data: InventoryDashboardData, reviews:
 export function variantCatalogDataPath() {
   return process.env.STORE_OPS_VARIANT_CATALOG?.trim()
     ? path.resolve(process.env.STORE_OPS_VARIANT_CATALOG)
-    : path.join(automationRoot(), "runtime", "reports", "variant_catalog.json");
+    : runtimePath("reports", "variant_catalog.json");
 }
 
 export async function loadVariantCatalogData() {
@@ -98,7 +100,7 @@ export async function loadVariantCatalogData() {
 export function productCatalogDataPath() {
   return process.env.STORE_OPS_PRODUCT_CATALOG?.trim()
     ? path.resolve(process.env.STORE_OPS_PRODUCT_CATALOG)
-    : path.join(automationRoot(), "runtime", "reports", "product_catalog.json");
+    : runtimePath("reports", "product_catalog.json");
 }
 
 export async function loadBaseProductCatalogData() {
@@ -110,20 +112,63 @@ export async function loadProductCatalogData() {
   return applyProductCostOverrides(data, listProductCostOverrides());
 }
 
+export function newProductResearchDataPath() {
+  return process.env.STORE_OPS_NEW_PRODUCT_RESEARCH?.trim()
+    ? path.resolve(process.env.STORE_OPS_NEW_PRODUCT_RESEARCH)
+    : runtimePath("reports", "new_product_research.json");
+}
+
+export async function loadNewProductResearchData() {
+  const data = await loadJsonReport(newProductResearchDataPath(), (input) => newProductResearchSchema.parse(input));
+  return applyResearchCandidateOverrides(data, listResearchCandidateOverrides());
+}
+
 export function contentWorkflowDataPath() {
   return process.env.STORE_OPS_CONTENT_WORKFLOW?.trim()
     ? path.resolve(process.env.STORE_OPS_CONTENT_WORKFLOW)
-    : path.join(automationRoot(), "runtime", "reports", "content_workflow.json");
+    : runtimePath("reports", "content_workflow.json");
 }
 
 export async function loadContentWorkflowData() {
   return loadJsonReport(contentWorkflowDataPath(), (input) => contentWorkflowSchema.parse(input));
 }
 
+export type ShipmentHistoryItem = {
+  market: OperationsMarket;
+  batch: number;
+  shipmentDate: string;
+  sku: string;
+  quantity: number;
+  cartonCount: number;
+  sourcePath: string;
+};
+
+export function documentMasterDataPath() {
+  return process.env.STORE_OPS_DOCUMENT_MASTER?.trim()
+    ? path.resolve(process.env.STORE_OPS_DOCUMENT_MASTER)
+    : runtimePath("reports", "document_master.json");
+}
+
+export async function loadDocumentMasterData() {
+  return loadJsonReport(documentMasterDataPath(), (input) => {
+    const payload = input as { shipmentHistory?: unknown };
+    const shipmentHistory = Array.isArray(payload.shipmentHistory) ? payload.shipmentHistory.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const row = item as Record<string, unknown>;
+      const sku = String(row.sku ?? "").trim().toUpperCase();
+      const market = String(row.market ?? "").toUpperCase() === "CA" ? "CA" : "US";
+      const quantity = Number(row.quantity ?? 0);
+      if (!sku || !Number.isFinite(quantity) || quantity <= 0) return [];
+      return [{ market, batch: Number(row.batch ?? 0), shipmentDate: String(row.shipmentDate ?? ""), sku, quantity: Math.round(quantity), cartonCount: Math.max(0, Math.round(Number(row.cartonCount ?? 0))), sourcePath: String(row.sourcePath ?? "") }] satisfies ShipmentHistoryItem[];
+    }) : [];
+    return { shipmentHistory };
+  });
+}
+
 export function purchasePlanDataPath() {
   return process.env.STORE_OPS_PURCHASE_PLAN?.trim()
     ? path.resolve(process.env.STORE_OPS_PURCHASE_PLAN)
-    : path.join(automationRoot(), "runtime", "reports", "purchase_plan.json");
+    : runtimePath("reports", "purchase_plan.json");
 }
 
 export async function loadBasePurchasePlanData() {
@@ -142,5 +187,5 @@ export async function loadPurchasePlanData() {
 export function productImageDirectory() {
   return process.env.STORE_OPS_PRODUCT_IMAGES?.trim()
     ? path.resolve(process.env.STORE_OPS_PRODUCT_IMAGES)
-    : path.join(automationRoot(), "runtime", "output", "product-images");
+    : runtimePath("output", "product-images");
 }

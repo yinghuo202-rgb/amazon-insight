@@ -20,7 +20,7 @@ describe("inventory replenishment calculator", () => {
 
   it("flags inventory that runs out before the sea ETA", () => {
     const result = calculateInventoryDecision(
-      { dailySales: 10, fbaSellable: 200, awdAvailable: 100, awdOutboundToFba: 0, cartonQty: 50 },
+      { dailySales: 10, fbaSellable: 200, awdAvailable: 100, awdOutboundToFba: 0, inTransitInventory: 0, cartonQty: 50 },
       parameters,
     );
 
@@ -30,11 +30,22 @@ describe("inventory replenishment calculator", () => {
 
   it("uses AWD transfer when network cover is sufficient but FBA is low", () => {
     const result = calculateInventoryDecision(
-      { dailySales: 10, fbaSellable: 100, awdAvailable: 700, awdOutboundToFba: 0, cartonQty: 50 },
+      { dailySales: 10, fbaSellable: 100, awdAvailable: 700, awdOutboundToFba: 0, inTransitInventory: 0, cartonQty: 50 },
       parameters,
     );
 
     expect(result.action).toBe("AWD_TRANSFER");
     expect(result.suggestedAwdTransferQty).toBe(200);
+  });
+
+  it("targets three months and deducts in-transit inventory", () => {
+    const result = calculateInventoryDecision(
+      { dailySales: 10, fbaSellable: 200, awdAvailable: 100, awdOutboundToFba: 0, inTransitInventory: 300, cartonQty: 50 },
+      { ...parameters, targetCoverDays: 90 },
+    );
+
+    expect(result.eligibleInventoryPosition).toBe(600);
+    expect(result.suggestedShipmentQty).toBe(300);
+    expect(result.daysCoverNetwork).toBe(60);
   });
 });

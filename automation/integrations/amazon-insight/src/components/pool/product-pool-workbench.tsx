@@ -183,7 +183,7 @@ export function ProductPoolWorkbench() {
           title="选品池为空"
           description="先在搜索结果页挑选商品，再加入选品池。"
           action={
-            <Link href="/" className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white">
+            <Link href="/selection" className="rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white">
               去搜索
             </Link>
           }

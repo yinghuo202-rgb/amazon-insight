@@ -1,6 +1,6 @@
 {
   "name": "amazon-selection-workbench",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -9,6 +9,7 @@
     "start:standalone": "node .next/standalone/server.js",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:ci": "vitest run --exclude src/test/inventory-data.test.ts --exclude src/test/inventory-view-models.test.ts --exclude src/test/operational-data-editor.test.ts --exclude src/test/product-costs.test.ts --exclude src/test/product-knowledge-graph.test.ts --exclude src/test/product-specification-extractor.test.ts",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
@@ -16,12 +17,12 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.2",
+    "@prisma/client": "6.19.3",
     "clsx": "^2.1.1",
     "cytoscape": "3.34.0",
     "lucide-react": "^1.8.0",
     "next": "16.2.4",
-    "prisma": "^6.16.2",
+    "prisma": "6.19.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",

@@ -9,6 +9,7 @@
 ```text
 ghcr.io/<owner>/<repository>:latest
 ghcr.io/<owner>/<repository>:<完整提交 SHA>
+ghcr.io/<owner>/<repository>:v1.0.0
 ```
 
 工作流使用 GitHub 内置 `GITHUB_TOKEN`，不会把 GHCR 密码写入仓库。
@@ -25,9 +26,9 @@ cp .env.example .env
 
 ```env
 IMAGE_REPOSITORY=ghcr.io/你的用户名/你的仓库名
-IMAGE_TAG=latest
+IMAGE_TAG=v1.0.0
 SECRET_KEY=一段足够长的随机字符串
-APP_PORT=3000
+APP_PORT=3001
 ```
 
 私有 GHCR 仓库只在 NAS 登录，令牌保存在 NAS 的 Docker 配置，不提交 GitHub：
@@ -40,7 +41,38 @@ docker compose ps
 docker compose logs -f app
 ```
 
-停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3000/login` 创建管理员账户。
+停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3001/login` 创建管理员账户。
+
+## Cloudflare Tunnel（可选）
+
+项目内置了一个独立的 `cloudflare` Compose profile。它不会开放 NAS 管理端口，也不会默认启动；启用后，`cloudflared` 会加入和 `app` 相同的 Docker 网络，Cloudflare Tunnel 的 Published application 应指向 `http://app:3000`。
+
+先在 Cloudflare 控制台创建或轮换 Tunnel Token，再在 NAS 保存到未纳入 Git 的文件：
+
+```sh
+cd /docker/measureman-commerce
+mkdir -p secrets
+vi secrets/cloudflare-token.txt
+chmod 600 secrets/cloudflare-token.txt
+```
+
+在 Cloudflare Tunnel 路由中设置：
+
+```text
+Hostname: ops.example.com
+Service:  http://app:3000
+```
+
+启动应用和 Tunnel：
+
+```sh
+docker compose pull app cloudflared
+docker compose --profile cloudflare up -d app cloudflared
+docker compose ps
+docker compose logs --tail=100 cloudflared
+```
+
+停止 Tunnel：`docker compose --profile cloudflare stop cloudflared`。不要把 Token 写入 `.env`、Compose、GitHub 或聊天记录；只保存在 NAS 的 `secrets/cloudflare-token.txt`。
 
 ## 持久化与健康检查
 
@@ -69,7 +101,7 @@ docker compose logs -f app
 
 ## Watchtower 自动更新
 
-Compose 只给 `app` 加 Watchtower 标签。完成 NAS GHCR 登录并生成 `.docker/config.json` 后运行：
+生产环境默认固定版本，不建议直接跟随 `latest`。只有确认新版本数据库兼容并接受自动升级风险时，才启用 Watchtower。Compose 只给 `app` 加 Watchtower 标签；完成 NAS GHCR 登录并生成 `.docker/config.json` 后运行：
 
 ```sh
 docker compose --profile watchtower up -d watchtower

@@ -114,7 +114,13 @@ def _read_fba(path: Path, normalizer: SkuNormalizer, warehouse_filter: str) -> t
     return dict(aggregate), invalid
 
 
-def _read_fba_from_master(path: Path, sheet: str, header_name: str, normalizer: SkuNormalizer) -> tuple[dict, list[str]]:
+def _read_fba_from_master(
+    path: Path,
+    sheet: str,
+    header_name: str,
+    normalizer: SkuNormalizer,
+    network_inventory_header: str | None = None,
+) -> tuple[dict, list[str]]:
     """Read the current FBA balance embedded in the dated planning workbook."""
     aggregate: dict[str, dict] = {}
     invalid: list[str] = []
@@ -126,6 +132,10 @@ def _read_fba_from_master(path: Path, sheet: str, header_name: str, normalizer: 
         inventory_index = next((index for index, value in enumerate(header) if _text(value) == header_name), None)
         if inventory_index is None:
             raise ValueError(f"Planning workbook is missing FBA inventory column: {header_name}")
+        network_inventory_index = next(
+            (index for index, value in enumerate(header) if network_inventory_header and _text(value) == network_inventory_header),
+            None,
+        )
         for row in rows:
             raw_sku = row[0] if row else None
             sku = _base_sku(normalizer, raw_sku)
@@ -133,10 +143,16 @@ def _read_fba_from_master(path: Path, sheet: str, header_name: str, normalizer: 
                 if _text(raw_sku):
                     invalid.append(_text(raw_sku))
                 continue
+            fba_sellable = max(0, _integer(row[inventory_index] if len(row) > inventory_index else None))
+            network_inventory = max(
+                fba_sellable,
+                _integer(row[network_inventory_index] if network_inventory_index is not None and len(row) > network_inventory_index else None),
+            )
             aggregate[sku] = {
-                "fbaSellable": max(0, _integer(row[inventory_index] if len(row) > inventory_index else None)),
+                "fbaSellable": fba_sellable,
                 "fbaReservedTransfer": 0,
                 "fbaReservedProcessing": 0,
+                "inTransitInventory": max(0, network_inventory - fba_sellable),
             }
     finally:
         workbook.close()
@@ -647,8 +663,13 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
             awd_path, awd_date = None, fba_date
         sales_path = (config.data_root / settings["sales_workbook"]).resolve()
         advertising_folder = (config.data_root / settings["advertising_folder"]).resolve()
+        runtime_monthly_folder = config.runtime_root / "incoming" / "monthly-sales-reports"
         monthly_sales_folder = (config.data_root / settings["sales_monthly_folder"]).resolve() if settings.get("sales_monthly_folder") else None
+        if monthly_sales_folder is not None and not monthly_sales_folder.exists() and runtime_monthly_folder.exists():
+            monthly_sales_folder = runtime_monthly_folder
         history_monthly_folder = (config.data_root / settings["sales_history_monthly_folder"]).resolve() if settings.get("sales_history_monthly_folder") else monthly_sales_folder
+        if history_monthly_folder is not None and not history_monthly_folder.exists() and runtime_monthly_folder.exists():
+            history_monthly_folder = runtime_monthly_folder
         additional_history_folders = [
             (config.data_root / str(value)).resolve()
             for value in settings.get("sales_history_additional_folders", [])
@@ -665,6 +686,7 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
                 settings.get("fba_master_sheet", settings.get("master_sheet", "库存规划")),
                 settings.get("fba_master_header", "FBA库存"),
                 normalizer,
+                settings.get("network_inventory_header", "FBA+在途库存"),
             )
         else:
             fba, invalid_fba = _read_fba(fba_path, normalizer, settings.get("fba_warehouse_filter", "US_FBA"))
@@ -775,7 +797,7 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
         parameters = ReplenishmentParameters(
             lead_time_days=int(defaults.get("lead_time_days", 75)),
             review_cycle_days=int(defaults.get("review_cycle_days", 7)),
-            target_cover_days=int(defaults.get("target_cover_days", 45)),
+            target_cover_days=int(defaults.get("target_cover_days", 90)),
             safety_stock_days=int(defaults.get("safety_stock_days", 21)),
             excess_cover_days=int(defaults.get("excess_cover_days", 240)),
             fba_transfer_trigger_days=int(defaults.get("fba_transfer_trigger_days", 30)),
@@ -814,6 +836,7 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
                 awd_outbound_to_fba=int(awd_item.get("awdOutboundToFba", 0)),
                 carton_quantity=carton,
                 parameters=parameters,
+                in_transit_inventory=int(fba_item.get("inTransitInventory", awd_item.get("awdInbound", 0))),
             )
             quality: list[str] = []
             if daily_sales <= 0:
@@ -1014,6 +1037,7 @@ def _run_market(config: ProjectConfig, db: StateDb, settings: dict, purchase_ord
                 "awdAvailable": _sum(rows, "awdAvailable"),
                 "awdOutboundToFba": _sum(rows, "awdOutboundToFba"),
                 "awdInboundNotCounted": _sum(rows, "awdInbound"),
+                "inTransitInventory": _sum(rows, "inTransitInventory"),
                 "localInventory": _sum(rows, "localInventory"),
                 "pendingOrderQty": _sum(rows, "pendingOrderQty"),
                 "overdueOrderCount": sum(1 for row in rows for order in row["pendingOrders"] if order["overdue"]),
