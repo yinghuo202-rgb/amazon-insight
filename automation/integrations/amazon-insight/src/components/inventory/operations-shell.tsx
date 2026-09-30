@@ -17,6 +17,7 @@ import {
   PencilLine,
   ShoppingCart,
   Store,
+  Truck,
   Users,
   Warehouse,
   X,
@@ -30,6 +31,7 @@ type NavigationItem = {
   label: string;
   icon: ComponentType<{ className?: string }>;
   combined?: boolean;
+  adminOnly?: boolean;
 };
 
 const navigation: Array<{ label: string; items: NavigationItem[] }> = [
@@ -43,35 +45,44 @@ const navigation: Array<{ label: string; items: NavigationItem[] }> = [
   {
     label: "库存与供应",
     items: [
-      { href: "/inventory/stock", label: "库存视图", icon: Warehouse },
-      { href: "/inventory/purchasing", label: "采购计划", icon: ShoppingCart, combined: true },
-      { href: "/inventory/replenishment", label: "发货计划", icon: Boxes },
+      { href: "/inventory/warehouse", label: "仓库管理", icon: Warehouse, adminOnly: true },
+      { href: "/inventory/stock", label: "库存视图", icon: Warehouse, adminOnly: true },
+      { href: "/inventory/purchasing", label: "采购计划", icon: ShoppingCart, combined: true, adminOnly: true },
+      { href: "/inventory/replenishment", label: "发货计划", icon: Boxes, adminOnly: true },
     ],
   },
   {
     label: "商品与增长",
     items: [
-      { href: "/inventory/costs", label: "产品成本", icon: Calculator, combined: true },
-      { href: "/inventory/advertising", label: "广告管理", icon: Megaphone },
-      { href: "/inventory/content", label: "产品待办", icon: Paintbrush, combined: true },
-      { href: "/inventory/research", label: "新品调研", icon: Lightbulb, combined: true },
+      { href: "/inventory/costs", label: "产品成本", icon: Calculator, combined: true, adminOnly: true },
+      { href: "/inventory/advertising", label: "广告管理", icon: Megaphone, adminOnly: true },
+      { href: "/inventory/content", label: "产品待办", icon: Paintbrush, combined: true, adminOnly: true },
+      { href: "/inventory/research", label: "新品调研", icon: Lightbulb, combined: true, adminOnly: true },
     ],
   },
   {
     label: "协作",
-    items: [{ href: "/inventory/team", label: "团队协作", icon: Users, combined: true }],
+    items: [{ href: "/inventory/team", label: "团队协作", icon: Users, combined: true, adminOnly: true }],
   },
   {
     label: "数据与输出",
     items: [
-      { href: "/inventory/data/editor", label: "在线编辑", icon: PencilLine, combined: true },
-      { href: "/inventory/data", label: "数据更新", icon: DatabaseZap, combined: true },
-      { href: "/inventory/downloads", label: "下载中心", icon: Download, combined: true },
+      { href: "/inventory/data/editor", label: "在线编辑", icon: PencilLine, combined: true, adminOnly: true },
+      { href: "/inventory/data", label: "数据更新", icon: DatabaseZap, combined: true, adminOnly: true },
+      { href: "/inventory/downloads", label: "下载中心", icon: Download, combined: true, adminOnly: true },
     ],
   },
+  { label: "成员服务", items: [
+    { href: "/inventory/supply-chain", label: "供应链追溯", icon: Truck },
+    { href: "/inventory/calculator", label: "新品利润试算", icon: Calculator },
+  ] },
 ];
 
 const allNavigationItems = navigation.flatMap((group) => group.items);
+
+function visibleNavigation(role: string) {
+  return navigation.map((group) => ({ ...group, items: group.items.filter((item) => !item.adminOnly || role === "ADMIN") })).filter((group) => group.items.length > 0);
+}
 
 function isNavigationActive(item: NavigationItem, pathname: string) {
   if (item.href === "/inventory") return pathname === item.href;
@@ -86,6 +97,8 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
   const [selectionOpen, setSelectionOpen] = useState(false);
   const market = searchParams.get("market")?.toUpperCase() === "CA" ? "CA" : "US";
   const currentItem = allNavigationItems.find((item) => isNavigationActive(item, pathname));
+  const displayedNavigation = visibleNavigation(currentUser.role);
+  const memberNavigation = allNavigationItems.filter((item) => ["/inventory", "/inventory/brief", "/inventory/supply-chain", "/inventory/calculator"].includes(item.href));
   const combinedOverview = pathname.startsWith("/inventory/stock/seasonal-clearance") || (currentItem?.combined ?? false);
 
   function navigationHref(item: NavigationItem) {
@@ -135,7 +148,7 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 pb-4">
-          {navigation.map((group) => (
+          {displayedNavigation.map((group) => (
             <div key={group.label} className="mb-4">
               <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-600">{group.label}</p>
               <div className="space-y-0.5">
@@ -199,7 +212,7 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
               <button type="button" aria-label="关闭导航遮罩" onClick={() => setMobileNavigationOpen(false)} className="fixed inset-0 z-40 bg-slate-950/25 backdrop-blur-[2px]" />
               <div id="mobile-operations-navigation" className="absolute inset-x-0 top-full z-50 max-h-[calc(100dvh-6rem)] overflow-y-auto border-t border-slate-200 bg-white px-4 pb-5 pt-4 shadow-2xl shadow-slate-950/15">
                 <nav aria-label="运营模块" className="space-y-5">
-                  {navigation.map((group) => (
+                  {displayedNavigation.map((group) => (
                     <div key={group.label}>
                       <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{group.label}</p>
                       <div className="grid grid-cols-2 gap-2">
@@ -221,8 +234,9 @@ export function OperationsShell({ children, snapshots, currentUser }: { children
             </>
           ) : null}
         </header>
-        <main className="mx-auto min-w-0 w-full max-w-[1600px] px-4 py-5 sm:px-6 xl:px-8 xl:py-7">{children}</main>
+        <main className={`mx-auto min-w-0 w-full max-w-[1600px] px-4 py-5 sm:px-6 xl:px-8 xl:py-7 ${currentUser.role === "ADMIN" ? "" : "pb-24"}`}>{children}</main>
       </div>
+      {currentUser.role !== "ADMIN" ? <nav aria-label="成员主导航" className="safe-bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-slate-200 bg-white/95 px-2 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,.07)] backdrop-blur-xl xl:hidden">{memberNavigation.map((item) => { const active = isNavigationActive(item, pathname); const Icon = item.icon; return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-lg text-[10px] font-medium ${active ? "text-blue-700" : "text-slate-500"}`}><Icon className="h-4 w-4" /><span>{item.label === "运营总览" ? "总览" : item.label === "经营简报" ? "简报" : item.label === "供应链追溯" ? "供应链" : "计算器"}</span></Link>; })}</nav> : null}
     </div>
   );
 }

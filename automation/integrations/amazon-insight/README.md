@@ -24,6 +24,9 @@
 - `/product/[asin]?analysisId=...` 分析与 Inspiration 页
 - `/product/[asin]/report?analysisId=...` 可分享的完整 HTML 报告
 - `/inventory` 经营、广告、FBA / AWD 库存、参数模拟和运营待处理清单
+- `/inventory/supply-chain` 成员只读供应链追溯
+- `/inventory/calculator` 新品利润试算
+- `/inventory/warehouse` 管理员仓库台账（入库、出库、调拨、调整、批次、审核和流水）
 - `/inventory/team` 登录后的共享协作空间（成员、SKU 任务、认领与状态）
 
 首次打开 `/inventory` 会跳转到 `/login`。首次部署先创建管理员，之后管理员可在“团队协作”页面创建成员账户。认证会话写入 SQLite 的 `User` / `Session` 表，协作任务写入同一工作区数据库；不与接力项目共享。
@@ -204,3 +207,12 @@ npm run db:studio
 - SP-API 仍然只是占位 adapter，不参与主链路
 - Inspiration 默认由规则和模板生成，不调用真实 LLM
 - Jungle Scout 某些分析接口若返回不完整，会在 UI 中标记 `partial`
+
+## 冠唐云仓库功能复刻规划
+
+项目计划在管理员后台增加轻量仓库管理模块，并逐步接入或替代冠唐云的日常仓库流程。功能边界、数据模型、迁移顺序和验收标准见：
+
+- [冠唐仓库模块 README](./docs/guantang-wms/README.md)
+- [冠唐数据联动与新品利润试算方案](./docs/GUANTANG_DATA_LINKAGE_AND_CALCULATOR_AUTOMATION.md)
+
+当前已落地仓库首期账本和成员供应链/利润试算入口。冠唐 API 和市场类目费率表尚未接通，因此仓库数据需要管理员录入，Amazon 佣金、FBA 费和头程需要按当期费率确认后输入；具体边界见模块 README 的“当前实现状态”。
