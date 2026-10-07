@@ -2,9 +2,9 @@
 
 本目录是电商运营看板的 Docker 发布根目录。镜像由 GitHub Actions 构建并发布到 GHCR，极空间 NAS 通过 Docker Compose 拉取和运行镜像。接力项目使用独立目录、镜像、端口和数据卷。
 
-## v1.3.10：网页配置积加凭证
+## v1.3.11：网页配置积加凭证
 
-目标镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.3.10`（以构建成功及镜像存在为准）。在 NAS 将 `IMAGE_TAG` 改为 `v1.3.10`，拉取新镜像并重新创建 `app`，保留原有数据卷和 `SECRET_KEY`。通过 HTTPS 登录后进入“业务后台 → 数据更新”，填写 appId、appKey，点击“保存积加凭证”，然后测试连接。
+目标镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.3.11`（以构建成功及镜像存在为准）。在 NAS 将 `IMAGE_TAG` 改为 `v1.3.11`，拉取新镜像并重新创建 `app`，保留原有数据卷和 `SECRET_KEY`。通过 HTTPS 登录后进入“业务后台 → 数据更新”，填写 appId、appKey，点击“保存积加凭证”，然后测试连接。相较 v1.3.10 增加浏览器发送前的 HTTPS 拦截，防止误用 NAS HTTP 地址传送密钥。
 
 凭证加密保存在已有运营数据库，更新无需重新填写；不必在环境文件中加入积加 Key。NAS 原有 `SECRET_KEY` 至少 32 字符且必须保持不变；备份需同时保存运营库与该密钥。还需在积加设置 NAS 公网出口 IP 白名单。当前只验证基础授权与店铺读取，尚不自动同步经营数据。详见 [授权配置说明](automation/integrations/amazon-insight/README.md#nas-积加授权配置)。
 

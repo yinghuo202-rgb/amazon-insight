@@ -17,6 +17,9 @@ export function GerpgoConnectionCheck({ initialConfiguration }: { initialConfigu
   const [result, setResult] = useState<GerpgoConnectionResult | null>(null);
   const [error, setError] = useState("");
   async function save() {
+    if (window.location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) {
+      setAppKey(""); setError("保存密钥请通过 HTTPS 访问网站；本次没有发送凭证。"); return;
+    }
     const body = JSON.stringify({ action: "save_gerpgo_credentials", appId, appKey });
     setBusy("save"); setError(""); setResult(null); setSaved(false);
     setAppId(""); setAppKey("");
