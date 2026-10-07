@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { getAdvertisingPlan, saveAdvertisingPlan, transitionAdvertisingPlan } from "@/lib/inventory/advertising-plan-store";
@@ -9,6 +10,7 @@ const itemSchema = z.object({ campaign: z.string().trim().min(1).max(300), sku: 
 const requestSchema = z.object({ market: z.enum(["US", "CA"]), period: z.string().regex(/^\d{4}-\d{2}$/), action: z.enum(["save", "confirm", "reopen"]), items: z.array(itemSchema).optional() });
 
 export async function GET(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const url = new URL(request.url); const market = url.searchParams.get("market"); const period = url.searchParams.get("period");
   const parsed = z.object({ market: z.enum(["US", "CA"]), period: z.string().regex(/^\d{4}-\d{2}$/) }).safeParse({ market, period });
   if (!parsed.success) return Response.json({ error: "广告计划站点或月份格式不正确。" }, { status: 400 });
@@ -16,6 +18,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = requestSchema.parse(await request.json());
     return Response.json(payload.action === "save" ? saveAdvertisingPlan(payload.market, payload.period, payload.items ?? []) : transitionAdvertisingPlan(payload.market, payload.period, payload.action));

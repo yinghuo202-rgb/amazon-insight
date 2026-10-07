@@ -51,7 +51,7 @@ export function SeasonalClearanceView({ result, initialMarket = "ALL" }: { resul
       <div className="inline-flex w-fit border border-slate-200 bg-slate-50 p-1" role="group" aria-label="选择季节库存市场视图">{(["ALL", "US", "CA"] as const).map((market) => <button key={market} type="button" aria-pressed={marketView === market} onClick={() => { setMarketView(market); setShowAllRows(false); }} className={`px-4 py-2 text-xs font-semibold transition ${marketView === market ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-white hover:text-slate-900"}`}>{marketLabels[market]}</button>)}</div>
     </div>
 
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label={`${marketView === "ALL" ? "" : `${marketLabels[marketView]} · `}执行 SKU`} value={`${integer(marketRows.length)} 个`} detail={marketView === "ALL" ? `补货 ${result.summary.replenishmentCandidateCount} · 清货 ${result.summary.clearanceCandidateCount} · 重合 ${summary.overlapCount} 已合并` : `仅保留本站存在缺口、清货或旺季需求的商品`} />
       <OpsKpi label="站点补货缺口" value={integer(replenishmentGap)} detail={`国内及未完工可覆盖 ${integer(transferCoverage)} 件`} tone={urgentGap ? "warning" : "positive"} />
       <OpsKpi label="季末前需清现货" value={integer(clearanceStock)} detail={marketView === "ALL" ? `海外 ${integer(result.summary.overseasClearanceQty)} · 国内共享 ${integer(result.summary.domesticClearanceQty)}` : "本站仅统计海外清货；国内共享池单列"} tone="danger" />

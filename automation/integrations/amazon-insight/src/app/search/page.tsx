@@ -15,8 +15,8 @@ export default async function SearchPage({
   return (
     <div className="flex min-h-screen flex-col pb-16">
       <TopNav />
-      <main className="flex-1 py-8 sm:py-10">
-        <PageContainer className="space-y-8">
+      <main className="flex-1 py-5 sm:py-10">
+        <PageContainer className="space-y-5 sm:space-y-8">
           <HeroPanel
             eyebrow="Candidate Discovery"
             title="候选商品筛选"

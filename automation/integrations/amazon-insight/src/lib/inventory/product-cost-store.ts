@@ -29,7 +29,7 @@ ON product_cost_overrides_v1(updated_at DESC);
 
 function openDatabase() {
   const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
   database.exec(schema);
   return database;
 }

@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { getPurchasePlanCycle, listPurchasePlanDraft, replacePurchasePlanDraft, transitionPurchasePlanCycle } from "@/lib/inventory/purchase-plan-store";
@@ -18,6 +19,7 @@ const requestSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const cycleDate = new URL(request.url).searchParams.get("cycle") ?? "";
   const parsed = z.iso.date().safeParse(cycleDate);
   if (!parsed.success) return Response.json({ error: "采购周期日期格式不正确。" }, { status: 400 });
@@ -25,6 +27,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = requestSchema.parse(await request.json());
     if (payload.action !== "save") return Response.json({ status: "completed", cycle: transitionPurchasePlanCycle(payload.cycleDate, payload.action) });

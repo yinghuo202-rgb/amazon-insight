@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { loadInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
@@ -67,12 +68,14 @@ function responseFor(market: "US" | "CA", requestedBatchId?: string) {
 }
 
 export async function GET(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const url = new URL(request.url);
   const market = normalizeOperationsMarket(url.searchParams.get("market"));
   return Response.json(responseFor(market, url.searchParams.get("batchId") ?? undefined));
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = requestSchema.parse(await request.json());
     const data = await loadInventoryDashboardData(payload.market);

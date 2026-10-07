@@ -1,11 +1,10 @@
 import { z } from "zod";
 
-import { hashPassword, requireCurrentUser, workspaceForUser } from "@/lib/auth";
+import { requireCurrentUser, workspaceForUser } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 
 export const runtime = "nodejs";
 
-const memberSchema = z.object({ name: z.string().trim().min(1).max(80), email: z.string().email(), password: z.string().min(8).max(200), role: z.enum(["ADMIN", "MEMBER"]).default("MEMBER") });
 const taskSchema = z.object({ sku: z.string().trim().toUpperCase().min(3).max(32), title: z.string().trim().min(1).max(160), note: z.string().trim().max(500).optional(), assigneeId: z.string().cuid().nullable().optional() });
 const updateSchema = z.object({ id: z.string().cuid(), status: z.enum(["OPEN", "IN_PROGRESS", "DONE"]).optional(), assigneeId: z.string().cuid().nullable().optional(), note: z.string().trim().max(500).optional() });
 
@@ -33,15 +32,7 @@ export async function POST(request: Request) {
     const { user, workspace } = await context();
     const body = await request.json();
     if (body.kind === "member") {
-      if (user.role !== "ADMIN") return Response.json({ error: "只有管理员可以添加协作者。" }, { status: 403 });
-      const payload = memberSchema.parse(body);
-      const email = payload.email.trim().toLowerCase();
-      const member = await prisma.$transaction(async (tx) => {
-        const created = await tx.user.create({ data: { name: payload.name, email, passwordHash: hashPassword(payload.password), role: payload.role } });
-        await tx.workspaceMember.create({ data: { workspaceId: workspace.id, userId: created.id, role: payload.role } });
-        return created;
-      });
-      return Response.json({ member: { id: member.id, name: member.name, email: member.email, role: member.role } }, { status: 201 });
+      return Response.json({ error: "当前使用共用账号，不再创建成员账号。" }, { status: 410 });
     }
     const payload = taskSchema.parse(body);
     if (payload.assigneeId) await assertMember(workspace.id, payload.assigneeId);

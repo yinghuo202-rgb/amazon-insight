@@ -17,3 +17,5 @@ automation/runtime
 automation/integrations/amazon-insight/prisma/dev.db
 automation/integrations/amazon-insight/api.txt
 **/.DS_Store
+**/.local
+**/*.env

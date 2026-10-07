@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { readFile } from "node:fs/promises";
 
 import { purchasePlanDownloadPath, recordDownloadEvent } from "@/lib/inventory/download-center";
@@ -5,6 +6,7 @@ import { purchasePlanDownloadPath, recordDownloadEvent } from "@/lib/inventory/d
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: RouteContext<"/api/inventory/downloads/purchase-plan/[exportId]/[filename]">) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const { exportId, filename } = await context.params;
   try {
     const decoded = decodeURIComponent(filename);

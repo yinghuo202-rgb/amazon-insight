@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { loadRawInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
@@ -16,6 +17,7 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = requestSchema.parse(await request.json());
     const market = normalizeOperationsMarket(payload.market);

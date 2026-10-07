@@ -1,21 +1,121 @@
 import { expect, test } from "@playwright/test";
-
-test("home page renders search CTA", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByText("开始发现候选商品")).toBeVisible();
+const email = "ui-test@measureman.invalid";
+const password = process.env.E2E_TEST_PASSWORD!;
+test.skip(!process.env.E2E_TEST_DATABASE_URL || !process.env.E2E_TEST_STATE_DB, "Requires explicitly isolated account and audit databases.");
+test.beforeAll(async ({ request }) => {
+  const response = await request.post("/api/auth/bootstrap", { data: { email, name: "UI test", password } });
+  expect([201, 409]).toContain(response.status());
+  if (response.status() === 409) expect((await request.post("/api/auth/login", { data: { email, password } })).status()).toBe(200);
 });
-
-test("operations overview links to focused workspaces", async ({ page }) => {
-  await page.goto("/inventory");
-  await expect(page.getByRole("heading", { name: "运营总览" })).toBeVisible();
-  await expect(page.getByText("优先处理 SKU")).toBeVisible();
-  await expect(page.getByRole("link", { name: "补货计划" })).toBeVisible();
+test.beforeEach(async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("共用账号邮箱").fill(email);
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "进入工作台" }).click();
+  await expect(page.getByRole("heading", { name: "运营总览", exact: true })).toBeVisible();
 });
-
-test("sku analysis page combines sales inventory and advertising", async ({ page }) => {
+test("overview stays compact and phone layout has no horizontal overflow", async ({ page }) => {
+  await expect(page.getByRole("heading", { name: "销售额变化" })).toBeVisible();
+  await expect(page.locator('section[aria-label="经营指标"] > div')).toHaveCount(6);
+  await expect(page.locator("article")).toHaveCount(0);
+  await expect(page.getByText("优先复核的五条建议")).toHaveCount(0);
+  await expect(page.getByLabel("筛选父体")).toHaveCount(0);
+  await page.getByLabel("搜索 SKU、产品或 ASIN").fill("MA007");
+  await expect(page.locator("article").first()).toBeVisible();
+  expect(await page.locator("article").count()).toBeLessThanOrEqual(3);
+  await page.getByLabel("搜索 SKU、产品或 ASIN").fill("");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/overview-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("navigation", { name: "快捷导航" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/overview-mobile.png", fullPage: false });
+});
+test("SKU cards support search, evidence, market switching and phone layout", async ({ page }) => {
+  await page.goto("/inventory/brief");
+  await expect(page.locator("article")).toHaveCount(20);
+  await page.getByLabel("搜索 SKU、产品或 ASIN").fill("MA007");
+  const count = await page.locator("article").count();
+  expect(count).toBeGreaterThan(0);
+  expect(count).toBeLessThanOrEqual(20);
+  await page.getByText("展开经营依据", { exact: true }).first().click();
+  await expect(page.getByText("历史成交均价").first()).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/brief-mobile.png", fullPage: false });
+  await page.getByLabel("站点", { exact: true }).selectOption("MX");
+  await page.getByLabel("搜索 SKU、产品或 ASIN").fill("");
+  await expect(page.getByText("MXN 原币种", { exact: false })).toBeVisible();
+});
+test("SKU detail reveals shipment records only on request", async ({ page }) => {
   await page.goto("/inventory/sku/MA007");
-  await expect(page.getByRole("heading", { name: /MA007/ })).toBeVisible();
-  await expect(page.getByText("销量走势")).toBeVisible();
-  await expect(page.getByText("库存结构")).toBeVisible();
-  await expect(page.getByText("系统分析")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /MA007/ }).first()).toBeVisible();
+  await page.getByText("业务明细：库存、历史发货、订单、产品资料", { exact: true }).click();
+  await expect(page.getByRole("heading", { name: "SKU 历史发货记录", exact: true })).toBeVisible();
+});
+test("online source panel separates configured entry points from actual synchronization", async ({ page }) => {
+  await page.goto("/inventory/data");
+  await expect(page.getByRole("heading", { name: "在线数据来源", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "WPS 库存规划", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "WPS 新品资料", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "测试积加连接", exact: true })).toBeDisabled();
+  await expect(page.getByText("尚未配置积加凭证", { exact: false })).toBeVisible();
+  const check = await page.request.post("/api/inventory/data-refresh", { data: { action: "test_gerpgo" } });
+  expect(check.status()).toBe(422);
+  expect((await check.json()).error).toContain("appId");
+  await expect(page.getByRole("link", { name: "打开源文档", exact: true })).toHaveAttribute("href", "https://www.kdocs.cn/l/Example123");
+  await expect(page.getByText("分享链接已配置；自动同步尚未接入", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+test("profit calculator validates assumptions and clears currency-dependent fees", async ({ page }) => {
+  await page.goto("/inventory/calculator");
+  await page.getByLabel("类目", { exact: true }).selectOption("OTHER");
+  for (const [label, value] of [["售价（USD）", "20"], ["采购成本 / 件（USD）", "4"], ["长 cm", "50"], ["宽 cm", "40"], ["高 cm", "30"], ["件 / 箱", "10"], ["头程费率（USD/m³）", "100"], ["佣金率 %", "15"], ["配送费 / 件（USD）", "3"]]) await page.getByLabel(label, { exact: true }).fill(value);
+  await expect(page.getByText("$6.20", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/calculator-mobile.png", fullPage: false });
+  await page.getByLabel("配送费 / 件（USD）", { exact: true }).fill("-1");
+  await expect(page.getByRole("status")).toContainText("数值无效");
+  await page.getByLabel("站点", { exact: true }).selectOption("CA");
+  await expect(page.getByLabel("售价（CAD）", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("配送费 / 件（CAD）", { exact: true })).toHaveValue("");
+});
+test("forged session cannot read or update reports; member creation is closed", async ({ playwright }) => {
+  const request = await playwright.request.newContext({ baseURL: process.env.E2E_BASE_URL || "http://127.0.0.1:3107", extraHTTPHeaders: { cookie: "measureman_session=forged" } });
+  expect((await request.get("/api/inventory/master-data")).status()).toBe(401);
+  expect((await request.post("/api/inventory/new-product-research", { data: {} })).status()).toBe(401);
+  expect((await request.post("/api/inventory/data-refresh", { data: { action: "test_gerpgo" } })).status()).toBe(401);
+  expect((await request.post("/api/inventory/data-refresh", { data: { action: "save_gerpgo_credentials", appId: "fixture", appKey: "fixture" } })).status()).toBe(401);
+  expect((await request.post("/api/auth/create-member", { data: {} })).status()).toBe(410);
+  await request.dispose();
+});
+
+test("webpage credentials persist encrypted without being echoed or contacting GERPgo", async ({ page }) => {
+  await page.goto("/inventory/data");
+  await expect(page.getByRole("button", { name: "保存积加凭证", exact: true })).toBeDisabled();
+  await page.getByLabel("积加 appId", { exact: true }).fill("browser-fixture-app-id");
+  await page.getByLabel("积加 appKey", { exact: true }).fill("browser-fixture-private-key");
+  await expect(page.getByLabel("积加 appKey", { exact: true })).toHaveAttribute("type", "password");
+  const pending = page.waitForResponse(response => response.url().endsWith("/api/inventory/data-refresh") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "保存积加凭证", exact: true }).click();
+  const response = await pending;
+  expect(response.status()).toBe(200);
+  expect(await response.text()).not.toContain("browser-fixture-private-key");
+  await expect(page.getByText("凭证已加密保存", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("积加 appKey", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("积加 appId", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "测试积加连接", exact: true })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByText("已在网页保存", { exact: false })).toBeVisible();
+  await expect(page.getByLabel("积加 appKey", { exact: true })).toHaveValue("");
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("browser-fixture-private-key");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/gerpgo-settings-mobile.png", fullPage: false });
+  // Deliberately do not click connection test with dummy credentials.
 });

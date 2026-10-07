@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { automationRoot } from "@/lib/inventory/paths";
+import { automationRoot, runtimePath } from "@/lib/inventory/paths";
 import { loadJsonReport } from "@/lib/inventory/json-report-cache";
 
 export { automationRoot } from "@/lib/inventory/paths";
@@ -17,7 +17,7 @@ export type DocumentExportResult = {
 };
 
 export function documentMasterPath() {
-  return path.join(automationRoot(), "runtime", "reports", "document_master.json");
+  return runtimePath("reports", "document_master.json");
 }
 
 export async function getDocumentExportMeta(market: "US" | "CA") {
@@ -66,7 +66,7 @@ function pythonExecutable() {
 
 export async function runDocumentExport(payload: unknown): Promise<DocumentExportResult> {
   const root = automationRoot();
-  const requestDirectory = path.join(root, "runtime", "work", "exports");
+  const requestDirectory = runtimePath("work", "exports");
   await mkdir(requestDirectory, { recursive: true });
   const requestPath = path.join(requestDirectory, `${Date.now()}-${randomUUID()}.json`);
   await writeFile(requestPath, JSON.stringify(payload, null, 2), "utf8");
@@ -117,5 +117,5 @@ export function exportFilePath(exportId: string, filename: string) {
   if (!/^[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$/.test(exportId) || path.basename(filename) !== filename) {
     throw new Error("无效的导出文件路径");
   }
-  return path.join(automationRoot(), "runtime", "output", "exports", exportId, filename);
+  return runtimePath("output", "exports", exportId, filename);
 }

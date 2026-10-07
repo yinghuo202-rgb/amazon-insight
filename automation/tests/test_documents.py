@@ -7,7 +7,8 @@ import openpyxl
 
 from store_ops.config import ProjectConfig
 from store_ops.documents import PurchaseOrderLot, PurchaseOrderShortage, allocate_purchase_orders_fifo
-from store_ops.jobs.document_master import _market, _read_payment_ledger
+from store_ops.jobs.document_master import _market, _read_payment_ledger, _read_shipments
+from store_ops.sku import SkuNormalizer
 from store_ops.jobs.export_documents import _chunk_rows, _declaration_layout, _declaration_rows, _validate_request
 
 
@@ -130,6 +131,78 @@ class PurchaseOrderAllocationTests(unittest.TestCase):
         self.assertEqual(source, ledger.resolve())
         self.assertEqual(payments["AM260101-2"]["paymentPayers"], ["联合"])
         self.assertEqual(payments["AM260101-2"]["paymentMethods"], ["含税"])
+
+    def test_shipment_reader_emits_sku_history_with_cartons_and_source(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            folder = root / "MEASUREMAN" / "发货清单" / "美国" / "2026" / "CM320"
+            folder.mkdir(parents=True)
+            path = folder / "CM320-US2026.7.2发货清单.xlsx"
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Measureman"
+            sheet["B2"] = "产品编号"
+            sheet["B3"] = "MA001"
+            sheet["D3"] = 10
+            sheet["K3"] = 100
+            workbook.save(path)
+            workbook.close()
+            config = ProjectConfig(
+                config_path=root / "config.json",
+                project_root=root,
+                data_root=root,
+                runtime_root=root / "runtime",
+                sku_pattern=r"(?<![A-Z0-9])([A-Z]{2}\s*[-_]?\s*\d{3})(?!\d)",
+                ignore_values=frozenset(),
+                sources=(),
+                inventory_dashboard={"document_master_sources": {"shipment_root": "MEASUREMAN/发货清单"}},
+            )
+            _, _, events, sources, _ = _read_shipments(config, SkuNormalizer(config.sku_pattern, config.ignore_values))
+        self.assertEqual(events, [{
+            "market": "US",
+            "batch": 320,
+            "shipmentDate": "2026-07-02",
+            "sku": "MA001",
+            "quantity": 100,
+            "cartonCount": 10,
+            "sourcePath": "MEASUREMAN/发货清单/美国/2026/CM320/CM320-US2026.7.2发货清单.xlsx",
+        }])
+        self.assertEqual(sources, ["MEASUREMAN/发货清单/美国/2026/CM320/CM320-US2026.7.2发货清单.xlsx"])
+
+    def test_incremental_shipment_reader_also_emits_sku_history(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            incremental = root / "weekly" / "CM321"
+            incremental.mkdir(parents=True)
+            path = incremental / "CM321-CA2026.7.14发货清单.xlsx"
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Measureman"
+            sheet["B2"] = "产品编号"
+            sheet["B3"] = "MA002"
+            sheet["D3"] = 8
+            sheet["K3"] = 80
+            workbook.save(path)
+            workbook.close()
+            config = ProjectConfig(
+                config_path=root / "config.json",
+                project_root=root,
+                data_root=root,
+                runtime_root=root / "runtime",
+                sku_pattern=r"(?<![A-Z0-9])([A-Z]{2}\s*[-_]?\s*\d{3})(?!\d)",
+                ignore_values=frozenset(),
+                sources=(),
+                inventory_dashboard={"document_master_sources": {"shipment_root": "missing", "shipment_incremental_root": "weekly"}},
+            )
+
+            _, _, events, sources, _ = _read_shipments(config, SkuNormalizer(config.sku_pattern, config.ignore_values))
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["market"], "CA")
+        self.assertEqual(events[0]["batch"], 321)
+        self.assertEqual(events[0]["sku"], "MA002")
+        self.assertEqual(events[0]["quantity"], 80)
+        self.assertEqual(sources, ["weekly/CM321/CM321-CA2026.7.14发货清单.xlsx"])
 
 
 if __name__ == "__main__":

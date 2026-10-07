@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -178,6 +179,188 @@ model Workspace {
   updatedAt DateTime          @updatedAt
   members   WorkspaceMember[]
   tasks     CollaborationTask[]
+  warehouses Warehouse[]
+  stockDocuments StockDocument[]
+}
+
+model Warehouse {
+  id             String                @id @default(cuid())
+  workspaceId    String
+  code           String
+  name           String
+  kind           String                @default("DOMESTIC")
+  active         Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  locations      WarehouseLocation[]
+  products       WarehouseProduct[]
+  documents      StockDocument[]        @relation("DocumentWarehouse")
+  transferTargets StockDocument[]       @relation("DocumentTargetWarehouse")
+  lots           InventoryLot[]
+  movements      StockMovement[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, active])
+}
+
+model WarehouseLocation {
+  id          String    @id @default(cuid())
+  warehouseId String
+  code        String
+  name        String
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  lots        InventoryLot[]
+  movements   StockMovement[]
+  documentLines StockDocumentLine[]
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId, active])
+}
+
+model WarehouseProduct {
+  id          String    @id @default(cuid())
+  warehouseId String
+  productCode String
+  sku         String
+  barcode     String?
+  name        String
+  unit        String    @default("件")
+  cartonQty   Int?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, productCode])
+  @@index([warehouseId, sku])
+  @@index([barcode])
+}
+
+model StockDocument {
+  id                String             @id @default(cuid())
+  workspaceId       String
+  documentNo        String
+  type              String
+  status            String             @default("DRAFT")
+  warehouseId       String
+  targetWarehouseId String?
+  supplier          String?
+  reference          String?
+  note               String?
+  createdById        String
+  approvedById       String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  approvedAt         DateTime?
+  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  warehouse          Warehouse          @relation("DocumentWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
+  targetWarehouse    Warehouse?         @relation("DocumentTargetWarehouse", fields: [targetWarehouseId], references: [id], onDelete: Restrict)
+  lines              StockDocumentLine[]
+  movements          StockMovement[]
+
+  @@unique([workspaceId, documentNo])
+  @@index([workspaceId, type, status, createdAt])
+  @@index([warehouseId, createdAt])
+}
+
+model StockDocumentLine {
+  id           String    @id @default(cuid())
+  documentId   String
+  sku          String
+  productCode  String?
+  lotCode      String?
+  poNumber     String?
+  locationId   String?
+  quantity     Int
+  direction    String    @default("IN")
+  unitCost     Float?
+  createdAt    DateTime  @default(now())
+  document     StockDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  location     WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  movements    StockMovement[]
+  allocations  OutboundAllocation[]
+
+  @@index([documentId, sku])
+  @@index([sku, lotCode])
+}
+
+model InventoryLot {
+  id              String      @id @default(cuid())
+  warehouseId     String
+  sku             String
+  lotCode         String
+  poNumber        String?
+  sourceDocumentId String?
+  locationId      String?
+  receivedAt      DateTime
+  unitCost        Float?
+  receivedQty     Int
+  remainingQty    Int
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  warehouse       Warehouse   @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  location        WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  allocations     OutboundAllocation[]
+  movements       StockMovement[]
+
+  @@unique([warehouseId, sku, lotCode])
+  @@index([warehouseId, sku, receivedAt])
+  @@index([poNumber])
+}
+
+model OutboundAllocation {
+  id         String           @id @default(cuid())
+  lineId     String
+  lotId      String
+  quantity   Int
+  method     String           @default("FIFO")
+  createdAt  DateTime         @default(now())
+  line       StockDocumentLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  lot        InventoryLot     @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  @@unique([lineId, lotId])
+  @@index([lotId, createdAt])
+}
+
+model StockMovement {
+  id           String            @id @default(cuid())
+  workspaceId  String
+  documentId   String
+  lineId       String
+  warehouseId  String
+  lotId        String?
+  locationId   String?
+  sku          String
+  quantity     Int
+  unitCost     Float?
+  movementType String
+  actorId      String
+  createdAt    DateTime          @default(now())
+  document     StockDocument     @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  line         StockDocumentLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  warehouse    Warehouse         @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  lot          InventoryLot?     @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  location     WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, sku, createdAt])
+  @@index([warehouseId, sku, createdAt])
+  @@index([documentId])
+}
+
+model WarehouseAuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorId     String
+  entityType  String
+  entityId    String
+  action      String
+  detailJson  String
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([entityType, entityId])
 }
 
 model WorkspaceMember {

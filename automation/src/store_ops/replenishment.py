@@ -8,7 +8,7 @@ from dataclasses import dataclass
 class ReplenishmentParameters:
     lead_time_days: int = 75
     review_cycle_days: int = 7
-    target_cover_days: int = 45
+    target_cover_days: int = 90
     safety_stock_days: int = 21
     excess_cover_days: int = 240
     fba_transfer_trigger_days: int = 30
@@ -29,17 +29,18 @@ def calculate_replenishment(
     awd_outbound_to_fba: int,
     carton_quantity: int | None,
     parameters: ReplenishmentParameters,
+    in_transit_inventory: int = 0,
 ) -> dict:
-    eligible_inventory = max(0, fba_sellable) + max(0, awd_available) + max(0, awd_outbound_to_fba)
+    eligible_inventory = (
+        max(0, fba_sellable)
+        + max(0, awd_available)
+        + max(0, awd_outbound_to_fba)
+        + max(0, in_transit_inventory)
+    )
     fba_cover = fba_sellable / daily_sales if daily_sales > 0 else None
     network_cover = eligible_inventory / daily_sales if daily_sales > 0 else None
 
-    horizon_days = (
-        parameters.lead_time_days
-        + parameters.review_cycle_days
-        + parameters.target_cover_days
-        + parameters.safety_stock_days
-    )
+    horizon_days = parameters.target_cover_days
     gross_need = max(0.0, daily_sales * horizon_days - eligible_inventory)
     suggested_shipment = round_up_to_pack(gross_need, carton_quantity)
     fba_target = daily_sales * parameters.fba_transfer_trigger_days
@@ -66,7 +67,7 @@ def calculate_replenishment(
         reason = f"FBA 仅覆盖约 {fba_cover:.0f} 天，可先从 AWD 调拨。"
     elif suggested_shipment > 0:
         action = "SEA_SHIP"
-        reason = f"按 {horizon_days} 天补货视窗计算，建议安排海运补货。"
+        reason = f"按库存与在途合计覆盖 {horizon_days} 天计算，建议安排海运补货。"
     else:
         action = "NO_ACTION"
         reason = "当前可计入库存可覆盖补货视窗，暂不新增发货。"
@@ -75,7 +76,7 @@ def calculate_replenishment(
         risk_level = "data"
     elif network_cover is not None and network_cover < parameters.lead_time_days:
         risk_level = "critical"
-    elif network_cover is not None and network_cover < parameters.lead_time_days + parameters.target_cover_days:
+    elif network_cover is not None and network_cover < parameters.target_cover_days:
         risk_level = "watch"
     elif network_cover is not None and network_cover > parameters.excess_cover_days:
         risk_level = "excess"
@@ -84,6 +85,7 @@ def calculate_replenishment(
 
     return {
         "eligibleInventoryPosition": eligible_inventory,
+        "inTransitInventory": max(0, in_transit_inventory),
         "daysCoverFba": round(fba_cover, 1) if fba_cover is not None else None,
         "daysCoverNetwork": round(network_cover, 1) if network_cover is not None else None,
         "suggestedShipmentQty": suggested_shipment,

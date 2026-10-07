@@ -58,14 +58,14 @@ export function HomeSearchForm() {
   return (
     <div className="space-y-6">
       <form
-        className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-4 sm:p-5"
+        className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-3 sm:p-5"
         onSubmit={(event) => {
           event.preventDefault();
           submit(keyword);
         }}
       >
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
-          <label className="flex min-h-[4.25rem] items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-5">
+          <label className="flex min-h-12 items-center gap-3 rounded-xl border border-[var(--border)] bg-white px-4 sm:min-h-[4.25rem] sm:px-5">
             <Search className="h-5 w-5 text-slate-400" />
             <input
               value={keyword}
@@ -77,7 +77,7 @@ export function HomeSearchForm() {
           <button
             type="submit"
             disabled={isPending}
-            className="inline-flex min-h-[4.25rem] items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-6 text-base font-semibold text-white shadow-lg shadow-blue-200/70 transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 text-base font-semibold text-white shadow-lg shadow-blue-200/70 transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-70 sm:min-h-[4.25rem] sm:px-6"
           >
             {isPending ? "正在打开..." : "进入搜索"}
             <ArrowRight className="h-4 w-4" />
@@ -93,7 +93,7 @@ export function HomeSearchForm() {
       </div>
 
       {recentSearches.length > 0 ? (
-        <section className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-6">
+        <section className="surface-card ambient-ring rounded-2xl border border-[var(--border)] p-4 sm:p-6">
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
             <Clock3 className="h-4 w-4" />
             最近搜索
@@ -104,7 +104,7 @@ export function HomeSearchForm() {
                 key={item}
                 type="button"
                 onClick={() => submit(item)}
-                className="rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.72)] px-4 py-2 text-sm text-slate-700 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                className="min-h-11 rounded-full border border-[var(--border)] bg-[rgba(255,255,255,.72)] px-4 py-2 text-sm text-slate-700 transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
               >
                 {item}
               </button>

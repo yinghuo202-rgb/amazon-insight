@@ -18,6 +18,15 @@ export function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
+// Keep existing accounts and business records intact. Only this account can
+// establish a session in the shared-login product; no role checks are needed.
+export async function getSharedLoginUser() {
+  const email = process.env.SHARED_LOGIN_EMAIL?.trim();
+  return email
+    ? prisma.user.findUnique({ where: { email: normalizeEmail(email) } })
+    : prisma.user.findFirst({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+}
+
 export function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
   const digest = scryptSync(password, salt, 64).toString("hex");
@@ -68,6 +77,8 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   if (!token) return null;
   const session = await prisma.session.findUnique({ where: { tokenHash: hashToken(token) }, include: { user: true } });
   if (!session) return null;
+  const sharedUser = await getSharedLoginUser();
+  if (session.userId !== sharedUser?.id) return null;
   if (session.expiresAt <= new Date()) {
     await prisma.session.delete({ where: { id: session.id } }).catch(() => undefined);
     return null;
@@ -89,7 +100,7 @@ export async function workspaceForUser(userId: string) {
   return prisma.workspace.create({
     data: {
       name: "Measureman 运营协作空间",
-      members: { create: { userId, role: user.role === "ADMIN" ? "OWNER" : "MEMBER" } },
+      members: { create: { userId, role: "OWNER" } },
     },
   });
 }
@@ -97,4 +108,3 @@ export async function workspaceForUser(userId: string) {
 export async function isBootstrapRequired() {
   return (await prisma.user.count()) === 0;
 }
-

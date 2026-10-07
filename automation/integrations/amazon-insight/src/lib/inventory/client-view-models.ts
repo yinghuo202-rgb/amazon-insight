@@ -38,6 +38,7 @@ export function buildInventoryPlanningViewModel(data: InventoryDashboardData) {
       fbaSellable: row.fbaSellable,
       awdAvailable: row.awdAvailable,
       awdOutboundToFba: row.awdOutboundToFba,
+      inTransitInventory: row.inTransitInventory,
       localInventory: row.localInventory,
       pendingOrderQty: row.pendingOrderQty,
       salesByMonth: row.salesByMonth,

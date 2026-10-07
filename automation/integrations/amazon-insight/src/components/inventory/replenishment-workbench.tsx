@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
+import { InventoryStockVisual } from "@/components/inventory/inventory-stock-visual";
 import { calculatePlanningRows, type InventoryPlanningViewModel } from "@/lib/inventory/client-view-models";
 import type { InventoryParameters } from "@/lib/inventory/contracts";
 import { days, integer, inventoryActionLabels, marketHref, toneByInventoryAction } from "@/lib/inventory/presentation";
@@ -99,6 +100,7 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
   const seasonalShipmentRows = seasonalActions.filter((action) => action.shipmentQty > 0);
   const seasonalClearanceRows = seasonalActions.filter((action) => action.clearanceQty > 0 || action.overseasClearanceQty > 0);
   const seasonalShipmentUnits = seasonalShipmentRows.reduce((sum, action) => sum + action.shipmentQty, 0);
+  const activeBatchQuantityBySku = new Map(batchItems.map((item) => [item.sku, item.quantity] as const));
 
   function applyPlan(plan: PlanResponse) {
     if (plan.error) throw new Error(plan.error);
@@ -248,7 +250,7 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
   }
 
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
       <OpsKpi label="国内可发候选" value={`${replenishmentRows.length} SKU`} detail={`可发 ${integer(candidateUnits)} 件`} tone="warning" />
       <OpsKpi label="季节计划发货" value={`${seasonalShipmentRows.length} SKU`} detail={`${integer(seasonalShipmentUnits)} 件 · 含清货与补货`} tone="warning" />
       <OpsKpi label="当前批次" value={selectedBatch ? selectedBatch.batchNumber : "未建立"} detail={`${activeBatchRows.length} SKU · ${integer(plannedUnits)} 件`} tone="positive" />
@@ -257,6 +259,15 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
       <OpsKpi label="跨站库存冲突" value={`${crossMarketConflicts.length} SKU`} detail={`另一站已计划 ${integer(otherMarketUnits)} 件`} tone={crossMarketConflicts.length ? "danger" : "default"} />
       <OpsKpi label="当前批次现货缺口" value={integer(productionGap)} detail="超出当前国内现货" tone={productionGap > 0 ? "danger" : "default"} />
     </div>
+
+    <InventoryStockVisual
+      title={`${data.market} 发货库存视图`}
+      description="把站点 FBA、AWD、共享国内现货和未完工订单放在同一视图中，对比补货建议与当前选中批次，直观看出库存将从哪里发往哪里。"
+      mode="market"
+      actionLabel="当前批次发货"
+      referenceLabel="建议发货"
+      rows={rows.map((row) => ({ sku: row.sku, fba: row.fbaSellable, awd: row.awdAvailable + row.awdOutboundToFba, domestic: row.localInventory, pending: row.pendingOrderQty, action: activeBatchQuantityBySku.get(row.sku) ?? 0, reference: readyQuantityBySku.get(row.sku) ?? 0 }))}
+    />
 
     <OpsCard>
       <OpsCardHeader title="补货计算参数" description={`按 ${leadTimeDays} 天船期、${demandPercent}% 销量情景计算出 ${replenishmentRows.length} 个国内可发 SKU，合计 ${integer(candidateUnits)} 件。`} action={<SlidersHorizontal className="h-4 w-4 text-slate-400" />} />

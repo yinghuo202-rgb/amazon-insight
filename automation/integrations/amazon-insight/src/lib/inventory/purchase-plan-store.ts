@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS purchase_plan_events_v1 (
 
 function openDatabase() {
   const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+  database.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
   database.exec(schema);
   return database;
 }

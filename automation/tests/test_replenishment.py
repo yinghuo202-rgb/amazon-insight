@@ -46,6 +46,34 @@ class ReplenishmentTests(unittest.TestCase):
         )
         self.assertEqual(result["action"], "REVIEW_DATA")
 
+    def test_targets_three_months_and_counts_in_transit_inventory(self):
+        result = calculate_replenishment(
+            daily_sales=10,
+            fba_sellable=200,
+            awd_available=100,
+            awd_outbound_to_fba=0,
+            in_transit_inventory=300,
+            carton_quantity=50,
+            parameters=self.parameters,
+        )
+        self.assertEqual(result["eligibleInventoryPosition"], 600)
+        self.assertEqual(result["inTransitInventory"], 300)
+        self.assertEqual(result["suggestedShipmentQty"], 300)
+        self.assertEqual(result["daysCoverNetwork"], 60.0)
+
+    def test_no_shipment_when_inventory_and_transit_cover_three_months(self):
+        result = calculate_replenishment(
+            daily_sales=10,
+            fba_sellable=300,
+            awd_available=0,
+            awd_outbound_to_fba=0,
+            in_transit_inventory=600,
+            carton_quantity=50,
+            parameters=self.parameters,
+        )
+        self.assertEqual(result["suggestedShipmentQty"], 0)
+        self.assertEqual(result["action"], "NO_ACTION")
+
 
 if __name__ == "__main__":
     unittest.main()

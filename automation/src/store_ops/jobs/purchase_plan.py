@@ -55,8 +55,18 @@ def _read_order_allocations(config: ProjectConfig, normalizer: SkuNormalizer) ->
             indexes = {value: index for index, value in enumerate(header) if value}
             sku_index = indexes.get("MSKU", indexes.get("SKU"))
             order_index = indexes.get(_compact(order_header))
-            if sku_index is None or order_index is None:
-                raise ValueError(f"{sheet_name} 缺少 SKU 或 {order_header} 列")
+            if sku_index is None:
+                raise ValueError(f"{sheet_name} 缺少 SKU 列")
+            if order_index is None:
+                sources.append({
+                    "kind": f"{market.lower()}_purchase_allocation",
+                    "path": str(workbook_path.relative_to(config.data_root)).replace("\\", "/"),
+                    "sheet": sheet_name,
+                    "header": order_header,
+                    "available": False,
+                    "reason": f"源表缺少 {order_header} 列，跳过手工分配对账",
+                })
+                continue
             name_index = indexes.get("品名")
             factory_index = indexes.get("工厂")
             carton_index = indexes.get("装箱数")
@@ -81,6 +91,7 @@ def _read_order_allocations(config: ProjectConfig, normalizer: SkuNormalizer) ->
                 "sheet": sheet_name,
                 "column": get_column_letter(order_index + 1),
                 "header": order_header,
+                "available": True,
             })
     finally:
         workbook.close()
@@ -178,7 +189,7 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
         ocean_lead_days = int(purchase_settings.get("ocean_lead_days", config.inventory_dashboard.get("parameters", {}).get("lead_time_days", 75)))
         review_cycle_days = int(purchase_settings.get("review_cycle_days", 15))
         safety_stock_days = int(purchase_settings.get("safety_stock_days", config.inventory_dashboard.get("parameters", {}).get("safety_stock_days", 21)))
-        horizon_days = production_lead_days + ocean_lead_days + review_cycle_days + safety_stock_days
+        horizon_days = int(purchase_settings.get("target_cover_days", 90))
 
         rows = []
         all_skus = sorted(set(us_rows) | set(ca_rows) | set(allocations) | set(ordered_by_sku))

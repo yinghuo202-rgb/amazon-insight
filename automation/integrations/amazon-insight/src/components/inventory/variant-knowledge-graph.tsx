@@ -80,7 +80,7 @@ export function VariantKnowledgeGraph({ family }: { family: KnowledgeGraphFamily
   }, [query]);
 
   return <div className="space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OpsKpi label="子 SKU / 工程参数" value={`${family.summary.childCount} / ${family.summary.attributeCount}`} detail={`${family.summary.engineeringCoveredChildCount} 个 SKU 已提取材料、机芯、量程或精度等参数`} />
       <OpsKpi label="历史采购订单" value={`${family.summary.orderCount} 单`} detail={`${family.summary.orderedQuantity.toLocaleString("zh-CN")} 件；图中展示最近 ${family.summary.displayedOrderCount} 单`} tone="positive" />
       <OpsKpi label="订单覆盖 SKU" value={`${family.summary.orderCoveredChildCount} 个`} detail={`${family.summary.relationCount} 条产品、规格与订单关系`} />

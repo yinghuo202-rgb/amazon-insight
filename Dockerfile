@@ -4,12 +4,27 @@ FROM node:22-bookworm-slim AS web-builder
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /build
 
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y openssl \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 COPY automation/integrations/amazon-insight/package.json automation/integrations/amazon-insight/pnpm-lock.yaml automation/integrations/amazon-insight/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY automation/integrations/amazon-insight/ ./
 RUN pnpm build
+
+FROM node:22-bookworm-slim AS prisma-builder
+WORKDIR /opt/prisma-cli
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y openssl \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+COPY docker/prisma-runtime/package.json docker/prisma-runtime/pnpm-lock.yaml docker/prisma-runtime/pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
@@ -26,7 +41,7 @@ ENV NODE_ENV=production \
     PATH=/opt/store-ops-venv/bin:$PATH
 
 RUN apt-get update \
-  && apt-get install --no-install-recommends -y python3 python3-venv ca-certificates \
+  && apt-get install --no-install-recommends -y python3 python3-venv ca-certificates openssl \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/store-ops-venv
 
@@ -36,6 +51,7 @@ COPY --from=web-builder /build/.next/static ./.next/static
 COPY --from=web-builder /build/public ./public
 COPY --from=web-builder /build/package.json ./package.json
 COPY --from=web-builder /build/prisma ./prisma
+COPY --from=prisma-builder /opt/prisma-cli /opt/prisma-cli
 
 COPY automation/pyproject.toml /opt/store-ops/pyproject.toml
 COPY automation/src /opt/store-ops/src
@@ -43,9 +59,9 @@ COPY automation/config /opt/store-ops/config
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN /opt/store-ops-venv/bin/pip install --no-cache-dir /opt/store-ops \
-  && mkdir -p /data/app /data/runtime/db /data/logs /data/sources \
+  && mkdir -p /data/app /data/runtime/db /data/runtime/reports /data/runtime/output /data/imported-reports /data/uploads /data/snapshots /data/logs /data/sources \
   && chmod 0755 /usr/local/bin/docker-entrypoint.sh \
-  && chown -R node:node /app /data /opt/store-ops
+  && chown -R node:node /app /data /opt/store-ops /opt/prisma-cli
 
 USER node
 EXPOSE 3000
