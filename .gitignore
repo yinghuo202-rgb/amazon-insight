@@ -7,6 +7,7 @@ logs/
 backups/
 .docker/
 secrets/
+docker/nas/*.env
 automation/runtime/
 **/__pycache__/
 **/node_modules/

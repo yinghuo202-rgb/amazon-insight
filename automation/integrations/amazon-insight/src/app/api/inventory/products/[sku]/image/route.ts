@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -7,6 +8,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: Request, { params }: { params: Promise<{ sku: string }> }) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const sku = decodeURIComponent((await params).sku).toUpperCase();
   if (!/^[A-Z]{2}\d{3}$/.test(sku)) return new Response(null, { status: 404 });
 

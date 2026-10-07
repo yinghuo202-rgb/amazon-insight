@@ -10,7 +10,7 @@ const schema = z.object({ name: z.string().trim().min(1).max(80), email: z.strin
 export async function POST(request: Request) {
   try {
     const payload = schema.parse(await request.json());
-    if (!(await isBootstrapRequired())) return Response.json({ error: "管理员已经初始化，请直接登录。" }, { status: 409 });
+    if (!(await isBootstrapRequired())) return Response.json({ error: "共用账号已经初始化，请直接登录。" }, { status: 409 });
     const email = normalizeEmail(payload.email);
     const user = await prisma.user.create({
       data: {
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     await createSession(user.id);
     return Response.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role } }, { status: 201 });
   } catch (error) {
-    const message = error instanceof z.ZodError ? "请填写姓名、有效邮箱和至少 8 位密码。" : error instanceof Error && error.message.includes("Unique") ? "该邮箱已经存在。" : "管理员初始化失败。";
+    const message = error instanceof z.ZodError ? "请填写名称、有效邮箱和至少 8 位密码。" : error instanceof Error && error.message.includes("Unique") ? "该邮箱已经存在。" : "共用账号初始化失败。";
     return Response.json({ error: message }, { status: 400 });
   }
 }

@@ -22,16 +22,15 @@ const createSchema = z.discriminatedUnion("action", [
 ]);
 const updateSchema = z.object({ action: z.enum(["approve", "void"]), documentId: z.string().cuid() });
 
-async function context(requireAdmin = false) {
+async function context() {
   const user = await requireCurrentUser();
-  if (requireAdmin && user.role !== "ADMIN") throw new Error("FORBIDDEN");
   const workspace = await workspaceForUser(user.id);
   return { user, workspace };
 }
 
 export async function GET() {
   try {
-    const { workspace } = await context(true);
+    const { workspace } = await context();
     return Response.json(await warehouseSnapshot(workspace.id));
   } catch (error) {
     return Response.json({ error: error instanceof Error && error.message === "UNAUTHENTICATED" ? "请先登录。" : "仓库数据读取失败。" }, { status: 401 });
@@ -40,7 +39,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { user, workspace } = await context(true);
+    const { user, workspace } = await context();
     const payload = createSchema.parse(await request.json());
     if (payload.action === "warehouse") return Response.json({ warehouse: await createWarehouse(workspace.id, user.id, payload) }, { status: 201 });
     if (payload.action === "location") return Response.json({ location: await createWarehouseLocation(workspace.id, user.id, payload) }, { status: 201 });
@@ -55,7 +54,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { user, workspace } = await context(true);
+    const { user, workspace } = await context();
     const payload = updateSchema.parse(await request.json());
     const document = payload.action === "approve"
       ? await approveStockDocument(workspace.id, user.id, payload.documentId)

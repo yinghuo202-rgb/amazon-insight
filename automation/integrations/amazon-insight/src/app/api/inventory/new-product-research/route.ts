@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { calculateResearchCandidate } from "@/lib/inventory/new-product-research";
@@ -21,6 +22,7 @@ const candidateSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const input = candidateSchema.parse(await request.json());
     const item = saveResearchCandidate(calculateResearchCandidate(input));

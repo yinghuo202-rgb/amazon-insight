@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { loadBaseProductCatalogData } from "@/lib/inventory/data";
@@ -17,10 +18,12 @@ const saveSchema = z.object({ items: z.array(itemSchema).min(1).max(1000) });
 const deleteSchema = z.object({ skus: z.array(skuSchema).min(1).max(1000) });
 
 export async function GET() {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   return Response.json({ items: listProductCostOverrides() });
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = saveSchema.parse(await request.json());
     await assertKnownSkus(payload.items.map((item) => item.sku));
@@ -32,6 +35,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = deleteSchema.parse(await request.json());
     await assertKnownSkus(payload.skus);

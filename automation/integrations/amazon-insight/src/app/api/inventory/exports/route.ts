@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { getDocumentExportMeta, runDocumentExport } from "@/lib/inventory/document-exports";
@@ -23,6 +24,7 @@ const requestSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const market = new URL(request.url).searchParams.get("market") === "CA" ? "CA" : "US";
   try {
     return Response.json(await getDocumentExportMeta(market));
@@ -32,6 +34,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: "导出参数不完整或格式不正确", details: parsed.error.flatten() }, { status: 400 });

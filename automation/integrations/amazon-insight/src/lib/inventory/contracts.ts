@@ -226,6 +226,12 @@ export const profitabilityRowSchema = z.object({
   storageCost: z.number().nonnegative(),
   actualProfit: z.number(),
   currentPrice: z.number().nullable(),
+  // Optional normalized GERPgo facts. Older Excel snapshots remain compatible.
+  advertisingSales: z.number().nonnegative().nullable().optional(),
+  averagePrice: z.number().nonnegative().nullable().optional(),
+  asin: z.string().optional(),
+  msku: z.string().optional(),
+  sourceKind: z.enum(["excel", "gerpgo"]).optional(),
   grossMargin: z.number().nullable(),
   actualMargin: z.number().nullable(),
   conservativeMargin: z.number().nullable(),

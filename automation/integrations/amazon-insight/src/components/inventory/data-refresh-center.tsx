@@ -6,6 +6,51 @@ import { useRef, useState } from "react";
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
 import type { DataRefreshStatus } from "@/lib/inventory/data-refresh";
 import type { DataVersion, ImportBatch } from "@/lib/inventory/data-import";
+import type { GerpgoConnectionResult, GerpgoSettingsStatus } from "@/lib/inventory/gerpgo";
+
+export function GerpgoConnectionCheck({ initialConfiguration }: { initialConfiguration: GerpgoSettingsStatus }) {
+  const [configuration, setConfiguration] = useState(initialConfiguration);
+  const [busy, setBusy] = useState<"save" | "check" | "">("");
+  const [appId, setAppId] = useState("");
+  const [appKey, setAppKey] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [result, setResult] = useState<GerpgoConnectionResult | null>(null);
+  const [error, setError] = useState("");
+  async function save() {
+    const body = JSON.stringify({ action: "save_gerpgo_credentials", appId, appKey });
+    setBusy("save"); setError(""); setResult(null); setSaved(false);
+    setAppId(""); setAppKey("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body, cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "凭证保存失败。");
+      setConfiguration(payload.configuration); setSaved(true);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "凭证保存失败，请稍后重试。"); }
+    finally { setBusy(""); }
+  }
+  async function check() {
+    setBusy("check"); setError(""); setResult(null); setSaved(false);
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "test_gerpgo" }), cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "连接检查失败。");
+      setResult(payload);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "连接检查失败，请稍后重试。"); }
+    finally { setBusy(""); }
+  }
+  return <div className="py-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-medium">积加经营数据</h3><p className="mt-1 text-xs leading-6 text-slate-500">销售、售价、广告、退货、仓储与 FBA 事实。授权检查不更新业务数据。</p></div><button type="button" disabled={!configuration.configured || Boolean(busy)} onClick={() => void check()} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#0071e3] px-4 text-sm text-white disabled:opacity-50">{busy === "check" && <LoaderCircle className="h-4 w-4 animate-spin" />}{busy === "check" ? "正在检查…" : "测试积加连接"}</button></div>
+    <form onSubmit={(event) => { event.preventDefault(); void save(); }} className="mt-4 rounded-2xl bg-[#f5f5f7] p-4">
+      <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-600">积加 appId<input type="text" required autoComplete="off" maxLength={512} value={appId} disabled={Boolean(busy) || !configuration.canSave} onChange={(event) => setAppId(event.target.value)} className="mt-2 block min-h-11 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-[#0071e3]" /></label><label className="text-xs text-slate-600">积加 appKey<input type="password" required autoComplete="new-password" maxLength={4096} value={appKey} disabled={Boolean(busy) || !configuration.canSave} onChange={(event) => setAppKey(event.target.value)} className="mt-2 block min-h-11 w-full rounded-xl border border-black/10 bg-white px-3 text-sm outline-none focus:border-[#0071e3]" /></label></div>
+      <div className="mt-3 flex flex-wrap items-center gap-3"><button type="submit" disabled={Boolean(busy) || !configuration.canSave || !appId.trim() || !appKey.trim()} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#1d1d1f] px-4 text-sm text-white disabled:opacity-50">{busy === "save" && <LoaderCircle className="h-4 w-4 animate-spin" />}{busy === "save" ? "正在保存…" : "保存积加凭证"}</button><span className="text-xs leading-6 text-slate-500">{configuration.source === "database" ? "已在网页保存；更新时重新填写两项凭证" : configuration.source === "env" ? "当前使用环境变量；网页保存后优先使用新凭证" : "保存后再测试连接"}</span></div>
+      <p className="mt-2 text-xs leading-6 text-slate-500">仅通过 HTTPS 提交，保存后清空输入框、不回显密钥。凭证加密保存在 NAS 运营数据库中。</p>
+      {!configuration.canSave && <p className="mt-2 text-xs leading-6 text-amber-700">网页保存需要至少 32 字符的 SECRET_KEY；请在 NAS 保留并配置原有密钥。</p>}
+    </form>
+    <p role="status" aria-live="polite" className={`mt-2 text-xs leading-6 ${error || (result && !result.marketAccess) ? "text-amber-700" : "text-slate-500"}`}>{error || result?.message || (saved ? `凭证已加密保存。${configuration.message}` : configuration.message)}</p>
+    {result && <p className="mt-1 text-xs leading-6 text-slate-500">本次检查：{formatDateTime(result.checkedAt)}；令牌预计有效至 {formatDateTime(result.expiresAt)}。令牌不保存到浏览器或日志。</p>}
+    <p className="mt-1 text-xs leading-6 text-slate-500">NAS 公网出口 IP 需要加入积加白名单；不要填写 Cloudflare Tunnel 地址。共用账号的使用者均可更新凭证，请只分享给可信人员。</p>
+  </div>;
+}
 
 export function DataRefreshCenter({ initialStatus, initialBatches, initialVersions, isAdmin }: { initialStatus: DataRefreshStatus; initialBatches: ImportBatch[]; initialVersions: DataVersion[]; isAdmin: boolean }) {
   const [status, setStatus] = useState(initialStatus);

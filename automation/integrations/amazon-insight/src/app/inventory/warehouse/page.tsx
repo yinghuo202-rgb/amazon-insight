@@ -12,7 +12,6 @@ export const dynamic = "force-dynamic";
 export default async function WarehousePage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role !== "ADMIN") redirect("/inventory");
   const workspace = await workspaceForUser(user.id);
   const data = await warehouseSnapshot(workspace.id);
   return <>

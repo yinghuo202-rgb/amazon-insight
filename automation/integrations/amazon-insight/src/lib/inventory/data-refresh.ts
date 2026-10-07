@@ -2,10 +2,12 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 
 import { automationRoot } from "@/lib/inventory/document-exports";
 import { runtimePath, sourceDataRoot } from "@/lib/inventory/paths";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { checkGerpgoConnection, GerpgoConnectionError, resolveGerpgoEnvironment } from "@/lib/inventory/gerpgo";
 
 export type DataRefreshSource = {
   key: string;
@@ -54,6 +56,24 @@ const reportDefinitions = [
   ["content", "Listing 与美工任务", "runtime/reports/content_workflow.json"],
   ["research", "新品调研", "runtime/reports/new_product_research.json"],
 ] as const;
+
+// A configured share link is not proof of download permission or a successful sync.
+export function getOnlineSourceConfiguration(env: Record<string, string | undefined> = process.env) {
+  return [
+    { key: "inventory", label: "WPS 库存规划", variable: "STORE_OPS_WPS_INVENTORY_URL", owns: "国内库存、订单、在途与规划参数" },
+    { key: "research", label: "WPS 新品资料", variable: "STORE_OPS_WPS_RESEARCH_URL", owns: "新品成本、箱规、包装重量与调研记录" },
+  ].map(source => {
+    const value = env[source.variable]?.trim();
+    let url: string | null = null;
+    if (value) {
+      try {
+        const parsed = new URL(value);
+        if (parsed.protocol === "https:" && ["www.kdocs.cn", "kdocs.cn"].includes(parsed.hostname) && !parsed.username && !parsed.password && /^\/l\/[a-zA-Z0-9]+\/?$/.test(parsed.pathname) && !parsed.search && !parsed.hash) url = parsed.href;
+      } catch { /* Invalid configuration is surfaced, never used as a link. */ }
+    }
+    return { ...source, url, status: value ? url ? "分享链接已配置；自动同步尚未接入" : "分享链接无效，请配置 HTTPS 金山文档分享地址" : "尚未配置分享链接" };
+  });
+}
 
 export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   const root = automationRoot();
@@ -118,6 +138,54 @@ export async function runFullDataRefresh() {
   const results = [];
   for (const command of commands) results.push(await runPythonJob(root, command));
   return { status: "completed", commands: results, snapshot: await getDataRefreshStatus() };
+}
+
+export async function runGerpgoConnectionCheck() {
+  let database: DatabaseSync;
+  let runId: number | bigint;
+  const startedAt = new Date().toISOString();
+  try {
+    database = new DatabaseSync(shipmentPlanDbPath());
+    database.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+    const last = database.prepare("SELECT started_at FROM runs WHERE job_name='gerpgo-connection-check' ORDER BY id DESC LIMIT 1").get();
+    if (last && Date.now() - Date.parse(String(last.started_at)) < 10000) throw new GerpgoConnectionError("请等待 10 秒后再检查积加连接。", 429);
+    runId = database.prepare("INSERT INTO runs(job_name,status,started_at) VALUES('gerpgo-connection-check','running',?)").run(startedAt).lastInsertRowid;
+    database.exec("COMMIT");
+  } catch (error) {
+    // No provider call is made if audit persistence is unavailable.
+    try { database!.exec("ROLLBACK"); } catch { /* May not have opened a transaction. */ }
+    try { database!.close(); } catch { /* May not have opened the database. */ }
+    throw error instanceof GerpgoConnectionError ? error : new GerpgoConnectionError("无法保存连接检查记录，请检查 NAS 数据目录写入权限。", 500);
+  }
+  function finish(status: string, summary: unknown, errorMessage: string | null) {
+    const finishedAt = new Date().toISOString();
+    try {
+      database.exec("BEGIN IMMEDIATE");
+      database.prepare("UPDATE runs SET status=?,finished_at=?,summary_json=?,error_text=? WHERE id=?").run(status, finishedAt, JSON.stringify(summary), errorMessage, runId);
+      if (errorMessage) {
+        const category = "gerpgo_connection";
+        const fingerprint = createHash("sha256").update(JSON.stringify([category, "gerpgo", null, null, null])).digest("hex");
+        database.prepare("INSERT INTO exceptions(first_run_id,last_run_id,fingerprint,category,severity,source_name,details_json,created_at,updated_at) VALUES(?,?,?,?,'error','gerpgo',?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET last_run_id=excluded.last_run_id,details_json=excluded.details_json,review_status='open',occurrences=exceptions.occurrences+1,updated_at=excluded.updated_at").run(runId, runId, fingerprint, category, JSON.stringify({ message: errorMessage }), finishedAt, finishedAt);
+      } else {
+        database.prepare("UPDATE exceptions SET review_status='resolved',last_run_id=?,updated_at=? WHERE category='gerpgo_connection' AND source_name='gerpgo' AND review_status='open'").run(runId, finishedAt);
+      }
+      database.exec("COMMIT");
+    } catch {
+      try { database.exec("ROLLBACK"); } catch { /* Preserve a clear persistence failure. */ }
+      throw new GerpgoConnectionError("连接检查记录保存失败，请检查 NAS 数据目录权限；尚不能确认本次结果。", 500);
+    }
+  }
+  try {
+    let result;
+    try { result = await checkGerpgoConnection(resolveGerpgoEnvironment()); }
+    catch (error) {
+      const safe = error instanceof GerpgoConnectionError ? error : new GerpgoConnectionError("积加连接检查失败，请检查服务端配置。");
+      finish("failed", null, safe.message);
+      throw safe;
+    }
+    finish(result.marketAccess ? "completed" : "failed", result, result.marketAccess ? null : result.message);
+    return result;
+  } finally { database.close(); }
 }
 
 async function runPythonJob(root: string, command: string) {

@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { savePurchasePlanCsv } from "@/lib/inventory/download-center";
@@ -12,6 +13,7 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "采购表导出数据不完整或格式不正确", details: parsed.error.flatten() }, { status: 400 });
   try {

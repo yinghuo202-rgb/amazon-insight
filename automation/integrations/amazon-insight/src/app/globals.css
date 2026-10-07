@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --font-body: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
-  --font-jakarta: Inter, "SF Pro Display", "PingFang SC", ui-sans-serif, system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --font-jakarta: -apple-system, BlinkMacSystemFont, "PingFang SC", ui-sans-serif, system-ui, sans-serif;
   --font-plex-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
   --background: #f4f7fb;
   --background-strong: #ffffff;
@@ -164,10 +164,8 @@ video {
 
 .ops-root {
   min-width: 0;
-  background: #f4f7fb;
-  background-image:
-    radial-gradient(circle at 72% -20%, rgba(37, 99, 235, 0.07), transparent 30%),
-    linear-gradient(180deg, #f8fafc 0, #f4f7fb 340px);
+  background: #f5f5f7;
+  color: #1d1d1f;
 }
 
 .ops-root main,

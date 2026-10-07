@@ -8,6 +8,19 @@ import { listLatestPurchaseOrderReviews, purchaseOrderReviewKey, type PurchaseOr
 import { applyProductCostOverrides, listProductCostOverrides } from "@/lib/inventory/product-cost-store";
 import { applyResearchCandidateOverrides } from "@/lib/inventory/new-product-research";
 import { listResearchCandidateOverrides } from "@/lib/inventory/new-product-research-store";
+import { buildOperatingModel } from "@/lib/inventory/dashboard-view-model";
+
+export async function loadOperatingModel() {
+  const [us, ca, profit, variants] = await Promise.allSettled([
+    loadInventoryDashboardData("US"), loadInventoryDashboardData("CA"), loadProfitabilityData(), loadVariantCatalogData(),
+  ]);
+  const warnings: string[] = [];
+  if (us.status === "rejected") warnings.push("US 库存读取失败，请在业务后台检查报告文件。");
+  if (ca.status === "rejected") warnings.push("CA 库存读取失败，请在业务后台检查报告文件。");
+  if (profit.status === "rejected") warnings.push("销售和利润报告读取失败，经营指标暂不可用。");
+  if (variants.status === "rejected") warnings.push("父子体映射读取失败，暂按 SKU 展示。");
+  return buildOperatingModel([...(us.status === "fulfilled" ? [us.value] : []), ...(ca.status === "fulfilled" ? [ca.value] : [])], profit.status === "fulfilled" ? profit.value : undefined, variants.status === "fulfilled" ? variants.value : undefined, warnings);
+}
 
 export type OperationsMarket = "US" | "CA";
 

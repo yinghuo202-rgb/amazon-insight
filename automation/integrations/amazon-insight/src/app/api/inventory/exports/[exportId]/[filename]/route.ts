@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { readFile } from "node:fs/promises";
 
 import { exportFilePath } from "@/lib/inventory/document-exports";
@@ -6,6 +7,7 @@ import { recordDownloadEvent } from "@/lib/inventory/download-center";
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: RouteContext<"/api/inventory/exports/[exportId]/[filename]">) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   const { exportId, filename } = await context.params;
   try {
     const decoded = decodeURIComponent(filename);

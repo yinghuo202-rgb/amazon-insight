@@ -4,15 +4,14 @@ import { appendImportChunk, finalizeChunkedImport, initializeChunkedImport, list
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function requireAdmin() {
+async function requireSharedUser() {
   const user = await requireCurrentUser();
-  if (user.role !== "ADMIN") throw new Error("FORBIDDEN");
   return user;
 }
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requireSharedUser();
     const [batches, versions] = await Promise.all([listImportBatches(), listDataVersions()]);
     return Response.json({ batches, versions });
   } catch (error) {
@@ -22,7 +21,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    await requireAdmin();
+    await requireSharedUser();
     const body = await request.json() as { action?: string; batchId?: string; files?: Array<{ name: string; size: number }> };
     if (body.action === "initialize") return Response.json({ upload: await initializeChunkedImport(body.files ?? []) }, { status: 201 });
     if (body.action === "finalize" && body.batchId) return Response.json({ batch: await finalizeChunkedImport(body.batchId) });
@@ -34,7 +33,7 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    await requireAdmin();
+    await requireSharedUser();
     const url = new URL(request.url);
     const batchId = url.searchParams.get("batchId") ?? "";
     const fileIndex = Number(url.searchParams.get("fileIndex"));
@@ -48,7 +47,7 @@ export async function PUT(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    await requireAdmin();
+    await requireSharedUser();
     const body = await request.json() as { batchId?: string; version?: string; action?: string };
     if (body.action === "restore" && body.version) return Response.json({ restored: await restoreDataVersion(body.version) });
     if (!body.batchId) return Response.json({ error: "缺少上传批次编号。" }, { status: 400 });

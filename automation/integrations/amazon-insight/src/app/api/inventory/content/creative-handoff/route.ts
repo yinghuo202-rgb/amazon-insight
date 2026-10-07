@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
@@ -10,6 +11,7 @@ export const runtime = "nodejs";
 const requestSchema = z.object({ sku: z.string().trim().regex(/^[A-Z]{2}\d{3}$/) });
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = requestSchema.parse(await request.json());
     const content = await loadContentWorkflowData();

@@ -1,3 +1,4 @@
+import { getCurrentUser } from "@/lib/auth";
 import { z } from "zod";
 
 import { loadBaseInventoryDashboardData, loadBaseProductCatalogData } from "@/lib/inventory/data";
@@ -40,10 +41,12 @@ const deleteSchema = z.object({
 });
 
 export async function GET() {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   return Response.json(listOperationalDataOverrides());
 }
 
 export async function POST(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = saveSchema.parse(await request.json());
     await assertKnown(payload.entity, payload.items);
@@ -58,6 +61,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   try {
     const payload = deleteSchema.parse(await request.json());
     await assertKnown(payload.entity, payload.keys);

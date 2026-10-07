@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 
 import { OpsPageHeader } from "@/components/inventory/ops-ui";
 import { SkuDetailDashboard } from "@/components/inventory/sku-detail-dashboard";
+import { SkuOperatingCard } from "@/components/inventory/revenue-overview-dashboard";
+import { buildOperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { loadDocumentMasterData, loadInventoryDashboardData, loadProductCatalogData, loadProfitabilityData, loadVariantCatalogData, normalizeOperationsMarket } from "@/lib/inventory/data";
 import { listLatestPurchaseOrderReviews } from "@/lib/inventory/purchase-order-reviews";
 import { listSkuPurchaseOrderDetails } from "@/lib/inventory/purchase-orders";
@@ -31,5 +33,7 @@ export default async function SkuPage({ params, searchParams }: { params: Promis
   const profitabilityRow = profitability?.rows
     .filter((item) => item.market === market && item.sku === sku)
     .sort((left, right) => right.reportMonth.localeCompare(left.reportMonth))[0] ?? null;
-  return <><OpsPageHeader eyebrow="SKU Analysis" title={`${sku} · ${row.productName}`} description="独立查看该 SKU 的销售额、利润、库存、历史发货、产品规格、Listing、采购订单和广告表现。" /><SkuDetailDashboard dashboard={dashboard} profitability={profitabilityRow} product={product} sku={sku} canceledOrders={canceledOrders} purchaseOrders={purchaseOrders} shipmentHistory={shipmentHistory} /></>;
+  const operating = buildOperatingModel([data], profitability ?? undefined, variants ?? undefined);
+  const operatingRow = operating.rows.find((item) => item.market === market && item.sku === sku);
+  return <><OpsPageHeader title={`${sku} · ${row.productName}`} description="先看经营摘要与依据；库存、订单、发货和产品资料按需展开。" />{operatingRow && <SkuOperatingCard row={operatingRow} period={profitabilityRow?.reportMonth ?? operating.periods[0] ?? ""} />}<details className="mt-5 rounded-xl border border-slate-200 bg-white p-4"><summary className="min-h-11 cursor-pointer text-sm font-medium">业务明细：库存、历史发货、订单、产品资料</summary><div className="mt-4"><SkuDetailDashboard dashboard={dashboard} profitability={profitabilityRow} product={product} sku={sku} canceledOrders={canceledOrders} purchaseOrders={purchaseOrders} shipmentHistory={shipmentHistory} /></div></details></>;
 }
