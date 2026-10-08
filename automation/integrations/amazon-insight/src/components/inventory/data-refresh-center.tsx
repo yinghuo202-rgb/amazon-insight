@@ -1,9 +1,12 @@
 "use client";
 
 import { CheckCircle2, DatabaseZap, FileSpreadsheet, FolderSearch, History, LoaderCircle, RefreshCw, RotateCcw, TriangleAlert, UploadCloud } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
+import type { RefreshTask } from "@/lib/inventory/refresh-task-store";
+import type { OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
+import type { GerpgoPreview, GerpgoCollectionSummary } from "@/lib/inventory/gerpgo-preview";
 import type { DataRefreshStatus } from "@/lib/inventory/data-refresh";
 import type { DataVersion, ImportBatch } from "@/lib/inventory/data-import";
 import type { GerpgoConnectionResult, GerpgoSettingsStatus } from "@/lib/inventory/gerpgo";
@@ -130,7 +133,7 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "操作失败");
       setStatus(scanOnly ? payload : payload.snapshot);
-      setMessage(scanOnly ? "已重新检查所有源文件。" : "数据重建完成，库存、采购、内容与单据数据已更新。");
+      setMessage(scanOnly ? "已重新检查所有源文件。" : "重建任务已排队，请在同步任务面板查看状态；完成前仍显示原报告。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "操作失败"); }
     finally { setBusy(""); }
   }
@@ -139,13 +142,14 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
   const latestRun = status.runs[0] ?? null;
   const topException = [...status.exceptions].sort((left, right) => right.count - left.count)[0];
   return <div className="space-y-5">
+    <RefreshTaskPanel />
     <OpsCard className="border-blue-200 bg-blue-50/30">
       <OpsCardHeader title="网页上传 Excel" description={isAdmin ? "支持库存规划、新品调研、发货清单、销售、广告、成本、产品明细和月度分析；先解析预览，确认后再发布。" : "只有管理员可以上传和发布数据，普通成员可查看当前数据状态。"} action={<UploadCloud className="h-5 w-5 text-blue-700" />} />
       {isAdmin ? <div className="p-5"><input ref={inputRef} type="file" multiple accept=".xlsx,.xlsm" className="hidden" onChange={(event) => void upload(event.target.files)} /><button type="button" disabled={Boolean(importBusy)} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void upload(event.dataTransfer.files); }} className="flex min-h-28 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-200 bg-white px-5 text-center transition hover:border-blue-500 hover:bg-blue-50 disabled:opacity-50">{importBusy === "upload" ? <LoaderCircle className="h-6 w-6 animate-spin text-blue-700" /> : <UploadCloud className="h-6 w-6 text-blue-700" />}<span className="mt-2 text-sm font-semibold text-slate-800">{importBusy === "upload" ? `正在上传并解析… ${uploadProgress}%` : "选择或拖入多个 Excel 文件"}</span><span className="mt-1 text-[11px] text-slate-500">使用 8 MB 分片，支持通过 Cloudflare 上传大工作簿；上传不会立即覆盖网站数据</span>{importBusy === "upload" ? <span className="mt-3 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-blue-100"><span className="block h-full bg-blue-600 transition-all" style={{ width: `${uploadProgress}%` }} /></span> : null}</button></div> : <div className="px-5 py-4 text-xs text-slate-500">请使用管理员账号进行数据更新。</div>}
       {message ? <p className={`border-t px-5 py-3 text-xs ${message.startsWith("已") || message.includes("发布") ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{message}</p> : null}
     </OpsCard>
 
-    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => void publish(batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
+    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => void publish(batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.source && <p className="mt-3 text-[11px] text-slate-500">来源：WPS 现有登录态下载 · 文件校验 {batch.source.sha256.slice(0, 12)} · 业务截止日期 {batch.source.businessAsOf ?? "待核验"}</p>}{batch.warnings.map(warning => <p key={warning} role="status" className="mt-2 text-[11px] leading-6 text-amber-800">{warning}</p>)}{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
 
     {isAdmin && versions.length ? <OpsCard><OpsCardHeader title="数据版本与回滚" description="每次发布前都会保存完整报告快照；回滚时也会先备份当前版本。" action={<History className="h-4 w-4 text-blue-700" />} /><div className="divide-y divide-slate-100">{versions.slice(0, 8).map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-mono text-xs font-semibold text-slate-800">{version.version}</p><p className="mt-1 text-[10px] text-slate-500">{formatDateTime(version.createdAt)} · {version.fileCount} 份报告</p></div><button type="button" disabled={Boolean(importBusy)} onClick={() => void restore(version.version)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" />回滚</button></div>)}</div></OpsCard> : null}
     <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -169,6 +173,79 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
   </div>;
 }
 
+function RefreshTaskPanel() {
+  const [tasks, setTasks] = useState<RefreshTask[]>([]), [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<GerpgoPreview | null>(null), [confirmed, setConfirmed] = useState(false);
+  const [records, setRecords] = useState<OperatingPerformanceRow[]>([]), [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [collection, setCollection] = useState<GerpgoCollectionSummary | null>(null);
+  async function inspectCollection(id: string) {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh?collection=" + encodeURIComponent(id), { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "无法读取采集明细。");
+      setCollection(payload.collection);
+    } catch (error) { setError(error instanceof Error ? error.message : "无法读取采集明细。"); }
+    finally { setBusy(false); }
+  }
+  async function inspect(id: string, offset = 0) {
+    setBusy(true); setError(""); setConfirmed(false);
+    if (!offset) { setPreview(null); setRecords([]); }
+    try {
+      const response = await fetch("/api/inventory/data-refresh?preview=" + encodeURIComponent(id) + `&offset=${offset}` + (offset && preview ? `&version=${preview.previewHash}` : ""), { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "预览读取失败。");
+      setPreview(payload.preview); setRecords(current => offset ? [...current, ...payload.records] : payload.records); setNextOffset(payload.nextOffset);
+    } catch (error) { setError(error instanceof Error ? error.message : "预览读取失败。"); }
+    finally { setBusy(false); }
+  }
+  async function publish() {
+    if (!preview || !confirmed || preview.blocked) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "publish_gerpgo", sourceTaskId: preview.taskId, previewHash: preview.previewHash, confirmed: true }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "审核提交失败。");
+      setTasks(current => [payload.task, ...current.filter(task => task.id !== payload.task.id)]);
+      setPreview(null); setConfirmed(false);
+    } catch (error) { setError(error instanceof Error ? error.message : "审核提交失败。"); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => {
+    const controller = new AbortController();
+    async function check() {
+      try {
+        const response = await fetch("/api/inventory/data-refresh?tasks=1", { signal: controller.signal, cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error("同步任务状态暂不可用。");
+        setTasks(payload.tasks ?? []); setError("");
+      } catch { if (!controller.signal.aborted) setError("同步任务状态暂不可用，请稍后重新打开页面。"); }
+    }
+    void check(); const timer = setInterval(() => void check(), 5000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, []);
+  async function pull(includeSupplemental = false) {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pull_gerpgo", includeSupplemental }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "提交失败。");
+      setTasks(current => [payload.task, ...current.filter(task => task.id !== payload.task.id)]);
+    } catch (error) { setError(error instanceof Error ? error.message : "提交失败。"); }
+    finally { setBusy(false); }
+  }
+  const labels: Record<string, string> = { queued: "已排队", running: "处理中", awaiting_mapping: "映射待核验", awaiting_review: "待对账确认", completed: "已完成", failed: "失败", interrupted: "已中断，需核查" };
+  return <section className="rounded-2xl border border-black/5 bg-white p-5" aria-label="同步任务">
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">同步任务</h2><div className="flex flex-wrap gap-2"><button disabled={busy} onClick={() => void pull()} className="min-h-11 rounded-full bg-[#0071e3] px-4 text-sm text-white disabled:opacity-50">{busy ? "正在提交…" : "拉取核心预览"}</button><button disabled={busy} onClick={() => void pull(true)} className="min-h-11 rounded-full border px-4 text-sm disabled:opacity-50">全量采集（含费用明细）</button></div></div>
+    <p className="mt-2 text-xs leading-6 text-slate-500">核心预览先拉取指定店铺的近六个完整月、当月、产品和 FBA，便于首次对账。全量采集另含逐日广告、退货和仓储明细，可能耗时较长；只安排指定店铺的广告站点，不能按店铺筛选的接口取全分页后过滤。原始接口总数不等于本店有效记录数。未核验字段不覆盖业务报告；自动调度暂未启用。长期排队请检查 worker 容器。</p>
+    {error && <p role="alert" className="mt-2 text-xs text-rose-700">{error}</p>}
+    <div className="mt-3 divide-y divide-slate-100">{tasks.slice(0, 10).map(task => <div key={task.id} className="py-3 text-xs"><p className="font-medium">{task.kind === "gerpgo" ? "积加采集" : task.kind === "gerpgo_publish" ? "积加审核发布" : "报告重建"} · {labels[task.status] || task.status}</p><p role="status" className="mt-1 break-words leading-6 text-slate-500">{task.progress || "等待 worker"}{task.error ? ` · ${task.error}` : ""}</p><p className="mt-1 text-[10px] text-slate-400">{formatDateTime(task.createdAt)} · {task.id.slice(0, 8)}</p>{task.kind === "gerpgo" && task.status !== "queued" && <button disabled={busy} onClick={() => void inspectCollection(task.id)} className="mr-2 mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看采集明细</button>}{task.kind === "gerpgo" && ["awaiting_mapping", "awaiting_review"].includes(task.status) && <button disabled={busy} onClick={() => void inspect(task.id)} className="mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看差异预览</button>}</div>)}</div>
+    {collection && <div className="mt-4 rounded-xl bg-slate-50 p-4 text-xs leading-6" aria-label="积加采集覆盖"><h3 className="font-semibold">原始数据采集覆盖</h3><p>采集 {formatDateTime(collection.capturedAt)}；成功采集不等于业务映射已核验或已发布。</p>{collection.domains.map(domain => <div key={domain.name} className="mt-2 rounded-lg bg-white p-3"><p className="font-medium">{{ shops: "店铺站点", products: "产品", performance: "经营表现", fba: "FBA", ads: "广告（逐日逐站点）", returns: "退货", storage: "仓储" }[domain.name] || domain.name}</p><p>完成 {domain.completed} 个范围 · 失败 {domain.failed} · 跳过 {domain.skipped} · {domain.pages} 页 / {domain.records} 条</p>{domain.errors.map(error => <p key={error} className="text-rose-700">{error}</p>)}</div>)}</div>}
+    {preview && <div className="mt-4 rounded-xl bg-slate-50 p-4 text-xs leading-6" aria-label="积加差异预览"><h3 className="font-semibold">经营报告预览 · {preview.recordCount} 条 SKU 月度记录</h3><p>采集日期 {formatDateTime(preview.capturedAt)}；基线 {preview.baseline.slice(0, 12)}。跳过父体汇总 {preview.ignoredParentRows} 条。</p>{preview.withheld.map(text => <p key={text} className="text-amber-800">{text}</p>)}{preview.reviewReasons.map(text => <p key={text}>{text}</p>)}<div className="mt-3 space-y-2">{preview.differences.map(item => <div key={`${item.market}-${item.reportMonth}`} className="rounded-lg bg-white p-3"><p className="font-medium">{item.market} {item.reportMonth} · {item.currency} · {item.completePeriod ? "完整月" : "当月截至采集日"}</p><p>销售额 {item.previousRevenue ?? "无历史"} → {item.candidateRevenue}；SKU {item.previousSkuCount} → {item.candidateSkuCount}</p><p>销售额变化 {item.revenueChangePercent == null ? "无可比基线" : `${item.revenueChangePercent.toFixed(1)}%`}{item.protected ? " · 超过发布保护线，需重点对账" : ""}</p></div>)}</div>{records.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer font-medium">逐 SKU 对账明细（已加载 {records.length} 条）</summary><div className="max-h-96 overflow-y-auto">{records.map(record => <div key={`${record.market}-${record.reportMonth}-${record.sku}`} className="border-t border-slate-200 py-2"><p>{record.market} {record.reportMonth} · {record.sku}</p><p>{record.units} 件 · 销售额 {record.currency} {record.productSales} · 来源利润 {record.actualProfit ?? "未提供"}</p></div>)}</div>{nextOffset !== null && <button disabled={busy} onClick={() => void inspect(preview.taskId, nextOffset)} className="min-h-11 rounded-lg border px-3">继续加载 20 条对账明细</button>}</details>}{preview.blocked ? <div role="alert" className="mt-3 text-rose-700"><p>有 {preview.issueCount} 条校验问题，禁止发布。补齐口径后重新拉取。</p>{preview.issues.map((item, index) => <p key={index}>{item.source} 第 {item.row} 条：{item.reason}</p>)}</div> : <><label className="mt-3 flex min-h-11 items-start gap-2"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} className="mt-2" /><span>已核对站点、SKU、原币种、期间及金额差异；仅确认经营报告，不确认完整利润、退货口径或 FBA 库存。</span></label><button disabled={busy || !confirmed} onClick={() => void publish()} className="mt-2 min-h-11 rounded-full bg-[#0071e3] px-4 text-white disabled:opacity-50">确认并交给 worker 发布</button></>}</div>}
+    {!tasks.length && <p className="mt-3 text-xs text-slate-500">尚无同步任务。</p>}
+  </section>;
+}
+
 function formatDate(value: string) { return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value)); }
 function formatTime(value: string) { return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value)); }
 function formatDateTime(value: string) { return `${formatDate(value)} ${formatTime(value)}`; }
@@ -180,5 +257,10 @@ function PreviewSummary({ preview, error }: { preview?: Record<string, unknown>;
   const candidates = typeof preview.candidateCount === "number" ? `候选 ${preview.candidateCount} 个` : "";
   const skuCount = typeof preview.skuCount === "number" ? `SKU ${preview.skuCount} 个` : "";
   const marketCount = preview.markets && typeof preview.markets === "object" ? `站点 ${Object.keys(preview.markets).length} 个` : "";
-  return <p className="mt-2 text-[10px] leading-4 text-slate-500">{[candidates, skuCount, marketCount, impacts ? `影响：${impacts}` : ""].filter(Boolean).join(" · ") || "结构已识别"}</p>;
+  const marketSummaries = preview.markets && typeof preview.markets === "object" ? Object.entries(preview.markets).flatMap(([market, value]) => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>, skipped = item.skipped as Record<string, number> | undefined;
+    return [`${market} · 有效 ${item.skuCount ?? "待核验"} · 唯一 SKU ${item.uniqueSkuCount ?? "待核验"} · 已匹配 ${item.matchedSkuCount ?? "待核验"} · 未映射 ${item.unmappedSkuCount ?? "待核验"} · 跳过 ${skipped ? Object.values(skipped).reduce((sum, count) => sum + count, 0) : "待核验"}`];
+  }) : [];
+  return <div className="mt-2 text-[10px] leading-5 text-slate-500"><p>{[candidates, skuCount, marketCount, impacts ? `影响：${impacts}` : ""].filter(Boolean).join(" · ") || "结构已识别"}</p>{marketSummaries.map(summary => <p key={summary}>{summary}</p>)}</div>;
 }

@@ -20,7 +20,7 @@ fi
 # rebuild that legacy snapshot during upgrade; online overrides are applied by
 # the web layer after the report is loaded.
 research_source="/data/sources/新品调研表8.13.xlsx"
-research_report="/data/runtime/reports/new_product_research.json"
+research_report=$(/opt/store-ops-venv/bin/python -c 'from pathlib import Path; from store_ops.report_versions import current_reports; print(current_reports(Path("/data/runtime/reports")) / "new_product_research.json")')
 if [ ! -f "$research_source" ] && [ -d /data/sources ]; then
   research_source=$(find /data/sources -type f \( -iname '*新品调研*.xlsx' -o -iname '*new*research*.xlsx' \) -print -quit 2>/dev/null || true)
 fi

@@ -35,19 +35,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _latest_reports(root: Path) -> dict[str, tuple[str, Path]]:
-    latest: dict[str, tuple[str, float, Path]] = {}
+def _latest_reports(root: Path) -> dict[tuple[str, str], Path]:
+    latest: dict[tuple[str, str], Path] = {}
     for path in root.rglob("*销售和毛利报告-*.xlsx"):
         match = REPORT_NAME_RE.search(path.name)
         if not match:
             continue
         month = f"{int(match.group(1)):04d}-{int(match.group(2)):02d}"
-        market = match.group(3).upper()
-        marker = path.stat().st_mtime
-        current = latest.get(market)
-        if current is None or (month, marker) > (current[0], current[1]):
-            latest[market] = (month, marker, path)
-    return {market: (month, path) for market, (month, _, path) in latest.items()}
+        key = (match.group(3).upper(), month)
+        current = latest.get(key)
+        if current is None or (path.stat().st_mtime, str(path)) > (current.stat().st_mtime, str(current)):
+            latest[key] = path
+    return latest
 
 
 def _read_report(path: Path, market: str, report_month: str, normalizer: SkuNormalizer) -> list[dict]:
@@ -78,7 +77,7 @@ def _read_report(path: Path, market: str, report_month: str, normalizer: SkuNorm
     rows = []
     for sku, item in sorted(aggregate.items()):
         units = int(round(item["units"]))
-        returns = min(units, int(round(item["returns"])))
+        returns = int(round(item["returns"]))
         net_units = max(0, units - returns)
         product_sales = round(item["productSales"], 2)
         actual_profit = round(item["actualProfit"], 2)
@@ -98,7 +97,10 @@ def _read_report(path: Path, market: str, report_month: str, normalizer: SkuNorm
             "advertisingCost": round(item["advertisingCost"], 2),
             "storageCost": storage_cost,
             "actualProfit": actual_profit,
-            "currentPrice": round(product_sales / net_units, 2) if net_units > 0 else None,
+            "currentPrice": None,
+            "averagePrice": round(product_sales / units, 2) if units > 0 else None,
+            "sourceKind": "excel",
+            "quality": {"profitVerified": False, "returnsVerified": False, "completePeriod": report_month < datetime.now(timezone.utc).strftime("%Y-%m")},
             "grossMargin": round(item["grossProfit"] / product_sales, 4) if product_sales > 0 else None,
             "actualMargin": round(actual_profit / product_sales, 4) if product_sales > 0 else None,
             "conservativeMargin": round((actual_profit - storage_cost) / product_sales, 4) if product_sales > 0 else None,
@@ -114,14 +116,13 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
             raise ValueError("profitability_report_root is not configured")
         report_root = Path(str(configured_root)).expanduser().resolve()
         reports = _latest_reports(report_root)
-        if not {"US", "CA"}.issubset(reports):
-            raise FileNotFoundError(f"Latest US/CA profitability reports were not both found in {report_root}")
+        if not reports:
+            raise FileNotFoundError(f"No profitability reports found in {report_root}")
         normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
         sources = []
         rows = []
-        markets = [market for market in ("US", "CA", "MX") if market in reports]
-        for market in markets:
-            report_month, path = reports[market]
+        markets = sorted({market for market, _ in reports})
+        for (market, report_month), path in sorted(reports.items()):
             rows.extend(_read_report(path, market, report_month, normalizer))
             sources.append({
                 "market": market,
@@ -131,6 +132,15 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
                 "sha256": _sha256(path),
                 "sheet": "SKU销售汇总",
             })
+        report_path = config.runtime_root / "reports" / "profitability.json"
+        if report_path.exists():
+            previous = json.loads(report_path.read_text(encoding="utf-8"))
+            replaced = set(reports)
+            rows = [row for row in previous.get("rows", [])
+                    if (row.get("market"), row.get("reportMonth")) not in replaced] + rows
+            sources = [source for source in previous.get("sources", [])
+                       if (source.get("market"), source.get("reportMonth")) not in replaced] + sources
+        rows.sort(key=lambda row: (row["market"], row["reportMonth"], row["sku"]))
         payload = {
             "schemaVersion": 1,
             "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -147,7 +157,7 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
             "run_id": run_id,
             "report_path": str(report_path),
             "row_count": len(rows),
-            "markets": {market: reports[market][0] for market in markets},
+            "markets": {market: sorted(month for code, month in reports if code == market) for market in markets},
         }
         db.finish_run(run_id, "completed", summary=summary)
         return summary

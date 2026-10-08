@@ -36,6 +36,7 @@ ENV NODE_ENV=production \
     STORE_OPS_DATA_ROOT=/data/sources \
     STORE_OPS_RUNTIME_ROOT=/data/runtime \
     STORE_OPS_STATE_DB=/data/runtime/db/operations.sqlite3 \
+    GERPGO_STORE_NAME=MEASUREMAN \
     STORE_OPS_PYTHON=/opt/store-ops-venv/bin/python \
     PYTHONPATH=/opt/store-ops/src \
     PATH=/opt/store-ops-venv/bin:$PATH

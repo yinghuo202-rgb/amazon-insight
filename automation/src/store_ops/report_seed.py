@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .report_versions import current_reports, report_transaction
+
 
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
@@ -83,11 +85,37 @@ def _merge_shipment_history(current: dict[str, Any], imported: dict[str, Any]) -
 
 
 def seed_reports(imported_dir: Path, runtime_dir: Path) -> list[str]:
+    if not imported_dir.is_dir() or not any(imported_dir.glob("*.json")):
+        return []
+    active = current_reports(runtime_dir)
+    needs_update = False
+    for source in imported_dir.glob("*.json"):
+        if source.name in {"current.json", "manifest.json"}:
+            continue
+        target = active / source.name
+        if not target.exists():
+            needs_update = True
+        elif source.name == "new_product_research.json":
+            needs_update |= _candidate_count(_read_json(source)) > _candidate_count(_read_json(target))
+        elif source.name == "document_master.json":
+            incoming, current = _read_json(source), _read_json(target)
+            if incoming is not None and current is not None:
+                needs_update |= _merge_shipment_history(current, incoming) > 0
+    if not needs_update:
+        return []
+    snapshots = Path(os.environ.get("STORE_OPS_SNAPSHOT_ROOT") or runtime_dir.parent / "snapshots")
+    with report_transaction(runtime_dir, snapshots) as (stage, _):
+        return _seed_staged(imported_dir, stage)
+
+
+def _seed_staged(imported_dir: Path, runtime_dir: Path) -> list[str]:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     actions: list[str] = []
     if not imported_dir.is_dir():
         return actions
     for source in sorted(imported_dir.glob("*.json")):
+        if source.name in {"current.json", "manifest.json"}:
+            continue
         target = runtime_dir / source.name
         if not target.exists():
             shutil.copy2(source, target)

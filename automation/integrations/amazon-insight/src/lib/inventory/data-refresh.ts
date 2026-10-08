@@ -4,10 +4,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
-import { runtimePath, sourceDataRoot } from "@/lib/inventory/paths";
+import { automationRoot, runtimePath, sourceDataRoot } from "@/lib/inventory/paths";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 import { checkGerpgoConnection, GerpgoConnectionError, resolveGerpgoEnvironment } from "@/lib/inventory/gerpgo";
+import { publishedReportPath } from "@/lib/inventory/report-version";
 
 export type DataRefreshSource = {
   key: string;
@@ -112,8 +112,9 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
     return { key: `source-${index}`, label: definition.label, relativePath, exists: true, kind: "file" as const, modifiedAt: info.mtime.toISOString(), fileCount: 1, required: definition.required };
   }));
 
-  const reports = await Promise.all(reportDefinitions.map(async ([key, label, relativePath]) => {
-    const info = await stat(runtimePath(relativePath.replace(/^runtime\//, ""))).catch(() => null);
+  const reports = await Promise.all([...reportDefinitions, ["profitability", "月度经营与利润", "runtime/reports/profitability.json"] as const].map(async ([key, label, relativePath]) => {
+    const selected = await publishedReportPath(runtimePath(relativePath.replace(/^runtime\//, "")));
+    const info = await stat(selected).catch(() => null);
     return { key, label, relativePath, exists: Boolean(info), modifiedAt: info?.mtime.toISOString() ?? null, size: info?.size ?? 0 };
   }));
   const { runs, exceptions } = operationHistory();
@@ -134,7 +135,7 @@ export async function runFullDataRefresh() {
   const root = automationRoot();
   const before = await getDataRefreshStatus();
   if (before.summary.missingCount) throw new Error(`存在 ${before.summary.missingCount} 个必需数据源缺失，请先补齐后再重建。`);
-  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-new-product-research", "build-document-master", "build-inventory-dashboard-data"];
+  const commands = ["rebuild-reports"];
   const results = [];
   for (const command of commands) results.push(await runPythonJob(root, command));
   return { status: "completed", commands: results, snapshot: await getDataRefreshStatus() };
@@ -188,17 +189,18 @@ export async function runGerpgoConnectionCheck() {
   } finally { database.close(); }
 }
 
-async function runPythonJob(root: string, command: string) {
+export async function runPythonJob(root: string, command: string, requestFile?: string) {
   const executable = process.env.STORE_OPS_PYTHON || "python";
-  const args = ["-m", "store_ops", "--config", path.join(root, "config", "project.json"), command];
+  const args = ["-m", "store_ops", "--config", path.join(root, "config", "project.json"), command, ...(requestFile ? ["--request", requestFile] : [])];
   const startedAt = new Date().toISOString();
   return new Promise<{ command: string; startedAt: string; finishedAt: string; output: string }>((resolve, reject) => {
     const child = spawn(executable, args, { cwd: root, windowsHide: true, env: { ...process.env, PYTHONPATH: path.join(root, "src") } });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30 * 60 * 1000);
     let output = "";
     child.stdout.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-16000); });
     child.stderr.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-16000); });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve({ command, startedAt, finishedAt: new Date().toISOString(), output: output.trim() }) : reject(new Error(`${command} 执行失败（退出码 ${code}）：${output.slice(-1500)}`)));
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (code) => { clearTimeout(timer); if (code === 0) resolve({ command, startedAt, finishedAt: new Date().toISOString(), output: output.trim() }); else reject(new Error(`${command} 执行失败（退出码 ${code}）：${output.slice(-1500)}`)); });
   });
 }
 

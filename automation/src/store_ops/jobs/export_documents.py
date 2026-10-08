@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..report_versions import current_reports
+
 import json
 import os
 import re
@@ -275,7 +277,7 @@ def run(config: ProjectConfig, db: StateDb, request_path: Path) -> dict:
     try:
         request = _read_json(request_path)
         market, document_types, entries = _validate_request(request)
-        master_path = config.runtime_root / "reports" / "document_master.json"
+        master_path = current_reports(config.runtime_root / "reports") / "document_master.json"
         if not master_path.exists():
             raise FileNotFoundError("缺少 document_master.json，请先运行 build-document-master")
         master = _read_json(master_path)

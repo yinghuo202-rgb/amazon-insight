@@ -44,6 +44,21 @@ jobs:
         working-directory: automation/integrations/amazon-insight
         run: pnpm install --frozen-lockfile
 
+      - name: Validate NAS worker Compose overlay
+        env:
+          IMAGE_REPOSITORY: ghcr.io/yinghuo202-rgb/amazon-insight
+          IMAGE_TAG: v1.4.0
+          CONTAINER_NAME: measureman-compose-check
+          APP_PORT: "3001"
+          PUBLIC_APP_URL: https://example.invalid
+          DATABASE_URL: file:/data/app/selection.db
+          SECRET_KEY: compose-validation-placeholder-not-a-secret
+          RUNTIME_PATH: ./data/runtime
+          SOURCE_DATA_PATH: ./data/sources
+          CLOUDFLARE_IMAGE: cloudflare/cloudflared:latest
+          CLOUDFLARE_CONTAINER_NAME: measureman-tunnel-check
+        run: docker compose -f docker/nas/measureman-commerce-online-named-volume.yml -f docker/nas/measureman-data-worker.override.yml config --quiet
+
       - name: Verify web application
         working-directory: automation/integrations/amazon-insight
         run: |
@@ -52,6 +67,9 @@ jobs:
           pnpm build
 
       - name: Verify store operations
+        env:
+          MEASUREMAN_TEST_NODE: node
+          MEASUREMAN_TEST_COMPILED_WORKER: ${{ github.workspace }}/automation/integrations/amazon-insight/.next/standalone/worker/worker/data-worker.js
         run: |
           python -m pip install -e automation
           python -m unittest discover -s automation/tests -v

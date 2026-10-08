@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { contentWorkflowSchema, inventoryDashboardSchema, newProductResearchSchema, productCatalogSchema, profitabilityDataSchema, purchasePlanSchema, variantCatalogSchema, type InventoryDashboardData } from "@/lib/inventory/contracts";
@@ -9,17 +10,40 @@ import { applyProductCostOverrides, listProductCostOverrides } from "@/lib/inven
 import { applyResearchCandidateOverrides } from "@/lib/inventory/new-product-research";
 import { listResearchCandidateOverrides } from "@/lib/inventory/new-product-research-store";
 import { buildOperatingModel } from "@/lib/inventory/dashboard-view-model";
+import { publishedReportPath, withReportVersion } from "@/lib/inventory/report-version";
+import { operatingPerformanceSchema } from "@/lib/inventory/operating-performance";
+import { listOperatingRuleOverrides } from "@/lib/inventory/operating-rules-store";
 
 export async function loadOperatingModel() {
-  const [us, ca, profit, variants] = await Promise.allSettled([
-    loadInventoryDashboardData("US"), loadInventoryDashboardData("CA"), loadProfitabilityData(), loadVariantCatalogData(),
+  return withReportVersion(async () => {
+  const [us, ca, profit, variants, performance] = await Promise.allSettled([
+    loadInventoryDashboardData("US"), loadInventoryDashboardData("CA"), loadProfitabilityData(), loadVariantCatalogData(), loadOperatingPerformanceData(),
   ]);
   const warnings: string[] = [];
   if (us.status === "rejected") warnings.push("US 库存读取失败，请在业务后台检查报告文件。");
   if (ca.status === "rejected") warnings.push("CA 库存读取失败，请在业务后台检查报告文件。");
   if (profit.status === "rejected") warnings.push("销售和利润报告读取失败，经营指标暂不可用。");
   if (variants.status === "rejected") warnings.push("父子体映射读取失败，暂按 SKU 展示。");
-  return buildOperatingModel([...(us.status === "fulfilled" ? [us.value] : []), ...(ca.status === "fulfilled" ? [ca.value] : [])], profit.status === "fulfilled" ? profit.value : undefined, variants.status === "fulfilled" ? variants.value : undefined, warnings);
+  if (performance.status === "rejected") warnings.push("积加已发布经营报告读取失败；当前回显旧 Excel 来源，不能作为最新数据，请检查发布版本。");
+  const model = buildOperatingModel([...(us.status === "fulfilled" ? [us.value] : []), ...(ca.status === "fulfilled" ? [ca.value] : [])], profit.status === "fulfilled" ? profit.value : undefined, variants.status === "fulfilled" ? variants.value : undefined, warnings, new Date(), performance.status === "fulfilled" ? performance.value ?? undefined : undefined);
+  const publishedPath = await publishedReportPath(runtimePath("reports", "gerpgo-performance.json"));
+  const versionId = path.basename(path.dirname(path.dirname(publishedPath)));
+  model.publishedVersion = /^data-/.test(versionId) ? versionId : null;
+  try { model.ruleOverrides = listOperatingRuleOverrides(); }
+  catch { model.rulesAvailable = false; model.warnings.push("提醒配置读取失败，经营提醒暂停；事实数据仍可查看，请检查运营数据库。"); }
+  model.dataVersion = createHash("sha256").update(JSON.stringify([new Date().toISOString().slice(0, 10), model.publishedVersion, model.generatedAt, model.rows, model.snapshots, model.ruleOverrides, model.rulesAvailable])).digest("hex");
+  return model;
+  });
+}
+
+export async function loadOperatingPerformanceData() {
+  try {
+    const data = await loadJsonReport(runtimePath("reports", "gerpgo-performance.json"), input => operatingPerformanceSchema.parse(input));
+    const name = process.env.GERPGO_STORE_NAME?.trim().toLowerCase();
+    if (name && data.storeScope?.storeName.trim().toLowerCase() !== name) throw new Error("积加发布报告未限定当前店铺范围。");
+    return data;
+  }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
 
 export type OperationsMarket = "US" | "CA";

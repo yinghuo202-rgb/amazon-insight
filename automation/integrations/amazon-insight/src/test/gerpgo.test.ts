@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { checkGerpgoConnection, getGerpgoConfigurationStatus } from "@/lib/inventory/gerpgo";
+import { checkGerpgoConnection, createGerpgoClient, getGerpgoConfigurationStatus } from "@/lib/inventory/gerpgo";
 
 const env = { GERPGO_APP_ID: "test-app-id", GERPGO_APP_KEY: "test-private-key" };
 const token = { code: 200, data: { accessToken: "test-private-token", expiresIn: 86400 } };
@@ -8,6 +8,18 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 const mockFetch = (...responses: Response[]) => vi.fn<typeof fetch>().mockImplementation(async () => responses.shift()!);
 
 describe("GERPgo read-only connection check", () => {
+  it("renews an expiring token once, keeping it inside the server client", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = mockFetch(json({ code: 200, data: { accessToken: "old-token", expiresIn: 10 } }), json({ code: 200, data: { accessToken: "new-token", expiresIn: 10 } }), json({ code: 200, data: { rows: [] } }));
+      const client = await createGerpgoClient(env, fetcher);
+      vi.setSystemTime(Date.now() + 9000);
+      await client.post("/purchase/goods/product/page", { page: 1, pagesize: 100 });
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.calls[2][1]?.headers).toMatchObject({ accessToken: "new-token" });
+      expect(JSON.stringify(client)).not.toContain("new-token");
+    } finally { vi.useRealTimers(); }
+  });
   it("returns only safe configuration status, never credentials", () => {
     expect(getGerpgoConfigurationStatus({}).configured).toBe(false);
     const result = getGerpgoConfigurationStatus(env);

@@ -1,0 +1,62 @@
+# Merge with the existing NAS Compose. This is NOT a replacement file.
+# Keep the existing project name, account database mount, credentials and tunnel.
+# This variant expects existing operations_data/runtime_output named volumes.
+services:
+  app:
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.0}"
+    environment:
+      GERPGO_STORE_NAME: "${GERPGO_STORE_NAME:-MEASUREMAN}"
+      STORE_OPS_UPLOAD_ROOT: /data/uploads
+      STORE_OPS_SNAPSHOT_ROOT: /data/snapshots
+    volumes:
+      - "${RUNTIME_PATH:?preserve the existing runtime path}/reports:/data/imported-reports:ro"
+      - runtime_reports:/data/runtime/reports
+      - runtime_incoming:/data/runtime/incoming
+      - upload_data:/data/uploads
+      - data_snapshots:/data/snapshots
+
+  data-worker:
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.0}"
+    user: "0:0"
+    restart: unless-stopped
+    init: true
+    entrypoint: ["node"]
+    command: ["/app/worker/worker/data-worker.js"]
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?keep the existing secret}"
+      GERPGO_APP_ID: "${GERPGO_APP_ID:-}"
+      GERPGO_APP_KEY: "${GERPGO_APP_KEY:-}"
+      GERPGO_STORE_NAME: "${GERPGO_STORE_NAME:-MEASUREMAN}"
+      GERPGO_BASE_URL: "${GERPGO_BASE_URL:-https://open.gerpgo.com/api/open}"
+      GERPGO_SIGNING_ENABLED: "${GERPGO_SIGNING_ENABLED:-true}"
+      GERPGO_TIMEOUT_MS: "${GERPGO_TIMEOUT_MS:-10000}"
+      STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
+      STORE_OPS_DATA_ROOT: /data/sources
+      STORE_OPS_RUNTIME_ROOT: /data/runtime
+      STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
+      STORE_OPS_PYTHON: /opt/store-ops-venv/bin/python
+      STORE_OPS_UPLOAD_ROOT: /data/uploads
+      STORE_OPS_SNAPSHOT_ROOT: /data/snapshots
+    volumes:
+      - operations_data:/data/runtime/db
+      - runtime_output:/data/runtime/output
+      - runtime_reports:/data/runtime/reports
+      - runtime_incoming:/data/runtime/incoming
+      - upload_data:/data/uploads
+      - data_snapshots:/data/snapshots
+      - "${SOURCE_DATA_PATH:?preserve the existing source path}:/data/sources:ro"
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  operations_data:
+  runtime_output:
+  runtime_reports:
+  runtime_incoming:
+  upload_data:
+  data_snapshots:

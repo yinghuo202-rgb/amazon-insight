@@ -1,7 +1,7 @@
 "use client";
 import { useState, type ReactNode } from "react";
 import { calculateProfitScenario, cartonFreight, matchFbaFee, matchProfitFeeRule, type ProfitFeeRule } from "@/lib/inventory/profit-scenario";
-type Product = { sku: string; name: string; category: string; costUsd: number | null; costRmb: number | null; cartonQty: number | null; weightG: number | null; dimensions: string; cartonDimensions: { length: number | null; width: number | null; height: number | null } };
+type Product = { selectionId?: string; source?: string; sku: string; name: string; category: string; costUsd: number | null; costRmb: number | null; cartonQty: number | null; weightG: number | null; dimensions: string; cartonDimensions: { length: number | null; width: number | null; height: number | null } };
 const numeric = (value: string) => value.trim() === "" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 export function NewProductProfitCalculator({ products, rules = [] }: { products: Product[]; rules?: ProfitFeeRule[] }) {
   const [market, setMarket] = useState("US");
@@ -26,10 +26,10 @@ export function NewProductProfitCalculator({ products, rules = [] }: { products:
   const complete = category !== "" && values.every(value => value !== null);
   const result = complete ? calculateProfitScenario({ price: values[0]!, cost: values[1]!, referralPercent: values[2]!, fba: values[3]!, freight: values[4]!, adPercent: values[5]!, returnPercent: values[6]! }) : null;
   const money = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency }).format(value);
-  const product = products.find(item => item.sku === sku);
+  const product = products.find(item => (item.selectionId || item.sku) === sku);
   function chooseSku(value: string) {
     setSku(value);
-    const item = products.find(product => product.sku === value);
+    const item = products.find(product => (product.selectionId || product.sku) === value);
     setManual({ referral: "", fba: "", rate: "" });
     if (!item) { setCost(""); setCarton({ length: "", width: "", height: "", qty: "" }); setUnit({ length: "", width: "", height: "", weightG: "" }); return; }
     setCategory(item.category || "");
@@ -45,9 +45,9 @@ export function NewProductProfitCalculator({ products, rules = [] }: { products:
         <Field label="站点"><select aria-label="站点" value={market} onChange={event => { setMarket(event.target.value); setCategory(""); setPrice(""); setCost(""); setManual({ referral: "", fba: "", rate: "" }); }} className={inputClass}><option value="US">US · USD</option><option value="CA">CA · CAD</option><option value="MX">MX · MXN</option></select></Field>
         <Field label="类目"><select aria-label="类目" value={category} onChange={event => { setCategory(event.target.value); setManual({ referral: "", fba: "", rate: "" }); }} className={inputClass}><option value="">选择类目</option>{categories.map(item => <option key={item}>{item}</option>)}<option value="OTHER">其他 / 新类目</option></select></Field>
       </div>
-      <Field label="选择相似产品，带入成本与包装"><select value={sku} onChange={event => chooseSku(event.target.value)} className={inputClass}><option value="">新产品，手动填写</option>{products.map(item => <option key={item.sku} value={item.sku}>{item.sku} · {item.name}</option>)}</select></Field>
+      <Field label="选择相似产品，带入成本与包装"><select value={sku} onChange={event => chooseSku(event.target.value)} className={inputClass}><option value="">新产品，手动填写</option>{products.map(item => <option key={item.selectionId || item.sku} value={item.selectionId || item.sku}>{item.source || "产品"} · {item.sku || "未建立SKU"} · {item.name}</option>)}</select></Field>
       <div className="grid grid-cols-2 gap-3"><NumberField label={`售价（${currency}）`} value={price} onChange={setPrice} /><NumberField label={`采购成本 / 件（${currency}）`} value={cost} onChange={setCost} /></div>
-      {product && <p className="text-xs leading-6 text-slate-500">资料来自 {product.sku} 产品表。{market !== "US" && "采购成本需按所选币种确认，不自动使用旧 USD 成本。"}内部产品类目不一定等于 Amazon 佣金类目，请核对映射。</p>}
+      {product && <p className="text-xs leading-6 text-slate-500">资料来自 {product.source || "产品目录"}。{product.costRmb !== null && `人民币采购成本参考 ¥${product.costRmb}；需按所选币种确认成本，不采用猜测汇率。`}{market !== "US" && "采购成本需按所选币种确认，不自动使用旧 USD 成本。"}内部产品类目不一定等于 Amazon 佣金类目，请核对映射。</p>}
       <div className="border-t border-slate-100 pt-5"><h2 className="text-sm font-semibold">箱规与头程</h2><p className="mt-1 text-xs leading-6 text-slate-500">体积头程 = 长 × 宽 × 高 ÷ 1,000,000 × 每立方费率 ÷ 装箱件数。</p><div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">{(["length", "width", "height", "qty"] as const).map((key, i) => <NumberField key={key} label={["长 cm", "宽 cm", "高 cm", "件 / 箱"][i]} value={carton[key]} onChange={value => setCarton({ ...carton, [key]: value })} />)}</div>
         <div className="mt-3 grid grid-cols-2 gap-3"><NumberField label={`头程费率（${currency}/m³）`} value={manual.rate} onChange={value => setManual({ ...manual, rate: value })} placeholder={rule ? String(rule.freightPerM3) : "需填写或配置预设"} /><div className="rounded-lg bg-[#f5f5f7] p-3"><p className="text-xs text-slate-500">自动分摊头程 / 件</p><p className="mt-1 font-semibold text-[#1d1d1f]">{money(freight)}</p></div></div>
       </div>

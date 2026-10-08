@@ -1,3 +1,4 @@
+from store_ops.report_versions import current_reports
 import json
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ class ReportSeedTests(unittest.TestCase):
 
             actions = seed_reports(imported, runtime)
 
-            result = json.loads((runtime / "new_product_research.json").read_text())
+            result = json.loads((current_reports(runtime) / "new_product_research.json").read_text())
             self.assertEqual(len(result["candidates"]), 143)
             self.assertEqual(actions, ["upgraded:new_product_research.json:5->143"])
 
@@ -34,7 +35,7 @@ class ReportSeedTests(unittest.TestCase):
             (imported / "new_product_research.json").write_text(json.dumps({"candidates": [{"sku": str(index)} for index in range(5)]}), encoding="utf-8")
 
             self.assertEqual(seed_reports(imported, runtime), [])
-            result = json.loads((runtime / "new_product_research.json").read_text())
+            result = json.loads((current_reports(runtime) / "new_product_research.json").read_text())
             self.assertEqual(len(result["candidates"]), 10)
 
     def test_backfills_only_missing_shipment_history_rows(self):
@@ -51,7 +52,7 @@ class ReportSeedTests(unittest.TestCase):
 
             actions = seed_reports(imported, runtime)
 
-            result = json.loads((runtime / "document_master.json").read_text())
+            result = json.loads((current_reports(runtime) / "document_master.json").read_text())
             self.assertEqual(len(result["shipmentHistory"]), 2)
             self.assertEqual(result["shipmentHistory"][0]["quantity"], 10)
             self.assertEqual(result["shipmentHistory"][1]["quantity"], 20)

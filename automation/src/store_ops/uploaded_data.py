@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from dataclasses import replace
 import os
 import re
 import shutil
+from uuid import uuid4
+from urllib.parse import urlsplit
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,7 @@ from .jobs.product_catalog import _extract_product_images, _merge_product_detail
 from .replenishment import ReplenishmentParameters, calculate_replenishment
 from .sku import SkuNormalizer
 from .jobs.profitability_snapshot import run as run_profitability_snapshot
+from .report_versions import current_reports, report_transaction, restore_reports
 from .jobs.sales_history import run as run_sales_history
 
 
@@ -136,13 +140,26 @@ def _inventory_preview(workbook) -> dict[str, Any]:
         valid = 0
         total_fba = 0
         total_local = 0
+        skipped = {"emptySku": 0, "invalidSku": 0}
+        seen = set()
+        duplicates = []
         for row in rows:
-            if sku_index is None or not _text(row[sku_index] if len(row) > sku_index else None):
+            sku = _text(row[sku_index] if sku_index is not None and len(row) > sku_index else None).upper()
+            if not sku:
+                skipped["emptySku"] += 1
                 continue
+            if not re.fullmatch(r"[A-Z]{2}\d{3}", sku):
+                skipped["invalidSku"] += 1
+                continue
+            if sku in seen:
+                duplicates.append(sku)
+            seen.add(sku)
             valid += 1
             total_fba += int(_number(row[fba_index] if fba_index is not None and len(row) > fba_index else None) or 0)
             total_local += int(_number(row[local_index] if local_index is not None and len(row) > local_index else None) or 0)
-        markets[market] = {"sheet": sheet_name, "skuCount": valid, "fbaUnits": total_fba, "domesticUnits": total_local, "hasRecentSales": sales_index is not None}
+        markets[market] = {"sheet": sheet_name, "skuCount": valid, "uniqueSkuCount": len(seen), "duplicateSkus": duplicates,
+                           "skipped": skipped, "fbaUnits": total_fba, "domesticUnits": total_local, "hasRecentSales": sales_index is not None,
+                           "domesticBasis": "工厂库存及已下订单合计，未拆分现货与订单"}
     return {"markets": markets, "impacts": ["运营总览", "库存视图", "采购计划"]}
 
 
@@ -242,6 +259,9 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
                 item.update({"type": kind, "label": TYPE_LABELS[kind], "publishable": kind in {"inventory", "research", "advertising", "product_details", "shipment", "sales_us", "sales_ca", "sales_mx"}, "sheets": workbook.sheetnames})
                 if kind == "inventory":
                     item["preview"] = _inventory_preview(workbook)
+                    if any(market["duplicateSkus"] for market in item["preview"]["markets"].values()):
+                        item["publishable"] = False
+                        warnings.append(f"{path.name}: 同一站点存在重复 SKU，须先核验后发布")
                 elif kind == "research":
                     item["preview"] = _research_preview(workbook)
                 elif kind == "shipment":
@@ -255,6 +275,7 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
                 workbook.close()
         except Exception as error:
             item["error"] = str(error)
+            item["publishable"] = False
             warnings.append(f"{path.name}: {error}")
         files.append(item)
     recognized = sum(1 for item in files if item["type"] != "unknown")
@@ -269,6 +290,63 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
     }
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
+
+
+def receive_wps_download(config: ProjectConfig, source: Path, share_url: str) -> dict[str, Any]:
+    """Receive a browser download, without reading or moving browser credentials."""
+    database = StateDb(Path(os.environ.get("STORE_OPS_STATE_DB") or config.runtime_root / "db" / "operations.sqlite3"))
+    database.init()
+    run_id = database.start_run("receive-wps-download")
+    try:
+        url = urlsplit(share_url)
+        if url.scheme != "https" or url.netloc not in {"www.kdocs.cn", "kdocs.cn"} or not re.fullmatch(r"/l/[a-zA-Z0-9]+/?", url.path) or url.query or url.fragment:
+            raise ValueError("需要有效的金山文档 HTTPS 分享地址")
+        if source.suffix.lower() not in {".xlsx", ".xlsm"} or not source.is_file() or not 0 < source.stat().st_size <= 300 * 1024 * 1024:
+            raise ValueError("下载文件须为不超过 300 MB 的完整 Excel 文件")
+        original_hash = _sha256(source)
+        root = Path(os.environ.get("STORE_OPS_UPLOAD_ROOT") or config.runtime_root / "uploads")
+        batch = root / f"batch-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid4().hex[:8]}"
+        directory = batch / "source"
+        directory.mkdir(parents=True, mode=0o700)
+        target = directory / source.name
+        shutil.copy2(source, target)
+        target.chmod(0o600)
+        if _sha256(target) != original_hash or _sha256(source) != original_hash:
+            raise ValueError("下载文件在接收期间发生变化，请重新下载")
+        result = inspect_batch(batch)
+        if len(result["files"]) != 1 or result["files"][0].get("error") or result["files"][0]["type"] not in {"inventory", "research"}:
+            raise ValueError("WPS 下载内容未识别为库存或新品表，请检查工作表结构")
+        result["source"] = {"kind": "wps-browser-download", "shareUrl": share_url, "capturedAt": datetime.now(timezone.utc).isoformat(), "businessAsOf": None,
+                            "sha256": original_hash, "authentication": "existing-browser-session"}
+        if result["files"][0]["type"] == "inventory":
+            book = openpyxl.load_workbook(target, read_only=True, data_only=True, keep_links=False)
+            try:
+                for market, preview in result["files"][0]["preview"]["markets"].items():
+                    filename = "inventory_dashboard.json" if market == "US" else "inventory_dashboard.ca.json"
+                    published = current_reports(config.runtime_root / "reports") / filename
+                    existing = {row["sku"] for row in json.loads(published.read_text())["rows"]} if published.exists() else set()
+                    rows = book[preview["sheet"]].iter_rows(values_only=True)
+                    sku_i = _field(_header_map(next(rows)), "SKU")
+                    supplied = {_text(row[sku_i]).upper() for row in rows if sku_i is not None and re.fullmatch(r"[A-Z]{2}\d{3}", _text(row[sku_i]).upper())}
+                    unmatched = sorted(supplied - existing)
+                    preview.update(matchedSkuCount=len(supplied & existing), unmappedSkuCount=len(unmatched), unmappedSkuPreview=unmatched[:20])
+                    if unmatched:
+                        result["status"] = "needs_review"
+                        result["warnings"].append(f"{market} 有 {len(unmatched)} 个 SKU 不在现有库存模型；完整源表已保存，但这些 SKU 仍需资料映射，不会悄悄忽略为已更新。")
+            finally:
+                book.close()
+        result["warnings"].append("下载时间不是业务截止日期；请核验表内日期后确认发布。浏览器登录态未复制到 NAS。")
+        _atomic_json(batch / "manifest.json", result)
+        database.finish_run(run_id, "completed", summary={"batchId": batch.name, "sha256": original_hash, "fileCount": 1})
+        return result
+    except Exception as error:
+        message = str(error) if isinstance(error, ValueError) else "WPS 下载接收失败，请检查文件和运行目录权限"
+        database.add_exception(run_id, category="wps-import", severity="high", source="wps", raw=None, base=None, cell=None, details={"reason": message})
+        database.commit()
+        database.finish_run(run_id, "failed", error=message)
+        raise ValueError(message) from None
+    finally:
+        database.close()
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -293,12 +371,13 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
     updated: list[str] = []
     try:
         snapshot_date = _inventory_snapshot_date(path)
-        sales_month = _completed_month(snapshot_date)
         for market, sheet_name, report_name in (("US", "库存规划", "inventory_dashboard.json"), ("CA", "加拿大库存计划 ", "inventory_dashboard.ca.json")):
             report_path = reports_dir / report_name
             if sheet_name not in workbook.sheetnames or not report_path.exists():
                 continue
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            previous_fba_date = report.get("snapshots", {}).get("fbaDate", str(report.get("generatedAt", ""))[:10])
+            snapshot_date = _inventory_snapshot_date(path) if re.search(r"20\d{6}", path.name) else date.fromisoformat(previous_fba_date)
             rows = workbook[sheet_name].iter_rows(values_only=True)
             indexes = _header_map(next(rows))
             sku_i = _field(indexes, "SKU")
@@ -307,10 +386,13 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
             network_i = _field(indexes, "FBA+在途库存")
             local_i = _field(indexes, "工厂库存及已下订单")
             sales_i = _field(indexes, "最近月销售", "最近月销")
+            reference_i = _field(indexes, "参考月销")
             incoming: dict[str, tuple[Any, ...]] = {}
             for row in rows:
                 sku = _text(row[sku_i] if sku_i is not None and len(row) > sku_i else None).upper()
-                if sku:
+                if re.fullmatch(r"[A-Z]{2}\d{3}", sku):
+                    if sku in incoming:
+                        raise ValueError(f"{sheet_name} 存在重复 SKU：{sku}")
                     incoming[sku] = row
             raw_parameters = report.setdefault("parameters", {})
             raw_parameters["targetCoverDays"] = 90
@@ -336,15 +418,15 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
                     item["inTransitInventory"] = max(0, int(network_value) - int(item.get("fbaSellable", 0) or 0))
                 else:
                     item["inTransitInventory"] = max(0, int(item.get("inTransitInventory", item.get("awdInbound", 0)) or 0))
-                if local_i is not None:
-                    item["localInventory"] = max(0, int(_number(row[local_i]) or 0))
+                if local_i is not None and _number(row[local_i]) is not None:
+                    item["localInventory"] = max(0, int(_number(row[local_i])))
                     item["domesticSupplyTotal"] = item["localInventory"] + int(item.get("pendingOrderQty", 0))
                 if sales_i is not None and _number(row[sales_i]) is not None:
                     units = max(0, int(_number(row[sales_i]) or 0))
-                    item["dailySales"] = units / 30
-                    history = [entry for entry in item.get("salesHistoryByMonth", []) if entry.get("month") != sales_month]
-                    item["salesHistoryByMonth"] = [*history, {"month": sales_month, "units": units}]
-                    item["salesByMonth"] = [{"month": sales_month, "units": units}]
+                    # A planning column without an explicit sales period is not historical evidence.
+                    item["planningMonthlySales"] = units
+                if reference_i is not None and _number(row[reference_i]) is not None:
+                    item["referenceMonthlySales"] = max(0, int(_number(row[reference_i])))
                 decision = calculate_replenishment(
                     daily_sales=float(item.get("dailySales", 0) or 0),
                     fba_sellable=int(item.get("fbaSellable", 0) or 0),
@@ -371,7 +453,15 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
             snapshots["ageDays"] = max(0, (date.today() - latest_snapshot).days)
             snapshots.setdefault("staleAfterDays", 14)
             snapshots["isStale"] = snapshots["ageDays"] > int(snapshots["staleAfterDays"])
-            report.setdefault("sales", {})["windowMonths"] = [sales_month]
+            if not re.search(r"20\d{6}", path.name):
+                # A fresh download must never make an undated business snapshot look fresh.
+                snapshots["businessDateUnknown"] = True
+                snapshots["fbaDate"] = previous_fba_date
+                snapshots["ageDays"] = max(0, (date.today() - date.fromisoformat(previous_fba_date)).days)
+                snapshots["aligned"] = False
+                snapshots["isStale"] = True
+            else:
+                snapshots.pop("businessDateUnknown", None)
             summary = report.setdefault("summary", {})
             summary["fbaSellable"] = sum(int(item.get("fbaSellable", 0)) for item in report["rows"])
             summary["inTransitInventory"] = sum(int(item.get("inTransitInventory", 0)) for item in report["rows"])
@@ -380,6 +470,10 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
             summary["suggestedProductionQty"] = sum(int(item.get("suggestedProductionQty", 0)) for item in report["rows"])
             summary["suggestedShipmentQty"] = sum(int(item.get("suggestedShipmentQty", 0)) for item in report["rows"])
             report.setdefault("localRefresh", {})["uploadedBatch"] = path.name
+            existing = {_text(item.get("sku")).upper() for item in report.get("rows", [])}
+            report["localRefresh"]["sourceSkuCount"] = len(incoming)
+            report["localRefresh"]["matchedSkuCount"] = len(existing & incoming.keys())
+            report["localRefresh"]["unmappedSkus"] = sorted(incoming.keys() - existing)
             _atomic_json(report_path, report)
             updated.append(report_name)
     finally:
@@ -536,7 +630,7 @@ def _patch_advertising(path: Path, reports_dir: Path) -> list[str]:
     return updated
 
 
-def _patch_product_details(path: Path, reports_dir: Path) -> list[str]:
+def _patch_product_details(path: Path, reports_dir: Path, image_output: Path | None = None) -> list[str]:
     report_path = reports_dir / "product_catalog.json"
     if not report_path.exists():
         return []
@@ -550,7 +644,7 @@ def _patch_product_details(path: Path, reports_dir: Path) -> list[str]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     existing = {str(item.get("sku")): item for item in report.get("items", [])}
     merged = _merge_product_details(current, existing)
-    image_output = reports_dir.parent / "output" / "product-images"
+    image_output = image_output or reports_dir.parent / "output" / "product-images"
     images = _extract_product_images(path, sheet_name, "B", image_output, normalizer)
     for sku, image in images.items():
         if sku in merged:
@@ -617,19 +711,32 @@ def _patch_shipments(source_dir: Path, reports_dir: Path, uploaded_names: list[s
 
 
 def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
+    original = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+    if original.get("status") == "published":
+        raise ValueError("该批次已经发布")
+    for item in original["files"]:
+        if Path(item["name"]).name != item["name"] or _sha256(batch_dir / "source" / item["name"]) != item["sha256"]:
+            raise ValueError("预览后的源文件已变化，请重新上传解析")
+    with report_transaction(reports_dir, snapshots_dir) as (stage, version):
+        previous_incoming = current_reports(reports_dir).parent / "incoming"
+        if previous_incoming.is_dir():
+            shutil.copytree(previous_incoming, stage.parent / "incoming", dirs_exist_ok=True)
+        manifest = _publish_staged_batch(batch_dir, stage, version, reports_dir.parent / "output" / "product-images")
+    (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (snapshots_dir / version / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, image_output: Path | None = None) -> dict[str, Any]:
     manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
-    version = f"data-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{batch_dir.name[-6:]}"
-    snapshot = snapshots_dir / version / "reports"
-    snapshot.mkdir(parents=True, exist_ok=False)
-    if reports_dir.exists():
-        for path in reports_dir.glob("*.json"):
-            shutil.copy2(path, snapshot / path.name)
-    reports_dir.mkdir(parents=True, exist_ok=True)
     updated: list[str] = []
     skipped: list[str] = []
     shipment_names: list[str] = []
     monthly_sources: list[Path] = []
     for item in manifest["files"]:
+        if not item.get("publishable"):
+            skipped.append(item["name"])
+            continue
         source = batch_dir / "source" / item["name"]
         if item["type"] == "research":
             _atomic_json(reports_dir / "new_product_research.json", _research_report(source))
@@ -639,7 +746,7 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
         elif item["type"] == "advertising":
             updated.extend(_patch_advertising(source, reports_dir))
         elif item["type"] == "product_details":
-            updated.extend(_patch_product_details(source, reports_dir))
+            updated.extend(_patch_product_details(source, reports_dir, image_output))
         elif item["type"] == "shipment":
             shipment_names.append(item["name"])
         elif item["type"] in {"sales_us", "sales_ca", "sales_mx"}:
@@ -658,6 +765,7 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
         automation_root = Path(os.environ.get("STORE_OPS_AUTOMATION_ROOT", "")).expanduser() if os.environ.get("STORE_OPS_AUTOMATION_ROOT") else Path(__file__).resolve().parents[2]
         config = load_config(automation_root / "config" / "project.json")
         database = StateDb(config.runtime_root / "db" / "operations.sqlite3")
+        config = replace(config, runtime_root=reports_dir.parent)
         database.init()
         previous_profitability_root = os.environ.get("STORE_OPS_PROFITABILITY_ROOT")
         os.environ["STORE_OPS_PROFITABILITY_ROOT"] = str(reports_dir.parent / "incoming" / "monthly-sales-reports")
@@ -672,38 +780,23 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> di
                 os.environ["STORE_OPS_PROFITABILITY_ROOT"] = previous_profitability_root
         updated.extend(["profitability.json", "inventory_dashboard.json", "inventory_dashboard.ca.json"])
     manifest.update({"status": "published", "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataVersion": version, "updatedReports": sorted(set(updated)), "stagedFiles": skipped})
-    (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    (snapshots_dir / version / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
 
 def restore_version(version: str, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
-    if not re.fullmatch(r"data-\d{8}-\d{6}-[a-zA-Z0-9-]{1,20}", version):
-        raise ValueError("数据版本编号不正确")
-    source = snapshots_dir / version / "reports"
-    if not source.is_dir():
-        raise FileNotFoundError(f"数据版本不存在: {version}")
-    backup = snapshots_dir / f"data-{datetime.now().strftime('%Y%m%d-%H%M%S')}-rollback" / "reports"
-    backup.mkdir(parents=True, exist_ok=False)
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    for path in reports_dir.glob("*.json"):
-        shutil.copy2(path, backup / path.name)
-    restored: list[str] = []
-    for path in source.glob("*.json"):
-        temporary = reports_dir / f"{path.name}.tmp"
-        shutil.copy2(path, temporary)
-        os.replace(temporary, reports_dir / path.name)
-        restored.append(path.name)
-    return {"status": "restored", "dataVersion": version, "restoredReports": sorted(restored), "restoredAt": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    return restore_reports(version, reports_dir, snapshots_dir)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["inspect", "publish", "restore"])
+    parser.add_argument("command", choices=["inspect", "publish", "restore", "receive-wps"])
     parser.add_argument("--batch-dir")
     parser.add_argument("--reports-dir")
     parser.add_argument("--snapshots-dir")
     parser.add_argument("--version")
+    parser.add_argument("--source-file")
+    parser.add_argument("--share-url")
+    parser.add_argument("--config", default="config/project.json")
     args = parser.parse_args()
     if args.command == "inspect":
         if not args.batch_dir:
@@ -713,6 +806,10 @@ def main() -> int:
         if not args.batch_dir or not args.reports_dir or not args.snapshots_dir:
             parser.error("publish requires --batch-dir, --reports-dir and --snapshots-dir")
         payload = publish_batch(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir))
+    elif args.command == "receive-wps":
+        if not args.source_file or not args.share_url:
+            parser.error("receive-wps requires --source-file and --share-url")
+        payload = receive_wps_download(load_config(args.config), Path(args.source_file), args.share_url)
     else:
         if not args.version or not args.reports_dir or not args.snapshots_dir:
             parser.error("restore requires --version, --reports-dir and --snapshots-dir")

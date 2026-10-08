@@ -30,6 +30,7 @@ export type ImportBatch = {
   dataVersion?: string;
   updatedReports?: string[];
   stagedFiles?: string[];
+  source?: { kind: "wps-browser-download"; shareUrl: string; capturedAt: string; businessAsOf: string | null; sha256: string; authentication: "existing-browser-session" };
 };
 
 export type DataVersion = { version: string; createdAt: string; fileCount: number };

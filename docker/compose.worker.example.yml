@@ -1,0 +1,34 @@
+# Merge this service into the EXISTING root/NAS Compose project.
+# It is not a replacement Compose file and must use the app's existing mounts.
+services:
+  data-worker:
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:?use the same fixed tested tag as app}"
+    restart: unless-stopped
+    init: true
+    entrypoint: ["node"]
+    command: ["/app/worker/worker/data-worker.js"]
+    env_file:
+      - .env
+    environment:
+      SECRET_KEY: "${SECRET_KEY:?preserve the existing app secret}"
+      STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
+      STORE_OPS_DATA_ROOT: /data/sources
+      STORE_OPS_RUNTIME_ROOT: /data/runtime
+      STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
+      STORE_OPS_PYTHON: /opt/store-ops-venv/bin/python
+      GERPGO_APP_ID: "${GERPGO_APP_ID:-}"
+      GERPGO_APP_KEY: "${GERPGO_APP_KEY:-}"
+      GERPGO_BASE_URL: "${GERPGO_BASE_URL:-https://open.gerpgo.com/api/open}"
+      GERPGO_SIGNING_ENABLED: "${GERPGO_SIGNING_ENABLED:-true}"
+      GERPGO_TIMEOUT_MS: "${GERPGO_TIMEOUT_MS:-10000}"
+      GERPGO_STORE_NAME: "${GERPGO_STORE_NAME:-MEASUREMAN}"
+    volumes:
+      - "${RUNTIME_PATH:-./data/runtime}:/data/runtime"
+      - "${SOURCE_DATA_PATH:-./data/sources}:/data/sources:ro"
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true

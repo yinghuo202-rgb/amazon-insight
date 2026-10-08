@@ -1,3 +1,4 @@
+from store_ops.report_versions import current_reports
 import json
 import tempfile
 import unittest
@@ -5,7 +6,9 @@ from pathlib import Path
 
 import openpyxl
 
-from store_ops.uploaded_data import inspect_batch, publish_batch, restore_version
+from store_ops.uploaded_data import inspect_batch, publish_batch, restore_version, receive_wps_download
+from store_ops.config import load_config
+from dataclasses import replace
 
 
 def dashboard(market: str):
@@ -51,7 +54,7 @@ class UploadedDataTests(unittest.TestCase):
             self.assertEqual(preview["files"][0]["preview"]["shipmentEventCount"], 1)
             published = publish_batch(batch, reports, snapshots)
             self.assertEqual(published["updatedReports"], ["document_master.json"])
-            report = json.loads((reports / "document_master.json").read_text())
+            report = json.loads((current_reports(reports) / "document_master.json").read_text())
             self.assertEqual(report["coverage"]["shipmentHistoryEvents"], 1)
             self.assertEqual(report["shipmentHistory"][0]["sku"], "MA001")
             self.assertEqual(report["shipmentHistory"][0]["quantity"], 120)
@@ -83,18 +86,40 @@ class UploadedDataTests(unittest.TestCase):
 
             published = publish_batch(batch, reports, snapshots)
             self.assertEqual(set(published["updatedReports"]), {"inventory_dashboard.json", "inventory_dashboard.ca.json"})
-            current = json.loads((reports / "inventory_dashboard.json").read_text())
+            current = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
             self.assertEqual(current["rows"][0]["fbaSellable"], 20)
             self.assertEqual(current["rows"][0]["inTransitInventory"], 30)
             self.assertEqual(current["rows"][0]["localInventory"], 30)
-            self.assertEqual(current["rows"][0]["salesByMonth"][0]["units"], 60)
+            self.assertEqual(current["rows"][0]["planningMonthlySales"], 60)
+            self.assertEqual(current["rows"][0]["salesByMonth"], [])
+            self.assertEqual(current["rows"][0]["dailySales"], 1)
             self.assertEqual(current["snapshots"]["fbaDate"], "2026-08-13")
             self.assertEqual(current["parameters"]["targetCoverDays"], 90)
 
             restored = restore_version(published["dataVersion"], reports, snapshots)
             self.assertIn("inventory_dashboard.json", restored["restoredReports"])
-            previous = json.loads((reports / "inventory_dashboard.json").read_text())
+            previous = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
             self.assertEqual(previous["rows"][0]["fbaSellable"], 5)
+
+    def test_wps_download_received_readonly_with_provenance_and_audit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = replace(load_config(Path(__file__).parents[1] / "config/project.json"), runtime_root=root / "runtime")
+            source = root / "库存规划.xlsx"
+            workbook = openpyxl.Workbook()
+            workbook.active.title = "库存规划"
+            workbook.active.append(["SKU", "品名", "参考月销"])
+            workbook.active.append(["MA001", "产品", 10])
+            workbook.save(source)
+            original = source.read_bytes()
+            result = receive_wps_download(config, source, "https://www.kdocs.cn/l/cg2kkbtoinHk")
+            self.assertEqual(source.read_bytes(), original)
+            self.assertIsNone(result["source"]["businessAsOf"])
+            self.assertEqual(result["source"]["sha256"], result["files"][0]["sha256"])
+            self.assertEqual(result["status"], "needs_review")
+            self.assertFalse((config.runtime_root / "reports/current.json").exists())
+            with self.assertRaises(ValueError):
+                receive_wps_download(config, source, "https://attacker.invalid/l/test")
 
     def test_advertising_upload_replaces_month_and_publishes_latest_campaigns(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -128,7 +153,7 @@ class UploadedDataTests(unittest.TestCase):
             self.assertTrue(preview["files"][0]["publishable"])
             published = publish_batch(batch, reports, snapshots)
             self.assertEqual(published["updatedReports"], ["inventory_dashboard.json"])
-            updated = json.loads((reports / "inventory_dashboard.json").read_text())
+            updated = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
             self.assertEqual(updated["advertising"]["latestMonth"], "2026-08")
             self.assertEqual(updated["advertising"]["monthlySeries"][-1]["spend"], 25)
             self.assertEqual(updated["advertising"]["campaigns"][0]["sku"], "MA001")

@@ -34,8 +34,10 @@ test("overview stays compact and phone layout has no horizontal overflow", async
 });
 test("SKU cards support search, evidence, market switching and phone layout", async ({ page }) => {
   await page.goto("/inventory/brief");
-  await expect(page.locator("article")).toHaveCount(20);
+  await expect(page.locator("article").first()).toBeVisible();
+  expect(await page.locator("article").count()).toBeGreaterThanOrEqual(20);
   await page.getByLabel("搜索 SKU、产品或 ASIN").fill("MA007");
+  await expect(page.locator("article").first()).toBeVisible();
   const count = await page.locator("article").count();
   expect(count).toBeGreaterThan(0);
   expect(count).toBeLessThanOrEqual(20);
@@ -62,7 +64,7 @@ test("online source panel separates configured entry points from actual synchron
   await expect(page.getByRole("heading", { name: "WPS 新品资料", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "测试积加连接", exact: true })).toBeDisabled();
   await expect(page.getByText("尚未配置积加凭证", { exact: false })).toBeVisible();
-  const check = await page.request.post("/api/inventory/data-refresh", { data: { action: "test_gerpgo" } });
+  const check = await page.request.post("/api/inventory/data-refresh", { headers: { origin: process.env.E2E_BASE_URL || "http://127.0.0.1:3107" }, data: { action: "test_gerpgo" } });
   expect(check.status()).toBe(422);
   expect((await check.json()).error).toContain("appId");
   await expect(page.getByRole("link", { name: "打开源文档", exact: true })).toHaveAttribute("href", "https://www.kdocs.cn/l/Example123");
@@ -93,6 +95,61 @@ test("forged session cannot read or update reports; member creation is closed", 
   expect((await request.post("/api/inventory/data-refresh", { data: { action: "save_gerpgo_credentials", appId: "fixture", appKey: "fixture" } })).status()).toBe(401);
   expect((await request.post("/api/auth/create-member", { data: {} })).status()).toBe(410);
   await request.dispose();
+});
+
+test("review preview requires confirmation and blocked mappings cannot publish", async ({ page }) => {
+  // UI fixture only; never fetch tenant data or approve a production report.
+  const id = "d8a4f702-f57b-4aa1-8300-9bfcb005e001", hash = "a".repeat(64), now = new Date().toISOString();
+  let blocked = false, approved = false;
+  await page.route("**/api/inventory/data-refresh*", async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (request.method() === "POST") {
+      const input = request.postDataJSON();
+      expect(input).toEqual({ action: "publish_gerpgo", sourceTaskId: id, previewHash: hash, confirmed: true });
+      approved = true;
+      await route.fulfill({ json: { task: { id: "approval", kind: "gerpgo_publish", status: "queued", createdAt: now } } });
+    } else if (url.searchParams.has("preview")) {
+      await route.fulfill({ json: { preview: { taskId: id, previewHash: hash, baseline: "b".repeat(64), capturedAt: now, recordCount: 1, ignoredParentRows: 0,
+        blocked, issueCount: blocked ? 1 : 0, issues: blocked ? [{ source: "performance-2026-09", row: 1, reason: "SKU 未匹配" }] : [],
+        withheld: ["FBA 字段未核验"], reviewReasons: ["首次对账"], differences: [{ market: "US", reportMonth: "2026-09", currency: "USD", previousRevenue: 100, candidateRevenue: 150, previousSkuCount: 1, candidateSkuCount: 1, revenueChangePercent: 50, completePeriod: true, protected: true }] },
+        records: [{ market: "US", reportMonth: "2026-09", sku: "TEST-SKU", currency: "USD", units: 40, productSales: 150, actualProfit: null }], nextOffset: null } });
+    } else if (url.searchParams.get("tasks") === "1") {
+      await route.fulfill({ json: { tasks: [{ id, kind: "gerpgo", status: "awaiting_review", createdAt: now, progress: "待对账", error: "" }] } });
+    } else await route.continue();
+  });
+  await page.goto("/inventory/data");
+  await page.getByRole("button", { name: "查看差异预览" }).click();
+  await expect(page.getByLabel("积加差异预览")).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认并交给 worker 发布" })).toBeDisabled();
+  await page.getByText("逐 SKU 对账明细", { exact: false }).click();
+  await expect(page.getByText("US 2026-09 · TEST-SKU", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole("checkbox").last().check();
+  await page.getByRole("button", { name: "确认并交给 worker 发布" }).click();
+  expect(approved).toBe(true);
+  blocked = true;
+  await page.getByRole("button", { name: "查看差异预览" }).click();
+  await expect(page.getByText("SKU 未匹配", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认并交给 worker 发布" })).toHaveCount(0);
+});
+
+test("failed imports expose domain coverage on phone without claiming a successful sync", async ({ page }) => {
+  const id = "d8a4f702-f57b-4aa1-8300-9bfcb005e001", now = new Date().toISOString();
+  await page.route("**/api/inventory/data-refresh*", async route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("collection")) await route.fulfill({ json: { collection: { taskId: id, capturedAt: now, domains: [
+      { name: "ads", completed: 1, failed: 1, skipped: 2, pages: 1, records: 30, errors: ["广告权限尚未开通"] },
+    ] } } });
+    else if (url.searchParams.get("tasks") === "1") await route.fulfill({ json: { tasks: [{ id, kind: "gerpgo", status: "failed", createdAt: now, progress: "旧报告保留", error: "采集未完成" }] } });
+    else await route.continue();
+  });
+  await page.goto("/inventory/data");
+  await page.getByRole("button", { name: "查看采集明细" }).click();
+  await expect(page.getByLabel("积加采集覆盖")).toContainText("完成 1 个范围 · 失败 1 · 跳过 2");
+  await expect(page.getByText("广告权限尚未开通", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("webpage credentials persist encrypted without being echoed or contacting GERPgo", async ({ page }) => {

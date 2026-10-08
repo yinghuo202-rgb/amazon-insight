@@ -1,3 +1,4 @@
+import { publishedReportPath, withReportVersion } from "@/lib/inventory/report-version";
 import { execFile } from "node:child_process";
 import { copyFile, lstat, mkdir, readFile, symlink } from "node:fs/promises";
 import path from "node:path";
@@ -61,12 +62,13 @@ export async function generateCreativeHandoff(args: { sku: string; exportId: str
   const outputDirectory = path.dirname(outputPath);
   await mkdir(outputDirectory, { recursive: true });
   const qaPath = path.join(outputDirectory, `${args.sku}-qa.json`);
+  const [products, content, variants] = await withReportVersion(() => Promise.all(["product_catalog.json", "content_workflow.json", "variant_catalog.json"].map(name => publishedReportPath(runtimePath("reports", name)))));
   const { stdout, stderr } = await execFileAsync(process.execPath, [
     runtimeScript,
     "--sku", args.sku,
-    "--products", runtimePath("reports", "product_catalog.json"),
-    "--content", runtimePath("reports", "content_workflow.json"),
-    "--variants", runtimePath("reports", "variant_catalog.json"),
+    "--products", products,
+    "--content", content,
+    "--variants", variants,
     "--template", await creativeTemplatePath(),
     "--output", outputPath,
     "--qa", qaPath,
