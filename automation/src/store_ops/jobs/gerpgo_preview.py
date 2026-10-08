@@ -16,7 +16,7 @@ from ..db import StateDb
 from ..report_versions import _json_write, current_reports, report_transaction
 
 TASK_RE = re.compile(r"[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}")
-MARKETS = {"amazon-us": ("US", "USD"), "amazon-ca": ("CA", "CAD"), "amazon-mx": ("MX", "MXN"), "amazon-au": ("AU", "AUD")}
+MARKETS = {"amazon-us": ("US", "USD"), "amazon-ca": ("CA", "CAD"), "amazon-mx": ("MX", "MXN")}
 MONEY = {"productSales": "orderProductSalesAmount", "actualProfit": "salesNetProfitAmount",
          "grossProfit": "salesGrossProfitAmount", "advertisingCost": "adsSpendAmount",
          "advertisingSales": "adsSalesAmount", "storageCost": "storageFeeAmount",
@@ -114,7 +114,10 @@ def resolve_store_scope(shops: list[dict], name: str) -> dict:
     ids = [s.get("marketId") for s in matches]
     if any(type(i) is not int or i <= 0 for i in ids) or len(set(ids)) != len(ids):
         raise ValueError("指定店铺站点标识缺失或重复")
-    return {"storeName": matches[0]["serverName"].strip(), "serverId": matches[0]["serverId"], "marketIds": sorted(ids)}
+    selected_ids = [s["marketId"] for s in matches if s.get("market") in MARKETS]
+    if not selected_ids:
+        raise ValueError("指定店铺没有本站纳入的 US、CA、MX 站点")
+    return {"storeName": matches[0]["serverName"].strip(), "serverId": matches[0]["serverId"], "marketIds": sorted(selected_ids)}
 
 
 def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, store_name: str | None = None) -> dict:
@@ -166,7 +169,8 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
             if identity in markets or identity in excluded_markets:
                 raise ValueError("店铺站点标识重复")
             if selected_ids is not None and shop["marketId"] not in selected_ids:
-                excluded_markets[identity] = "其他店铺 " + str(shop.get("market", "未识别站点"))
+                label = "当前范围外 " if shop.get("serverId") == selected_scope["serverId"] else "其他店铺 "
+                excluded_markets[identity] = label + str(shop.get("market", "未识别站点"))
             elif mapping:
                 markets[identity] = mapping
             elif isinstance(shop.get("market"), str) and re.fullmatch(r"amazon-[a-z]{2}", shop["market"]):
@@ -201,7 +205,7 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
                     continue
                 mapping = markets.get(identity)
                 if mapping is None:
-                    raise ValueError("店铺站点未映射（支持 US、CA、MX、AU）")
+                    raise ValueError("店铺站点未映射（支持 US、CA、MX）")
                 market, currency = mapping
                 original_currency = source["condition"].get("showCurrencyType") == "YUAN"
                 if row.get("currency") not in (None, "", currency) and not (original_currency and row["currency"] == "YUAN"):
@@ -283,7 +287,8 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         if name.startswith("ads-"):
             return records if source.get("condition", {}).get("marketId") in selected_ids else []
         if name.startswith("storage-"):
-            return [r for r in records if r.get("serverId") == selected_scope["serverId"] and (r.get("marketId") is None or r["marketId"] in selected_ids)]
+            countries = {m for m, _ in markets.values()}
+            return [r for r in records if r.get("serverId") == selected_scope["serverId"] and (r.get("marketId") in selected_ids or r.get("marketId") is None and r.get("countryCode") in countries)]
         return [r for r in records if r.get("marketId") in selected_ids]
     archived_sources = []
     for source in successful.values():
@@ -329,6 +334,15 @@ def publish(runtime: Path, request: dict) -> dict:
     configured_name = os.environ.get("GERPGO_STORE_NAME", "").strip()
     if configured_name and candidate.get("storeScope", {}).get("storeName", "").casefold() != configured_name.casefold():
         raise ValueError("发布候选未限定当前店铺，禁止发布")
+    allowed_markets = {m for m, _ in MARKETS.values()}
+    if any(r["market"] not in allowed_markets for r in candidate["rows"]) or any(s["market"] not in allowed_markets for s in candidate["scopes"]):
+        raise ValueError("候选包含当前范围外的站点，请重新拉取和对账")
+    if candidate.get("storeScope"):
+        manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        shop_source = next(s for s in manifest["sources"] if s["name"] == "shops")
+        shops = [s for seller in pages(folder, shop_source) for s in seller["marketListVos"]]
+        if resolve_store_scope(shops, configured_name or candidate["storeScope"]["storeName"]) != candidate["storeScope"]:
+            raise ValueError("候选店铺站点范围已变化，请重新拉取和对账")
     source_data = None
     if preview.get("sourceDataHash"):
         source_data = json.loads((folder / "candidate-source-data.json").read_text(encoding="utf-8"))
@@ -364,10 +378,13 @@ def publish(runtime: Path, request: dict) -> dict:
         file = stage / "gerpgo-performance.json"
         previous = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {"scopes": [], "rows": []}
         if previous.get("rows") and previous.get("storeScope") != candidate.get("storeScope"):
-            raise ValueError("已发布积加数据属于不同店铺范围，需先核对和回退，不允许混合历史")
+            old_scope, new_scope = previous.get("storeScope") or {}, candidate.get("storeScope") or {}
+            narrowing = old_scope.get("serverId") == new_scope.get("serverId") and old_scope.get("storeName") == new_scope.get("storeName") and bool(new_scope.get("marketIds")) and set(new_scope["marketIds"]).issubset(old_scope.get("marketIds", []))
+            if not narrowing:
+                raise ValueError("已发布积加数据属于不同店铺范围，需先核对和回退，不允许混合历史")
         replaced = {(s["market"], s["reportMonth"]) for s in candidate["scopes"]}
-        candidate["rows"] = [r for r in previous["rows"] if (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
-        candidate["scopes"] = [s for s in previous["scopes"] if (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
+        candidate["rows"] = [r for r in previous["rows"] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
+        candidate["scopes"] = [s for s in previous["scopes"] if s["market"] in allowed_markets and (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
         candidate["evidence"] = previous.get("evidence", []) + candidate["evidence"]
         candidate["publication"] = {"version": version, "actor": "shared-account", "previewHash": request["previewHash"], "baseline": preview["baseline"], "reviewedAt": datetime.now(timezone.utc).isoformat()}
         _json_write(file, candidate)

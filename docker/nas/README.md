@@ -1,10 +1,10 @@
 # NAS 在线部署文件
 
-## v1.4.0 增量更新（已有 NAS 项目）
+## v1.4.1 增量更新（已有 NAS 项目）
 
-镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.4.0`。发布完成以 GitHub Actions 成功和镜像清单存在为准。应用和 data-worker 必须使用同一个固定版本。
+镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.4.1`。发布完成以 GitHub Actions 成功和镜像清单存在为准。应用和 data-worker 必须使用同一个固定版本。
 
-默认只处理积加店铺 `MEASUREMAN`，站点根据实际授权自动识别，目前为 US、CA、MX、AU。`GERPGO_STORE_NAME=MEASUREMAN` 可追加到原 env；不要更换 SECRET_KEY、账号数据库或 Cloudflare Token。不跨币种合计销售额。
+只处理积加店铺 `MEASUREMAN` 的 US、CA、MX；AU 不纳入。站点 ID 仍根据实际授权识别。`GERPGO_STORE_NAME=MEASUREMAN` 可追加到原 env；不要更换 SECRET_KEY、账号数据库或 Cloudflare Token。不跨币种合计销售额。旧版本澳洲数据保留在原始证据和历史归档中，但不出现在页面、查询或新发布报告；包含 AU 的旧预览必须重新拉取，不能直接确认发布。
 
 已有部署使用 `operations_data`、`runtime_output` 命名卷时，把本目录 `measureman-data-worker.override.yml` **合并**到当前 Compose 项目，不要用新项目名导入，也不要以新模板替换原账号数据库挂载。该文件保留原配置，只扩展 writable reports、incoming、uploads、snapshots 和 worker。旧 reports 作为只读启动导入源保留。若原来全部使用 runtime 目录绑定，应沿用原挂载并参考 `../compose.worker.example.yml`，不要混用本覆盖文件。
 

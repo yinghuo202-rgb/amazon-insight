@@ -3,7 +3,7 @@
 # This variant expects existing operations_data/runtime_output named volumes.
 services:
   app:
-    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.0}"
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.1}"
     environment:
       GERPGO_STORE_NAME: "${GERPGO_STORE_NAME:-MEASUREMAN}"
       STORE_OPS_UPLOAD_ROOT: /data/uploads
@@ -16,7 +16,7 @@ services:
       - data_snapshots:/data/snapshots
 
   data-worker:
-    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.0}"
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.1}"
     user: "0:0"
     restart: unless-stopped
     init: true

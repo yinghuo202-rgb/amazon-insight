@@ -15,6 +15,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole("heading", { name: "运营总览", exact: true })).toBeVisible();
 });
 test("overview stays compact and phone layout has no horizontal overflow", async ({ page }) => {
+  await expect(page.getByLabel("站点", { exact: true }).locator('option[value="AU"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "销售额变化" })).toBeVisible();
   await expect(page.locator('section[aria-label="经营指标"] > div')).toHaveCount(6);
   await expect(page.locator("article")).toHaveCount(0);
@@ -31,6 +32,14 @@ test("overview stays compact and phone layout has no horizontal overflow", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/overview-mobile.png", fullPage: false });
+});
+test("AU queries and SKU details are excluded rather than borrowing US data", async ({ page }) => {
+  expect((await page.request.get("/api/inventory/operating-data?market=AU")).status()).toBe(400);
+  await page.goto("/inventory/sku/MA007?market=AU");
+  // Next.js streamed not-found pages may retain HTTP 200 after headers flush.
+  await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /MA007/ })).toHaveCount(0);
+  await expect(page.locator("article")).toHaveCount(0);
 });
 test("SKU cards support search, evidence, market switching and phone layout", async ({ page }) => {
   await page.goto("/inventory/brief");

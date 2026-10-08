@@ -7,6 +7,7 @@ import { listRefreshTasks, submitRefreshTask } from "@/lib/inventory/refresh-tas
 import { operatingRulesSchema } from "@/lib/inventory/operating-rules";
 import { gerpgoReviewRequestSchema, readGerpgoPreview, readGerpgoCandidatePage, readGerpgoCollectionSummary } from "@/lib/inventory/gerpgo-preview";
 import { saveOperatingRuleOverride } from "@/lib/inventory/operating-rules-store";
+import { operatingMarkets } from "@/lib/inventory/operating-performance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     if (payload?.action === "save_operating_rules") {
       const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || request.url);
       if (request.headers.get("origin") !== origin.origin || request.headers.get("content-type")?.split(";")[0] !== "application/json") return Response.json({ error: "请从本站保存提醒规则。" }, { status: 403 });
-      const parsed = z.object({ action: z.literal("save_operating_rules"), market: z.enum(["US", "CA", "MX", "AU"]), sku: z.string().trim().toUpperCase().max(64).regex(/^[A-Z0-9._-]*$/), values: operatingRulesSchema.partial() }).strict().safeParse(payload);
+      const parsed = z.object({ action: z.literal("save_operating_rules"), market: z.enum(operatingMarkets), sku: z.string().trim().toUpperCase().max(64).regex(/^[A-Z0-9._-]*$/), values: operatingRulesSchema.partial() }).strict().safeParse(payload);
       if (!parsed.success) return Response.json({ error: "提醒规则数值或范围无效。" }, { status: 422 });
       try { return Response.json({ rules: saveOperatingRuleOverride(parsed.data.market, parsed.data.sku, parsed.data.values) }, { headers: { "Cache-Control": "no-store" } }); }
       catch { return Response.json({ error: "提醒规则保存失败，请检查运营数据库。" }, { status: 500 }); }

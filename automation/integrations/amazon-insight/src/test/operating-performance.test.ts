@@ -42,15 +42,13 @@ it("does not report partial fee sums as a whole-market profit", () => {
   expect(page.summary.profit).toBeNull();
   expect(page.summary.revenue).toBe(200);
 });
-it("supports scoped Australian sales in AUD without borrowing US inventory", () => {
+it("keeps legacy AU reports readable but excludes their rows and periods from operations", () => {
   const data = operatingPerformanceSchema.parse({ ...input, storeScope: { storeName: "MEASUREMAN", serverId: 1, marketIds: [1, 2, 3, 17] }, scopes: [{ market: "AU", reportMonth: "2026-09" }, { market: "MX", reportMonth: "2026-09" }], rows: [{ ...input.rows[0], market: "AU", currency: "AUD" }] });
   const model = buildOperatingModel([], undefined, undefined, [], now, data);
   expect(model.storeName).toBe("MEASUREMAN");
-  expect(model.markets).toContain("AU");
+  expect(model.markets).not.toContain("AU");
   expect(model.markets).toContain("MX");
-  const page = queryOperatingModel(model, { market: "AU" }, now);
-  expect(page.summary.revenue).toBe(100);
-  expect(page.currency).toBe("AUD");
-  expect(model.rows[0].stock).toBeNull();
-  expect(operatingFacts(model.rows[0], "2026-09", undefined, now).dataIssues).not.toContain("币种不一致");
+  expect(model.rows).toEqual([]);
+  expect(model.periods).toEqual([]);
+  expect(() => queryOperatingModel(model, { market: "AU" }, now)).toThrow("筛选参数");
 });

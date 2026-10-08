@@ -9,10 +9,11 @@ function client(...responses: unknown[]) {
 }
 const options = { pause: vi.fn().mockResolvedValue(undefined) };
 describe("GERPgo full page collector", () => {
-  it("selects one exact store identity across all its authorized markets", () => {
-    const own = [1, 2, 3, 17].map(marketId => ({ serverName: "MEASUREMAN", serverId: 1, marketId }));
+  it("selects one exact store identity and excludes the Australian market", () => {
+    const own = [1, 2, 3, 17].map((marketId, index) => ({ serverName: "MEASUREMAN", serverId: 1, marketId, market: `amazon-${["us", "ca", "mx", "au"][index]}` }));
     const sellers = [{ marketListVos: [...own.slice(0, 3), { serverName: "Other", serverId: 2, marketId: 4 }] }, { marketListVos: own.slice(3) }];
-    expect(resolveGerpgoStoreScope(sellers, " measureman ")).toEqual({ storeName: "MEASUREMAN", serverId: 1, marketIds: [1, 2, 3, 17] });
+    expect(resolveGerpgoStoreScope(sellers, " measureman ")).toEqual({ storeName: "MEASUREMAN", serverId: 1, marketIds: [1, 2, 3] });
+    expect(gerpgoSupplementalSources([{ condition: { beginDate: "2026-09-01", endDate: "2026-09-01" } }], resolveGerpgoStoreScope(sellers, "MEASUREMAN").marketIds).filter(s => s.name.startsWith("ads-")).map(s => s.condition.marketId)).toEqual([1, 2, 3]);
     expect(() => resolveGerpgoStoreScope(sellers, undefined)).toThrow();
     expect(() => resolveGerpgoStoreScope(sellers, "MEASURE")).toThrow();
     expect(() => resolveGerpgoStoreScope([{ marketListVos: [...own, { ...own[0], serverId: 99, marketId: 90 }] }], "MEASUREMAN")).toThrow();

@@ -2,6 +2,7 @@
 import { createHash, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { operatingMarkets } from "@/lib/inventory/operating-performance";
 
 type Environment = Record<string, string | undefined>;
 export type GerpgoSettingsStatus = {
@@ -130,7 +131,9 @@ export function resolveGerpgoStoreScope(sellers: Record<string, unknown>[], stor
   if (!shops.length || serverIds.size !== 1 || !Number.isSafeInteger([...serverIds][0]) || [...serverIds][0] <= 0) throw new GerpgoConnectionError("指定店铺未找到或店铺名称对应多个身份，请核对积加店铺配置。", 422);
   const marketIds = shops.map(shop => shop.marketId);
   if (marketIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(marketIds).size !== marketIds.length) throw new GerpgoConnectionError("指定店铺的站点标识缺失或重复，不能确认范围。", 422);
-  return { storeName: shops[0].serverName.trim() as string, serverId: shops[0].serverId as number, marketIds: marketIds.sort((a, b) => a - b) as number[] };
+  const included = shops.filter(shop => operatingMarkets.some(market => shop.market === `amazon-${market.toLowerCase()}`)).map(shop => shop.marketId);
+  if (!included.length) throw new GerpgoConnectionError("指定店铺没有本站纳入的 US、CA、MX 站点。", 422);
+  return { storeName: shops[0].serverName.trim() as string, serverId: shops[0].serverId as number, marketIds: included.sort((a, b) => a - b) as number[] };
 }
 
 /** Shared server client. Tokens never leave this closure. */

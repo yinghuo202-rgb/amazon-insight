@@ -17,7 +17,8 @@ export async function generateMetadata({ params }: { params: Promise<{ sku: stri
 
 export default async function SkuPage({ params, searchParams }: { params: Promise<{ sku: string }>; searchParams: Promise<{ market?: string }> }) {
   const requestedMarket = (await searchParams).market?.toUpperCase();
-  const market = requestedMarket === "MX" || requestedMarket === "AU" ? requestedMarket : normalizeOperationsMarket(requestedMarket);
+  if (requestedMarket === "AU") notFound();
+  const market = requestedMarket === "MX" ? requestedMarket : normalizeOperationsMarket(requestedMarket);
   const { sku: rawSku } = await params;
   const sku = decodeURIComponent(rawSku).toUpperCase();
   const [data, variants, products, purchaseOrders, documentMaster, profitability, operating] = await withReportVersion(() => Promise.all([market === "US" || market === "CA" ? loadInventoryDashboardData(market).catch(() => null) : Promise.resolve(null), loadVariantCatalogData().catch(() => null), loadProductCatalogData().catch(() => null), listSkuPurchaseOrderDetails(sku).catch(() => []), loadDocumentMasterData().catch(() => ({ shipmentHistory: [] })), loadProfitabilityData().catch(() => null), loadOperatingModel()]));

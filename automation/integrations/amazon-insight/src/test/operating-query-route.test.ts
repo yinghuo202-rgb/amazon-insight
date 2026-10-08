@@ -14,7 +14,7 @@ it("requires a valid session before reading any report", async () => {
   expect((await GET(request())).status).toBe(401);
   expect(mocks.load).not.toHaveBeenCalled();
 });
-it.each(["market=ZZ", "period=2026-13", "offset=-1", "offset=not-number", "filter=unknown"])("validates selectors before report access", async query => {
+it.each(["market=ZZ", "market=AU", "period=2026-13", "offset=-1", "offset=not-number", "filter=unknown"])("validates selectors before report access", async query => {
   expect((await GET(request(query))).status).toBe(400);
   expect(mocks.load).not.toHaveBeenCalled();
 });

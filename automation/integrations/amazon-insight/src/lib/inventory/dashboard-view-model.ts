@@ -2,7 +2,7 @@ import { defaultOperatingRules, type OperatingRules, type OperatingRuleOverride 
 import type { InventoryDashboardData, ProfitabilityData, VariantCatalogData } from "@/lib/inventory/contracts";
 import { calculateCampaignRows, calculateInventoryRows } from "@/lib/inventory/presentation";
 import { buildSeasonalityProfile } from "@/lib/inventory/seasonality";
-import type { OperatingPerformance, OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
+import { operatingMarkets, type OperatingPerformance, type OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
 
 export type OperatingModel = ReturnType<typeof buildOperatingModel>;
 export type OperatingSku = OperatingModel["rows"][number];
@@ -11,9 +11,9 @@ export type OperatingSku = OperatingModel["rows"][number];
 // Unknown facts stay null; historical units never masquerade as revenue.
 export function buildOperatingModel(inventories: InventoryDashboardData[], profitability?: ProfitabilityData, variants?: VariantCatalogData, warnings: string[] = [], now = new Date(), performance?: OperatingPerformance) {
   const replaced = new Set(performance?.scopes.map(scope => `${scope.market}:${scope.reportMonth}`) ?? []);
-  const profits: OperatingPerformanceRow[] = [...(profitability?.rows ?? []).filter(row => !replaced.has(`${row.market}:${row.reportMonth}`)), ...(performance?.rows ?? [])];
+  const profits: OperatingPerformanceRow[] = [...(profitability?.rows ?? []).filter(row => !replaced.has(`${row.market}:${row.reportMonth}`)), ...(performance?.rows ?? [])].filter(row => (operatingMarkets as readonly string[]).includes(row.market));
   const periods = [...new Set(profits.map((row) => row.reportMonth))].sort().reverse();
-  const markets = [...new Set([...inventories.map((item) => item.market), ...profits.map((item) => item.market), ...(performance?.scopes.map(scope => scope.market) ?? [])])].filter((market) => ["US", "CA", "MX", "AU"].includes(market));
+  const markets = [...new Set([...inventories.map((item) => item.market), ...profits.map((item) => item.market), ...(performance?.scopes.map(scope => scope.market) ?? [])])].filter((market) => (operatingMarkets as readonly string[]).includes(market));
   const inventoryMap = new Map(inventories.map((item) => [item.market, item]));
   const rows = markets.flatMap((market) => {
     const inventory = inventoryMap.get(market);

@@ -1,5 +1,6 @@
 import { operatingFacts, type OperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { resolveOperatingRules } from "@/lib/inventory/operating-rules";
+import { operatingMarkets } from "@/lib/inventory/operating-performance";
 
 export const operatingFilters = ["focus", "revenue", "loss", "advertising", "returns", "decline", "stock", "missing", "all"] as const;
 export type OperatingFilter = typeof operatingFilters[number];
@@ -7,7 +8,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const market = input.market || (model.markets.includes("US") ? "US" : model.markets[0] || "US");
   const period = input.period || model.periods[0] || "", query = (input.query || "").trim().toLowerCase();
   const filter = input.filter || "focus";
-  if (!(operatingFilters as readonly string[]).includes(filter) || !["US", "CA", "MX", "AU"].includes(market)) throw new Error("筛选参数无效。");
+  if (!(operatingFilters as readonly string[]).includes(filter) || !(operatingMarkets as readonly string[]).includes(market)) throw new Error("筛选参数无效。");
   const currency = market === "CA" ? "CAD" : market === "MX" ? "MXN" : market === "AU" ? "AUD" : "USD";
   const rows = model.rows.filter(row => row.market === market);
   const facts = rows.map(row => ({ row, ...operatingFacts(row, period, resolveOperatingRules(market, row.sku, model.ruleOverrides), now, model.rulesAvailable) }));

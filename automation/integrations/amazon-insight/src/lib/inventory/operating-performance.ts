@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { profitabilityRowSchema } from "@/lib/inventory/contracts";
 
+export const operatingMarkets = ["US", "CA", "MX"] as const;
+
 // Keep the existing Excel contract for legacy detail consumers. Operating facts
 // accept nullable API fees without manufacturing a complete profit statement.
+// AU remains readable only for old report compatibility; it is not a live market.
 export const operatingPerformanceRowSchema = profitabilityRowSchema.omit({ settlementPayout: true, landedCost: true, netUnits: true, grossMargin: true, conservativeMargin: true }).extend({
   market: z.enum(["US", "CA", "MX", "AU"]), currency: z.enum(["USD", "CAD", "MXN", "AUD"]),
   returns: z.number().int().nonnegative().nullable(),

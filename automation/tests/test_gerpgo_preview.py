@@ -54,7 +54,7 @@ class GerpgoPreviewTests(unittest.TestCase):
     def approval(self, preview):
         return {"sourceTaskId": TASK, "previewHash": preview["previewHash"], "confirmed": True, "taskId": "publish-task", "lease": "lease"}
 
-    def test_store_identity_excludes_other_store_same_sku_and_includes_australia(self):
+    def test_store_identity_excludes_other_store_same_sku_and_australia(self):
         shops = [{"marketListVos": [
             {"marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1, "warehouseName": "MEASUREMAN:US_FBA"},
             {"marketId": 17, "market": "amazon-au", "serverName": "MEASUREMAN", "serverId": 1, "warehouseName": "MEASUREMAN:AU_FBA"},
@@ -65,18 +65,18 @@ class GerpgoPreviewTests(unittest.TestCase):
         source["total"] = 3
         (self.folder / f"performance-{self.month}-1.json").write_text(json.dumps({"page": 1, "total": 3, "rows": rows}))
         self.source("returns-" + self.month, [{"marketId": 1, "id": 1}, {"marketId": 8, "id": 2}])
-        self.source("storage-" + self.month, [{"serverId": 1, "marketId": None, "id": 1}, {"serverId": 2, "marketId": None, "id": 2}])
+        self.source("storage-" + self.month, [{"serverId": 1, "marketId": None, "countryCode": "US", "id": 1}, {"serverId": 2, "marketId": None, "countryCode": "US", "id": 2}, {"serverId": 1, "marketId": None, "countryCode": "AU", "id": 3}])
         self.manifest()
         preview = build_preview(self.runtime, TASK, store_name="measureman")
         self.assertFalse(preview["blocked"])
         candidate = json.loads((self.folder / "candidate.json").read_text())
-        self.assertEqual(candidate["storeScope"], {"storeName": "MEASUREMAN", "serverId": 1, "marketIds": [1, 17]})
+        self.assertEqual(candidate["storeScope"], {"storeName": "MEASUREMAN", "serverId": 1, "marketIds": [1]})
         current = [r for r in candidate["rows"] if r["reportMonth"] == self.month]
-        self.assertEqual({(r["market"], r["currency"], r["productSales"]) for r in current}, {("US", "USD", 100), ("AU", "AUD", 50)})
+        self.assertEqual({(r["market"], r["currency"], r["productSales"]) for r in current}, {("US", "USD", 100)})
         archive = json.loads((self.folder / "candidate-source-data.json").read_text())
         for name in ["performance-" + self.month, "returns-" + self.month, "storage-" + self.month]:
             actual = next(s for s in archive["sources"] if s["name"] == name)
-            self.assertEqual(actual["selectedRecordCount"], 2 if name.startswith("performance") else 1)
+            self.assertEqual(actual["selectedRecordCount"], 1)
         self.assertTrue(any("其他店铺" in item for item in preview["withheld"]))
         with self.assertRaisesRegex(ValueError, "指定店铺"):
             build_preview(self.runtime, TASK, store_name="MEASURE")
@@ -87,6 +87,39 @@ class GerpgoPreviewTests(unittest.TestCase):
         (self.folder / "manifest.json").write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "指定店铺"):
             build_preview(self.runtime, TASK)
+
+    def test_narrowed_store_scope_removes_au_history_only_from_active_version(self):
+        shops = [{"marketListVos": [{"marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1}]}]
+        (self.folder / "shops-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
+        build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        previous = json.loads((self.folder / "candidate.json").read_text())
+        previous["storeScope"]["marketIds"].append(17)
+        old_us = {**previous["rows"][0], "reportMonth": "2000-01"}
+        old_au = {**old_us, "market": "AU", "currency": "AUD"}
+        previous["rows"] = [old_us, old_au]
+        previous["scopes"] = [{"market": "US", "reportMonth": "2000-01"}, {"market": "AU", "reportMonth": "2000-01"}]
+        (self.reports / "gerpgo-performance.json").write_text(json.dumps(previous))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        result = publish(self.runtime, self.approval(preview))
+        active = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+        self.assertTrue(all(r["market"] == "US" for r in active["rows"]))
+        self.assertTrue(any(r["reportMonth"] == "2000-01" for r in active["rows"]))
+        self.assertEqual(active["storeScope"]["marketIds"], [1])
+        restore_reports(result["publishedVersion"], self.reports, self.runtime / "snapshots")
+        restored = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+        self.assertTrue(any(r["market"] == "AU" for r in restored["rows"]))
+
+    def test_old_au_preview_cannot_be_published(self):
+        preview = build_preview(self.runtime, TASK)
+        candidate = json.loads((self.folder / "candidate.json").read_text())
+        candidate["rows"].append({**candidate["rows"][0], "market": "AU", "currency": "AUD"})
+        (self.folder / "candidate.json").write_text(json.dumps(candidate))
+        preview["reportHash"] = digest(candidate)
+        preview["previewHash"] = digest({k: v for k, v in preview.items() if k != "previewHash"})
+        (self.folder / "preview.json").write_text(json.dumps(preview))
+        with self.assertRaisesRegex(ValueError, "范围外"):
+            publish(self.runtime, self.approval(preview))
+        self.assertFalse((self.reports / "current.json").exists())
 
     def old(self, amount):
         rows = [{"market": "US", "currency": "USD", "reportMonth": m, "sku": "SKU-A", "productSales": amount} for m in [self.month, self.previous_month]]
