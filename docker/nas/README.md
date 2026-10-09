@@ -1,15 +1,17 @@
 # NAS 在线部署文件
 
-## v1.5.0-rc.1 NAS 试用版
+## v1.5.0-rc.2 NAS 试用版
 
-镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.1`。这是固定标签的试用版，不更新 `latest`。只有该标签对应 GitHub Actions 全部成功，且双架构镜像启动检查通过后，才用于 NAS 升级。适配 `linux/amd64` 和 `linux/arm64`；不自动修改或上线 NAS。
+镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.2`。这是固定标签的试用版，不更新 `latest`。只有该标签对应 GitHub Actions 全部成功，且双架构镜像启动检查通过后，才用于 NAS 升级。适配 `linux/amd64` 和 `linux/arm64`；不自动修改或上线 NAS。
+
+不要使用 `v1.5.0-rc.1`：实际镜像检查发现 worker 缺失 Zod 运行依赖，本地项目目录曾掩盖这个问题。rc.2 补齐独立 worker 的依赖，并在项目目录外验证打包结果。rc.1 曾因镜像元数据默认行为误更新 `latest`，已恢复到稳定版 `v1.4.1`；流程改为正式默认分支构建通过启动检查后才能提升 `latest`，试用标签不再提升它。
 
 本版包含运营总览、SKU 简报、SKU 三栏详情及复核记录、三售价利润试算、定时同步和 WPS 正式授权读取。只展示一店 MEASUREMAN 的 US/CA/MX，不展示父体、五条建议或 PDF。API 凭证已保存不代表费用已对账或数据已发布；WPS 分享链接不代表已获服务端下载授权。
 
 ### 已有 NAS 项目的更新步骤
 
 1. 停止 app 和 data-worker，备份现有 Compose、env、账号库、运营库及报告目录，再启动旧版本；备份不能只复制一个正在写入的 SQLite 主文件而忽略 WAL。保留原项目名、目录和全部数据卷。
-2. 在原 env 中仅将 `IMAGE_TAG` 改为 `v1.5.0-rc.1`，保留原 `SECRET_KEY`、域名、积加凭证、Cloudflare Token 和目录。不要直接用示例 env 覆盖原文件。
+2. 在原 env 中仅将 `IMAGE_TAG` 改为 `v1.5.0-rc.2`，保留原 `SECRET_KEY`、域名、积加凭证、Cloudflare Token 和目录。不要直接用示例 env 覆盖原文件。
 3. 原来已有 worker 时，确认 app 和 data-worker 使用同一标签，运营库、reports、incoming、uploads、snapshots 挂载一致。尚无 worker 时，参考本目录 `measureman-data-worker.override.yml` 合并到原项目；全目录绑定部署使用 `../compose.worker.example.yml`，不要切换原有卷类型。
 4. 在 NAS Docker 项目界面拉取新镜像并重新创建 app 和 data-worker；只点击“重启”不会更新镜像。cloudflared 无需重新创建，服务 URL 保持 `http://app:3000`（以原 Compose 服务名为准）。
 5. 用既有共用账号登录，检查运营总览、SKU 详情、已有记录和“业务后台 → 数据更新”。确认 worker 显示在线，再手动拉取积加预览、核对范围与金额并确认发布。全新定时配置默认暂停，原来已经启用的配置会保留，不会被重置。
@@ -22,7 +24,7 @@
 
 ## 定时同步增量
 
-这一节适用于 v1.5.0-rc.1；**旧 v1.4.1 不包含定时调度和 WPS 官方自动下载**。app、data-worker 必须同时升级到同一经过验证的新版本；不更换现有账号库、运营库、SECRET_KEY 或 Cloudflare 配置。覆盖文件要求显式填写 `IMAGE_TAG`，不可将旧镜像当作新功能部署。
+这一节适用于 v1.5.0-rc.2；**旧 v1.4.1 不包含定时调度和 WPS 官方自动下载**。app、data-worker 必须同时升级到同一经过验证的新版本；不更换现有账号库、运营库、SECRET_KEY 或 Cloudflare 配置。覆盖文件要求显式填写 `IMAGE_TAG`，不可将旧镜像当作新功能部署。
 
 ### 部署与开启
 

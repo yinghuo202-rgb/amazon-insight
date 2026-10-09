@@ -1,6 +1,6 @@
 // Compile the existing server modules for the independent same-image worker.
 import ts from "typescript";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { cp, readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 const root = process.cwd(), source = path.join(root, "src"), destination = path.join(root, ".next", "standalone", "worker");
 const seen = new Set();
@@ -20,3 +20,8 @@ async function compile(file) {
   await Promise.all(dependencies.map(compile));
 }
 await compile(path.join(source, "worker", "data-worker.ts"));
+// Next bundles Zod into route chunks rather than tracing it as a runtime
+// package. The separately compiled worker still requires it. Put this existing,
+// self-contained dependency beside the worker, without pnpm symlinks pointing
+// back to the build machine. No new application dependency is introduced.
+await cp(path.join(root, "node_modules", "zod"), path.join(destination, "node_modules", "zod"), { recursive: true, dereference: true });

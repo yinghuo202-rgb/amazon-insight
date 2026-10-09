@@ -1,6 +1,7 @@
 """Opt-in acceptance of the compiled worker, with isolated evidence and SQLite."""
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -26,10 +27,15 @@ class CompiledWorkerTests(unittest.TestCase):
             db.execute("UPDATE data_refresh_tasks_v1 SET status='completed'")
             db.execute("INSERT INTO data_refresh_tasks_v1(id,kind,status,created_at,updated_at,request_json) VALUES('queued-publish','gerpgo_publish','queued','2000','2000',?)", (json.dumps(request),))
         automation = Path(__file__).resolve().parents[1]
+        # Running under the checkout accidentally resolves missing image
+        # packages from the developer's node_modules. Test the actual worker
+        # bundle outside that tree, with no inherited module search path.
+        bundle = fixture.runtime.parent / "isolated-worker"
+        shutil.copytree(Path(os.environ["MEASUREMAN_TEST_COMPILED_WORKER"]).resolve().parents[1], bundle)
         environment = {**os.environ, "STORE_OPS_RUNTIME_ROOT": str(fixture.runtime), "STORE_OPS_STATE_DB": str(state),
                        "STORE_OPS_AUTOMATION_ROOT": str(automation), "STORE_OPS_PYTHON": sys.executable,
-                       "GERPGO_APP_ID": "", "GERPGO_APP_KEY": ""}
-        process = subprocess.Popen([os.environ["MEASUREMAN_TEST_NODE"], os.environ["MEASUREMAN_TEST_COMPILED_WORKER"]], cwd=automation / "integrations" / "amazon-insight", env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                       "GERPGO_APP_ID": "", "GERPGO_APP_KEY": "", "NODE_PATH": ""}
+        process = subprocess.Popen([os.environ["MEASUREMAN_TEST_NODE"], str(bundle / "worker" / "data-worker.js")], cwd=bundle, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 20
             status = "queued"
