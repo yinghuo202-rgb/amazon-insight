@@ -23,10 +23,10 @@ import {
 const adjustmentActions = ["PAUSE_STOCK_RISK", "NO_ORDER_REVIEW", "REDUCE_BID_OR_BUDGET"];
 const growthActions = ["INCREASE_BUDGET", "INCREASE_BID"];
 
-export function AdvertisingWorkbench({ data }: { data: AdvertisingViewModel }) {
+export function AdvertisingWorkbench({ data, initialQuery = "" }: { data: AdvertisingViewModel; initialQuery?: string }) {
   const fullCurrency = (value: number) => formatCurrency(value, data.currency);
   const [targetAcos, setTargetAcos] = useState(data.parameters.targetAcosPercent);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [actionFilter, setActionFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("priority");
   const parameters: AdvertisingParameters = useMemo(

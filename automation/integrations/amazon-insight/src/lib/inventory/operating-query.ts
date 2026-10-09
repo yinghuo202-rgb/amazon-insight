@@ -4,11 +4,13 @@ import { operatingMarkets } from "@/lib/inventory/operating-performance";
 
 export const operatingFilters = ["focus", "revenue", "loss", "advertising", "returns", "decline", "stock", "missing", "all"] as const;
 export type OperatingFilter = typeof operatingFilters[number];
-export function queryOperatingModel(model: OperatingModel, input: { market?: string; period?: string; query?: string; filter?: string; offset?: number; brief?: boolean }, now = new Date()) {
+export const operatingSorts = ["impact", "revenue", "margin"] as const;
+export function queryOperatingModel(model: OperatingModel, input: { market?: string; period?: string; query?: string; filter?: string; sort?: string; offset?: number; brief?: boolean }, now = new Date()) {
   const market = input.market || (model.markets.includes("US") ? "US" : model.markets[0] || "US");
   const period = input.period || model.periods[0] || "", query = (input.query || "").trim().toLowerCase();
   const filter = input.filter || "focus";
-  if (!(operatingFilters as readonly string[]).includes(filter) || !(operatingMarkets as readonly string[]).includes(market)) throw new Error("筛选参数无效。");
+  const sort = input.sort || "impact";
+  if (!(operatingSorts as readonly string[]).includes(sort) || !(operatingFilters as readonly string[]).includes(filter) || !(operatingMarkets as readonly string[]).includes(market)) throw new Error("筛选参数无效。");
   const currency = market === "CA" ? "CAD" : market === "MX" ? "MXN" : market === "AU" ? "AUD" : "USD";
   const rows = model.rows.filter(row => row.market === market);
   const facts = rows.map(row => ({ row, ...operatingFacts(row, period, resolveOperatingRules(market, row.sku, model.ruleOverrides), now, model.rulesAvailable) }));
@@ -20,7 +22,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const coverage = covered.length ? covered.filter(item => item.row.stock!.cover! >= resolveOperatingRules(market, item.row.sku, model.ruleOverrides).supplyCoverDays).length / covered.length : null;
   const matches = (item: typeof facts[number], kind: string) => kind === "all" || kind === "revenue"
     || kind === "focus" && (item.issues.length > 0 || item.dataIssues.length > 0)
-    || kind === "loss" && item.issues.includes("利润为负")
+    || kind === "loss" && item.issues.some(issue => issue === "利润为负" || issue === "利润待核查")
     || kind === "advertising" && item.issues.includes("广告待核查")
     || kind === "returns" && item.issues.includes("退货待核查")
     || kind === "decline" && item.issues.includes("销售额下降")
@@ -29,14 +31,27 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   // Searching a specific product is independent of attention thresholds.
   const matched = facts.filter(item => query ? [item.row.sku, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
   const impact = (item: typeof facts[number]) => {
-    if (filter === "revenue") return item.current?.productSales ?? 0;
-    if (item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency) return Math.abs(item.current.actualProfit - item.previous.actualProfit);
+    if (item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency) return Math.abs(item.current.actualProfit - item.previous.actualProfit);
     // Missing prior profit is not zero profit. Use a known revenue fact instead.
     return item.current?.productSales ?? 0;
   };
-  matched.sort((a, b) => Number(b.issues.includes("利润为负")) - Number(a.issues.includes("利润为负"))
-    || impact(b) - impact(a)
-    || a.row.sku.localeCompare(b.row.sku));
+  const priority = (item: typeof facts[number]) => item.issues.includes("利润为负") ? 0 : item.issues.includes("当前供货风险") ? 1 : item.issues.length ? 2 : 3;
+  const impactRank = (a: typeof facts[number], b: typeof facts[number]) => priority(a) - priority(b) || impact(b) - impact(a) || a.row.sku.localeCompare(b.row.sku);
+  const rank = (a: typeof facts[number], b: typeof facts[number]) => {
+    if (sort === "revenue" || filter === "revenue") return (b.current?.productSales ?? -Infinity) - (a.current?.productSales ?? -Infinity) || a.row.sku.localeCompare(b.row.sku);
+    if (sort === "margin") {
+      const margin = (item: typeof facts[number]) => item.current && item.current.productSales > 0 && item.current.actualProfit !== null ? item.current.actualProfit / item.current.productSales : Infinity;
+      return margin(a) - margin(b) || a.row.sku.localeCompare(b.row.sku);
+    }
+    return impactRank(a, b);
+  };
+  matched.sort(rank);
+  const priorities = facts.filter(item => item.issues.length || item.dataIssues.length).sort(impactRank).slice(0, 6).map(item => ({
+    listingId: item.row.listingId, sku: item.row.sku, market, title: item.issues[0] || "数据核查",
+    filter: item.issues.some(issue => issue === "利润为负" || issue === "利润待核查") ? "loss" : item.issues.includes("当前供货风险") || item.issues.includes("供应覆盖不足") ? "stock" : item.issues.includes("销售额下降") ? "decline" : item.issues.includes("广告待核查") ? "advertising" : item.issues.includes("退货待核查") ? "returns" : "missing",
+    impact: item.current ? impact(item) : null, impactBasis: item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency ? "已核验利润变化金额" : "当期销售规模（非预计损失）",
+    fact: item.issues.join(" · ") || item.dataIssues.join(" · "), suggestion: item.suggestion,
+  }));
   const offset = input.offset ?? 0;
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("加载位置无效。");
   const limit = input.brief ? 20 : query ? 3 : 0;
@@ -62,7 +77,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     const points = rows.flatMap(row => row.history.filter(point => point.reportMonth === month && point.currency === currency));
     return { month, revenue: points.length ? points.reduce((total, point) => total + point.productSales, 0) : null, profit: points.length && points.every(point => point.actualProfit !== null) ? points.reduce((total, point) => total + point.actualProfit!, 0) : null };
   });
-  return { model: selected, market, period, query, filter, currency, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
+  return { model: selected, market, period, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
     summary: { revenue, profit, units, returns, adSales, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
       coveredCount: covered.length, unknownCoverageCount: facts.length - covered.length }, chart,
     counts: Object.fromEntries(operatingFilters.map(kind => [kind, facts.filter(item => matches(item, kind)).length])) };

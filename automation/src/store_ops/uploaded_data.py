@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from dataclasses import replace
 import os
 import re
 import shutil
+import sqlite3
 from uuid import uuid4
 from urllib.parse import urlsplit
 from datetime import date, datetime, timedelta, timezone
@@ -292,7 +294,7 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
     return manifest
 
 
-def receive_wps_download(config: ProjectConfig, source: Path, share_url: str) -> dict[str, Any]:
+def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *, file_token: str | None = None) -> dict[str, Any]:
     """Receive a browser download, without reading or moving browser credentials."""
     database = StateDb(Path(os.environ.get("STORE_OPS_STATE_DB") or config.runtime_root / "db" / "operations.sqlite3"))
     database.init()
@@ -318,21 +320,50 @@ def receive_wps_download(config: ProjectConfig, source: Path, share_url: str) ->
             raise ValueError("WPS 下载内容未识别为库存或新品表，请检查工作表结构")
         result["source"] = {"kind": "wps-browser-download", "shareUrl": share_url, "capturedAt": datetime.now(timezone.utc).isoformat(), "businessAsOf": None,
                             "sha256": original_hash, "authentication": "existing-browser-session"}
+        if file_token is not None:
+            if not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", file_token) or result["files"][0]["type"] != "inventory":
+                raise ValueError("自动下载文件必须是指定的 WPS 库存表")
+            from .jobs.gerpgo_preview import baseline
+            result["source"].update(kind="wps-api-download", authentication="official-oauth", fileToken=file_token)
+            result["baseline"] = baseline(config.runtime_root / "reports")
         if result["files"][0]["type"] == "inventory":
             book = openpyxl.load_workbook(target, read_only=True, data_only=True, keep_links=False)
             try:
+                header_signatures = {}
                 for market, preview in result["files"][0]["preview"]["markets"].items():
+                    if file_token and (not preview.get("uniqueSkuCount") or preview.get("skipped", {}).get("invalidSku")):
+                        result["status"] = "needs_review"
+                        result["warnings"].append(f"{market} 存在无法识别的 SKU 或没有有效 SKU，请核验跳过记录；自动发布暂停。")
                     filename = "inventory_dashboard.json" if market == "US" else "inventory_dashboard.ca.json"
                     published = current_reports(config.runtime_root / "reports") / filename
                     existing = {row["sku"] for row in json.loads(published.read_text())["rows"]} if published.exists() else set()
                     rows = book[preview["sheet"]].iter_rows(values_only=True)
-                    sku_i = _field(_header_map(next(rows)), "SKU")
+                    header = next(rows)
+                    header_signatures[market] = [str(value) if value is not None else None for value in header]
+                    indexes = _header_map(header)
+                    sku_i = _field(indexes, "SKU")
+                    required = [_field(indexes, "工厂库存及已下订单"), _field(indexes, "参考月销")]
+                    if file_token and any(index is None for index in required):
+                        result["status"] = "needs_review"
+                        result["warnings"].append(f"{market} 自动同步所需的国内供给或参考月销列缺失。")
+                    if file_token:
+                        for row in book[preview["sheet"]].iter_rows(min_row=2, values_only=True):
+                            if sku_i is None or len(row) <= sku_i or not re.fullmatch(r"[A-Z]{2}\d{3}", _text(row[sku_i]).upper()):
+                                continue
+                            for column in required:
+                                value = _number(row[column]) if column is not None and len(row) > column else None
+                                if value is None or not math.isfinite(value) or value < 0 or int(value) != value:
+                                    result["status"] = "needs_review"
+                                    result["warnings"].append(f"{market} 国内供给或参考月销存在空值、负值或非整数，自动发布暂停。")
+                                    break
                     supplied = {_text(row[sku_i]).upper() for row in rows if sku_i is not None and re.fullmatch(r"[A-Z]{2}\d{3}", _text(row[sku_i]).upper())}
                     unmatched = sorted(supplied - existing)
                     preview.update(matchedSkuCount=len(supplied & existing), unmappedSkuCount=len(unmatched), unmappedSkuPreview=unmatched[:20])
                     if unmatched:
                         result["status"] = "needs_review"
                         result["warnings"].append(f"{market} 有 {len(unmatched)} 个 SKU 不在现有库存模型；完整源表已保存，但这些 SKU 仍需资料映射，不会悄悄忽略为已更新。")
+                if file_token:
+                    result["source"]["headers"] = header_signatures
             finally:
                 book.close()
         result["warnings"].append("下载时间不是业务截止日期；请核验表内日期后确认发布。浏览器登录态未复制到 NAS。")
@@ -366,7 +397,7 @@ def _research_report(path: Path) -> dict[str, Any]:
     return {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": {"path": path.name, "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"), "sha256": _sha256(path), "sheet": "多工作表"}, "summary": {"candidateCount": len(candidates), "viableCandidateCount": sum(1 for value in margins if value >= 0.3), "averageGrossMargin": sum(margins) / len(margins) if margins else 0, "latestOrderMonth": max((item["month"] for item in ordered), default=None), "orderedSkuCount": len({item["sku"] for item in ordered}), "plannedUnits": int(sum(item["orderQuantity"] or 0 for item in ordered)), "monthCount": len({item["month"] for item in monthly})}, "candidates": candidates, "monthlyOrders": monthly}
 
 
-def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
+def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = False) -> list[str]:
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
     updated: list[str] = []
     try:
@@ -411,16 +442,23 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
                 if name_i is not None and _text(row[name_i]):
                     item["productName"] = _text(row[name_i])
                 fba_value = _number(row[fba_i]) if fba_i is not None else None
-                if fba_value is not None:
+                if fba_value is not None and not planning_only:
                     item["fbaSellable"] = max(0, int(fba_value))
                 network_value = _number(row[network_i]) if network_i is not None else None
-                if network_value is not None:
+                if network_value is not None and not planning_only:
                     item["inTransitInventory"] = max(0, int(network_value) - int(item.get("fbaSellable", 0) or 0))
                 else:
                     item["inTransitInventory"] = max(0, int(item.get("inTransitInventory", item.get("awdInbound", 0)) or 0))
                 if local_i is not None and _number(row[local_i]) is not None:
-                    item["localInventory"] = max(0, int(_number(row[local_i])))
-                    item["domesticSupplyTotal"] = item["localInventory"] + int(item.get("pendingOrderQty", 0))
+                    if planning_only:
+                        # This WPS column already includes orders; do not count them twice
+                        # or pretend that its combined supply is verified on-hand stock.
+                        item["domesticSupplyTotal"] = max(0, int(_number(row[local_i])))
+                        item["wpsDomesticSupplyTotal"] = item["domesticSupplyTotal"]
+                        item["domesticSupplyBreakdownVerified"] = False
+                    else:
+                        item["localInventory"] = max(0, int(_number(row[local_i])))
+                        item["domesticSupplyTotal"] = item["localInventory"] + int(item.get("pendingOrderQty", 0))
                 if sales_i is not None and _number(row[sales_i]) is not None:
                     units = max(0, int(_number(row[sales_i]) or 0))
                     # A planning column without an explicit sales period is not historical evidence.
@@ -441,7 +479,7 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
                 item["suggestedProductionQty"] = max(0, int(item["suggestedShipmentQty"]) - int(item.get("domesticSupplyTotal", 0) or 0))
             report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             snapshots = report.setdefault("snapshots", {})
-            snapshots["fbaDate"] = snapshot_date.isoformat()
+            snapshots["fbaDate"] = previous_fba_date if planning_only else snapshot_date.isoformat()
             snapshots.setdefault("awdSourceAvailable", market == "US")
             snapshots.setdefault("awdDate", snapshot_date.isoformat())
             if not snapshots["awdSourceAvailable"]:
@@ -453,7 +491,7 @@ def _patch_inventory(path: Path, reports_dir: Path) -> list[str]:
             snapshots["ageDays"] = max(0, (date.today() - latest_snapshot).days)
             snapshots.setdefault("staleAfterDays", 14)
             snapshots["isStale"] = snapshots["ageDays"] > int(snapshots["staleAfterDays"])
-            if not re.search(r"20\d{6}", path.name):
+            if planning_only or not re.search(r"20\d{6}", path.name):
                 # A fresh download must never make an undated business snapshot look fresh.
                 snapshots["businessDateUnknown"] = True
                 snapshots["fbaDate"] = previous_fba_date
@@ -710,14 +748,14 @@ def _patch_shipments(source_dir: Path, reports_dir: Path, uploaded_names: list[s
     return ["document_master.json"]
 
 
-def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
+def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, before_commit=None) -> dict[str, Any]:
     original = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
     if original.get("status") == "published":
         raise ValueError("该批次已经发布")
     for item in original["files"]:
         if Path(item["name"]).name != item["name"] or _sha256(batch_dir / "source" / item["name"]) != item["sha256"]:
             raise ValueError("预览后的源文件已变化，请重新上传解析")
-    with report_transaction(reports_dir, snapshots_dir) as (stage, version):
+    with report_transaction(reports_dir, snapshots_dir, before_commit=before_commit) as (stage, version):
         previous_incoming = current_reports(reports_dir).parent / "incoming"
         if previous_incoming.is_dir():
             shutil.copytree(previous_incoming, stage.parent / "incoming", dirs_exist_ok=True)
@@ -742,7 +780,7 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
             _atomic_json(reports_dir / "new_product_research.json", _research_report(source))
             updated.append("new_product_research.json")
         elif item["type"] == "inventory":
-            updated.extend(_patch_inventory(source, reports_dir))
+            updated.extend(_patch_inventory(source, reports_dir, planning_only=manifest.get("source", {}).get("kind") == "wps-api-download"))
         elif item["type"] == "advertising":
             updated.extend(_patch_advertising(source, reports_dir))
         elif item["type"] == "product_details":
@@ -787,14 +825,52 @@ def restore_version(version: str, reports_dir: Path, snapshots_dir: Path) -> dic
     return restore_reports(version, reports_dir, snapshots_dir)
 
 
+def auto_publish_wps(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, task_id: str, lease: str) -> dict[str, Any]:
+    """Publish only a previously reviewed WPS source; retain a draft otherwise."""
+    from .jobs.gerpgo_preview import baseline
+    manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+    source = manifest.get("source", {})
+    if manifest.get("status") != "ready" or source.get("kind") != "wps-api-download" or len(manifest["files"]) != 1 or not manifest["files"][0].get("publishable"):
+        return {"status": "awaiting_review", "batchId": batch_dir.name, "reason": "WPS 结构、数值或 SKU 映射待核验"}
+    approved = []
+    for candidate in batch_dir.parent.glob("batch-*/manifest.json"):
+        item = json.loads(candidate.read_text(encoding="utf-8"))
+        if item.get("status") == "published" and item.get("source", {}).get("kind") == "wps-api-download" and item["source"].get("fileToken") == source.get("fileToken") and item["source"].get("shareUrl") == source.get("shareUrl"):
+            approved.append((item.get("publishedAt", ""), candidate.stat().st_mtime_ns, item))
+    prior = max(approved, key=lambda entry: entry[:2])[2] if approved else None
+    if not prior:
+        return {"status": "awaiting_review", "batchId": batch_dir.name, "reason": "首次 WPS 库存同步需在上传批次中人工确认发布"}
+    before, after = prior["files"][0], manifest["files"][0]
+    if before.get("sheets") != after.get("sheets") or prior["source"].get("headers") != source.get("headers"):
+        return {"status": "awaiting_review", "batchId": batch_dir.name, "reason": "WPS 工作表或列结构变化，请人工检查"}
+    old_markets, new_markets = before.get("preview", {}).get("markets", {}), after.get("preview", {}).get("markets", {})
+    if not old_markets or old_markets.keys() != new_markets.keys() or any(not old_markets[m].get("uniqueSkuCount") or abs(new_markets[m]["uniqueSkuCount"] / old_markets[m]["uniqueSkuCount"] - 1) > 0.1 for m in new_markets):
+        return {"status": "awaiting_review", "batchId": batch_dir.name, "reason": "WPS 有效 SKU 数量变化超过 10%，请人工检查"}
+    def guard():
+        if baseline(reports_dir) != manifest.get("baseline"):
+            raise ValueError("WPS 预览基线已变化，旧报告保留，请重新拉取")
+        with sqlite3.connect(Path(os.environ.get("STORE_OPS_STATE_DB") or reports_dir.parent / "db" / "operations.sqlite3"), timeout=5) as connection:
+            task = connection.execute("SELECT kind,request_json FROM data_refresh_tasks_v1 WHERE id=? AND lease=? AND status='running'", (task_id, lease)).fetchone()
+            settings = connection.execute("SELECT enabled,auto_publish,last_task_id FROM data_sync_schedules_v1 WHERE key='wps_inventory'").fetchone()
+            if not task or task[0] != "wps_inventory" or json.loads(task[1]).get("scheduled") is not True or not settings or settings[:2] != (1, 1) or settings[2] != task_id:
+                raise ValueError("WPS 自动发布已关闭或 worker 租约失效")
+            connection.execute("UPDATE data_refresh_tasks_v1 SET updated_at=? WHERE id=? AND lease=?", (datetime.now(timezone.utc).isoformat(), task_id, lease))
+    guard()
+    result = publish_batch(batch_dir, reports_dir, snapshots_dir, before_commit=guard)
+    return {"status": "completed", "batchId": batch_dir.name, "dataVersion": result["dataVersion"]}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["inspect", "publish", "restore", "receive-wps"])
+    parser.add_argument("command", choices=["inspect", "publish", "restore", "receive-wps", "auto-publish-wps"])
     parser.add_argument("--batch-dir")
     parser.add_argument("--reports-dir")
     parser.add_argument("--snapshots-dir")
     parser.add_argument("--version")
     parser.add_argument("--source-file")
+    parser.add_argument("--file-token")
+    parser.add_argument("--task-id")
+    parser.add_argument("--lease")
     parser.add_argument("--share-url")
     parser.add_argument("--config", default="config/project.json")
     args = parser.parse_args()
@@ -809,7 +885,11 @@ def main() -> int:
     elif args.command == "receive-wps":
         if not args.source_file or not args.share_url:
             parser.error("receive-wps requires --source-file and --share-url")
-        payload = receive_wps_download(load_config(args.config), Path(args.source_file), args.share_url)
+        payload = receive_wps_download(load_config(args.config), Path(args.source_file), args.share_url, file_token=args.file_token)
+    elif args.command == "auto-publish-wps":
+        if not args.batch_dir or not args.reports_dir or not args.snapshots_dir or not args.task_id or not args.lease:
+            parser.error("auto-publish-wps requires a batch, report paths and active worker lease")
+        payload = auto_publish_wps(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir), args.task_id, args.lease)
     else:
         if not args.version or not args.reports_dir or not args.snapshots_dir:
             parser.error("restore requires --version, --reports-dir and --snapshots-dir")

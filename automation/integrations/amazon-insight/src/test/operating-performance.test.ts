@@ -12,6 +12,13 @@ const input = {
     actualMargin: null, sourceKind: "gerpgo", quality: { profitVerified: false, returnsVerified: false, completePeriod: true } }],
   publication: { version: "data-20261008-000000-test", actor: "shared-account", baseline: "test", previewHash: "test", reviewedAt: now.toISOString() },
 };
+it("accepts scheduled publication without falling back to stale Excel", () => {
+  const data = operatingPerformanceSchema.parse({ ...input, publication: { ...input.publication, actor: "scheduled-worker" } });
+  const model = buildOperatingModel([], undefined, undefined, [], now, data);
+  expect(queryOperatingModel(model, {}, now).summary.revenue).toBe(100);
+  expect(model.publishedVersion).toBe(input.publication.version);
+  expect(model.rows[0].history[0].sourceKind).toBe("gerpgo");
+});
 it("keeps optional API facts null through query summaries and cards", () => {
   const data = operatingPerformanceSchema.parse(input);
   const model = buildOperatingModel([], undefined, undefined, [], now, data);

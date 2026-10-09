@@ -31,7 +31,7 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
       // Seasonality is anchored to today, not to an old import month.
       const seasonality = buildSeasonalityProfile(unitHistory, now.getUTCMonth() + 1);
       return {
-        sku, market, parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
+        sku, market, listingId: JSON.stringify([performance?.storeScope?.storeName ?? "MEASUREMAN", market, sku]), parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
         currency: history.at(-1)?.currency || inventory?.currency || (market === "MX" ? "MXN" : market === "AU" ? "AUD" : market === "CA" ? "CAD" : "USD"),
         history, unitHistory, seasonality, inventoryDate: inventory?.snapshots.fbaDate ?? null,
         awdDate: inventory?.snapshots.awdSourceAvailable ? inventory.snapshots.awdDate : null,

@@ -27,7 +27,7 @@ const reconciliationLabels = {
 } as const;
 const cycleStatusLabels: Record<PurchasePlanCycleStatus, string> = { DRAFT: "草稿", REVIEWED: "已复核", LOCKED: "已锁定", ORDERED: "已下单" };
 
-export function PurchasePlanWorkbench({ data, seasonalActions }: { data: PurchasePlanData; seasonalActions: SeasonalPurchaseAction[] }) {
+export function PurchasePlanWorkbench({ data, seasonalActions, initialQuery = "" }: { data: PurchasePlanData; seasonalActions: SeasonalPurchaseAction[]; initialQuery?: string }) {
   const pageSize = 40;
   const seasonalActionBySku = useMemo(() => new Map(seasonalActions.map((action) => [action.sku, action] as const)), [seasonalActions]);
   const purchaseRowBySku = useMemo(() => new Map(data.rows.map((row) => [row.sku, row] as const)), [data.rows]);
@@ -42,7 +42,7 @@ export function PurchasePlanWorkbench({ data, seasonalActions }: { data: Purchas
   }).filter((row) => row.suggestedPurchaseQty > 0).sort((a, b) => riskRank(a) - riskRank(b) || b.suggestedPurchaseQty - a.suggestedPurchaseQty), [data.rows, seasonalActionBySku]);
   const reconciliationRows = useMemo(() => data.rows.filter((row) => row.manualPlannedQty > 0 || row.actualOrderedQty > 0).sort((a, b) => Math.abs(b.varianceQty) - Math.abs(a.varianceQty) || b.actualOrderedQty - a.actualOrderedQty), [data.rows]);
   const [view, setView] = useState<View>("next");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [drafts, setDrafts] = useState<Record<string, DraftValue>>(() => Object.fromEntries(nextCandidates.map((row) => [row.sku, { quantity: row.suggestedPurchaseQty, note: row.seasonalAction?.reason ?? "" }])));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);

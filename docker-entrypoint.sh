@@ -40,10 +40,11 @@ except Exception:
   fi
 fi
 
-if [ ! -f /data/runtime/db/operations.sqlite3 ]; then
-  echo "Initializing store operations database"
-  /opt/store-ops-venv/bin/python -m store_ops --config /opt/store-ops/config/project.json init >/dev/null
-fi
+# Older web-only releases may have created this SQLite file with auxiliary
+# tables but without the Python job tables. File existence is not a migration
+# check. The existing init command is idempotent and respects configured paths.
+echo "Checking store operations database schema"
+/opt/store-ops-venv/bin/python -m store_ops --config /opt/store-ops/config/project.json init >/dev/null
 
 if [ "$APP_ENV" = "production" ] && [ -z "${SECRET_KEY:-}" ]; then
   echo "SECRET_KEY is required when APP_ENV=production" >&2

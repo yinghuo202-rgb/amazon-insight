@@ -30,7 +30,7 @@ export type ImportBatch = {
   dataVersion?: string;
   updatedReports?: string[];
   stagedFiles?: string[];
-  source?: { kind: "wps-browser-download"; shareUrl: string; capturedAt: string; businessAsOf: string | null; sha256: string; authentication: "existing-browser-session" };
+  source?: { kind: "wps-browser-download" | "wps-api-download"; shareUrl: string; capturedAt: string; businessAsOf: string | null; sha256: string; authentication: "existing-browser-session" | "official-oauth"; fileToken?: string };
 };
 
 export type DataVersion = { version: string; createdAt: string; fileCount: number };
@@ -113,6 +113,18 @@ export async function publishImportBatch(batchId: string) {
   return runImporter("publish", batchDirectory, ["--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot()]);
 }
 
+export async function getImportBatch(batchId: string) {
+  return readManifest(path.join(uploadsRoot(), safeBatchId(batchId)));
+}
+export async function receiveWpsInventoryDownload(download: { file: string; fileToken: string; shareUrl: string }) {
+  return runPythonJson<ImportBatch>(["-m", "store_ops.uploaded_data", "receive-wps", "--config", path.join(automationRoot(), "config", "project.json"),
+    "--source-file", download.file, "--share-url", download.shareUrl, "--file-token", download.fileToken]);
+}
+export async function autoPublishWpsInventory(batchId: string, taskId: string, lease: string) {
+  return runPythonJson<{ status: "completed" | "awaiting_review"; batchId: string; reason?: string }>(["-m", "store_ops.uploaded_data", "auto-publish-wps", "--batch-dir", path.join(uploadsRoot(), safeBatchId(batchId)),
+    "--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot(), "--task-id", taskId, "--lease", lease]);
+}
+
 export async function listImportBatches() {
   const root = uploadsRoot();
   await mkdir(root, { recursive: true });
@@ -159,10 +171,10 @@ async function runImporter(command: "inspect" | "publish", batchDirectory: strin
   });
 }
 
-async function runPythonJson(args: string[]) {
+async function runPythonJson<T = Record<string, unknown>>(args: string[]) {
   const executable = process.env.STORE_OPS_PYTHON || "python";
   const root = automationRoot();
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
+  return new Promise<T>((resolve, reject) => {
     const child = spawn(executable, args, { cwd: root, windowsHide: true, env: { ...process.env, PYTHONPATH: path.join(root, "src") } });
     let stdout = ""; let stderr = "";
     child.stdout.on("data", (chunk) => { stdout = `${stdout}${String(chunk)}`.slice(-200_000); });

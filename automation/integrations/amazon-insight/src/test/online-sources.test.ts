@@ -8,7 +8,8 @@ describe("online source configuration", () => {
   it("allows a configured WPS share link without claiming synchronization", () => {
     const source = getOnlineSourceConfiguration({ STORE_OPS_WPS_INVENTORY_URL: " https://www.kdocs.cn/l/Example123 " })[0];
     expect(source.url).toBe("https://www.kdocs.cn/l/Example123");
-    expect(source.status).toContain("尚未接入");
+    expect(source.status).toContain("完成 WPS 授权");
+    expect(source.status).not.toContain("同步成功");
   });
   it.each(["javascript:alert(1)", "http://www.kdocs.cn/l/abc", "https://www.kdocs.cn.attacker.invalid/l/abc", "https://secret@www.kdocs.cn/l/abc", "https://www.kdocs.cn/l/abc?token=secret", "https://www.kdocs.cn/other"]) ("rejects unsafe or unsupported link %s", value => {
     const source = getOnlineSourceConfiguration({ STORE_OPS_WPS_RESEARCH_URL: value })[1];

@@ -3,17 +3,26 @@ import { getDataRefreshStatus, runGerpgoConnectionCheck } from "@/lib/inventory/
 import { GerpgoConnectionError, saveGerpgoCredentials } from "@/lib/inventory/gerpgo";
 import { z } from "zod";
 import { getGerpgoSettingsStatus } from "@/lib/inventory/gerpgo";
-import { listRefreshTasks, submitRefreshTask } from "@/lib/inventory/refresh-task-store";
+import { listRefreshTasks, submitRefreshTask, listSyncSchedules, saveSyncSchedule, syncScheduleSchema, restartSyncSchedule } from "@/lib/inventory/refresh-task-store";
 import { operatingRulesSchema } from "@/lib/inventory/operating-rules";
 import { gerpgoReviewRequestSchema, readGerpgoPreview, readGerpgoCandidatePage, readGerpgoCollectionSummary } from "@/lib/inventory/gerpgo-preview";
 import { saveOperatingRuleOverride } from "@/lib/inventory/operating-rules-store";
 import { operatingMarkets } from "@/lib/inventory/operating-performance";
+import { getWpsStatus, saveWpsSettings, wpsSettingsSchema, beginWpsAuthorization, finishWpsAuthorization, WpsError } from "@/lib/inventory/wps";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
+  const params = new URL(request.url).searchParams;
+  if (params.get("wps_callback") === "1") {
+    let result = "authorized";
+    try { await finishWpsAuthorization(user.id, params.get("code") ?? "", params.get("state") ?? ""); }
+    catch { result = "error"; }
+    return new Response(null, { status: 303, headers: { Location: "/inventory/data?wps=" + result, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+  }
   const collectionId = new URL(request.url).searchParams.get("collection");
   if (collectionId) {
     try { return Response.json({ collection: await readGerpgoCollectionSummary(collectionId) }, { headers: { "Cache-Control": "no-store" } }); }
@@ -30,12 +39,13 @@ export async function GET(request: Request) {
     }
     catch { return Response.json({ error: "预览尚未生成或校验失败，请查看任务状态。" }, { status: 422 }); }
   }
-  if (new URL(request.url).searchParams.get("tasks") === "1") return Response.json({ tasks: listRefreshTasks() }, { headers: { "Cache-Control": "no-store" } });
+  if (new URL(request.url).searchParams.get("tasks") === "1") return Response.json({ tasks: listRefreshTasks(), schedules: listSyncSchedules(), wps: getWpsStatus(), gerpgoConfigured: getGerpgoSettingsStatus().configured }, { headers: { "Cache-Control": "no-store" } });
   return Response.json({ ...await getDataRefreshStatus(), tasks: listRefreshTasks() }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request) {
-  if (!(await getCurrentUser())) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "请使用共用账号登录。" }, { status: 401 });
   let origin: URL;
   try { origin = new URL(process.env.NEXT_PUBLIC_APP_URL || request.url); }
   catch { return Response.json({ error: "网站公开地址配置无效。" }, { status: 500 }); }
@@ -46,6 +56,34 @@ export async function POST(request: Request) {
     let payload;
     try { payload = JSON.parse(body); }
     catch { return Response.json({ error: "请求格式无效。" }, { status: 400 }); }
+    if (["save_sync_schedule", "restart_sync_schedule", "save_wps_settings", "authorize_wps", "pull_wps"].includes(payload?.action)) {
+      if (request.headers.get("content-type")?.split(";")[0] !== "application/json") return Response.json({ error: "请从本站数据更新页面操作。" }, { status: 403 });
+      try {
+        if (payload.action === "restart_sync_schedule") {
+          const parsed = z.object({ action: z.literal("restart_sync_schedule"), key: z.enum(["gerpgo", "wps_inventory"]), acknowledged: z.literal(true) }).strict().safeParse(payload);
+          if (!parsed.success) return Response.json({ error: "重新拉取需要明确确认，且仅支持已配置来源。" }, { status: 422 });
+          try { return Response.json({ schedules: restartSyncSchedule(parsed.data.key) }, { headers: { "Cache-Control": "no-store" } }); }
+          catch { return Response.json({ error: "请先开启同步；当前任务尚在执行时不能重新拉取。" }, { status: 409 }); }
+        }
+        if (payload.action === "save_sync_schedule") {
+          const parsed = z.object({ action: z.literal("save_sync_schedule"), ...syncScheduleSchema.shape }).strict().safeParse(payload);
+          if (!parsed.success) return Response.json({ error: "同步频率必须为 60–10080 分钟，其他设置也需有效。" }, { status: 422 });
+          const settings = { key: parsed.data.key, enabled: parsed.data.enabled, intervalMinutes: parsed.data.intervalMinutes, autoPublish: parsed.data.autoPublish };
+          return Response.json({ schedules: saveSyncSchedule(settings) }, { headers: { "Cache-Control": "no-store" } });
+        }
+        if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) return Response.json({ error: "WPS 配置和授权需要通过 HTTPS 访问。" }, { status: 403 });
+        if (payload.action === "save_wps_settings") {
+          const parsed = z.object({ action: z.literal("save_wps_settings"), ...wpsSettingsSchema.shape }).strict().safeParse(payload);
+          if (!parsed.success) return Response.json({ error: "请填写有效的 WPS 应用凭证、文件 ID 和分享链接。" }, { status: 422 });
+          const settings = { appId: parsed.data.appId, appKey: parsed.data.appKey, fileToken: parsed.data.fileToken, shareUrl: parsed.data.shareUrl };
+          return Response.json({ wps: saveWpsSettings(settings) }, { headers: { "Cache-Control": "no-store" } });
+        }
+        if (Object.keys(payload).length !== 1) return Response.json({ error: "WPS 操作参数无效。" }, { status: 422 });
+        if (payload.action === "authorize_wps") return Response.json({ authorizationUrl: beginWpsAuthorization(user.id, origin.origin) }, { headers: { "Cache-Control": "no-store" } });
+        if (!getWpsStatus().authorized) return Response.json({ error: "请先完成 WPS 库存文件授权。" }, { status: 422 });
+        return Response.json({ task: submitRefreshTask("wps_inventory") }, { status: 202 });
+      } catch (error) { return Response.json({ error: error instanceof WpsError ? error.message : "同步配置操作失败，请检查运营数据库。" }, { status: error instanceof WpsError ? error.httpStatus : 500, headers: { "Cache-Control": "no-store" } }); }
+    }
     if (payload?.action === "publish_gerpgo") {
       const parsed = z.object({ action: z.literal("publish_gerpgo"), ...gerpgoReviewRequestSchema.shape }).strict().safeParse(payload);
       if (!parsed.success) return Response.json({ error: "请完成对账确认并重新打开预览。" }, { status: 422 });

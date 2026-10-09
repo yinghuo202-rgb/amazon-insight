@@ -63,6 +63,7 @@ test("SKU cards support search, evidence, market switching and phone layout", as
 test("SKU detail reveals shipment records only on request", async ({ page }) => {
   await page.goto("/inventory/sku/MA007");
   await expect(page.getByRole("heading", { name: /MA007/ }).first()).toBeVisible();
+  await page.getByRole("tab", { name: "库存与供货" }).click();
   await page.getByText("业务明细：库存、历史发货、订单、产品资料", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "SKU 历史发货记录", exact: true })).toBeVisible();
 });
@@ -77,20 +78,106 @@ test("online source panel separates configured entry points from actual synchron
   expect(check.status()).toBe(422);
   expect((await check.json()).error).toContain("appId");
   await expect(page.getByRole("link", { name: "打开源文档", exact: true })).toHaveAttribute("href", "https://www.kdocs.cn/l/Example123");
-  await expect(page.getByText("分享链接已配置；自动同步尚未接入", { exact: true })).toBeVisible();
+  await expect(page.getByText("请在同步任务中完成 WPS 授权并开启定时同步", { exact: false })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("SKU navigation retains period, sorting and site, including backend return", async ({ page }) => {
+  await page.goto("/inventory/brief?market=US&period=2026-08&query=MA007&filter=all&sort=margin");
+  await expect(page.locator("article").first()).toBeVisible();
+  await page.locator("article").first().getByRole("link", { name: "MA007", exact: true }).click();
+  await expect(page).toHaveURL(/period=2026-08/);
+  await expect(page.getByRole("tab", { name: "经营分析" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "经营分析" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "库存与供货" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("link", { name: "库存视图", exact: true }).last().click();
+  await expect(page.getByPlaceholder("搜索 SKU 或产品名称")).toHaveValue("MA007");
+  await page.getByRole("link", { name: "返回 SKU 分析", exact: true }).click();
+  await page.getByRole("link", { name: /返回SKU 简报/ }).click();
+  await expect(page.getByLabel("月份", { exact: true })).toHaveValue("2026-08");
+  await expect(page.getByLabel("经营排序")).toHaveValue("margin");
+  await expect(page.getByLabel("搜索 SKU、产品或 ASIN")).toHaveValue("ma007");
+  await page.goto("/inventory/stock?market=MX&query=MA007");
+  await expect(page.getByRole("heading", { name: "MX 库存待接入", exact: true })).toBeVisible();
+  await expect(page.getByText("暂无已核验 MX 库存", { exact: false })).toBeVisible();
+});
+
+test("SKU reviews deduplicate and preserve conclusions in the isolated account database", async ({ page }) => {
+  await page.goto("/inventory/sku/MA007?market=US&period=2026-08&tab=records");
+  const panel = page.getByRole("tabpanel", { name: "处理记录" });
+  const reviewButton = panel.getByRole("button", { name: "利润费用待对账 · 建立 / 更新依据", exact: true });
+  await reviewButton.click();
+  const record = panel.locator("article").filter({ has: page.getByRole("heading", { name: "MA007 · US · 利润费用待对账", exact: true }) });
+  await expect(record).toHaveCount(1);
+  await record.getByLabel("利润费用待对账复核备注", { exact: true }).fill("测试库：等待费用对账，暂不调整价格");
+  page.once("dialog", dialog => void dialog.accept());
+  await record.getByLabel("利润费用待对账处理状态", { exact: true }).selectOption("DISMISSED");
+  await expect(record.getByLabel("利润费用待对账处理状态", { exact: true })).toHaveValue("DISMISSED");
+  await expect(record.getByRole("button", { name: "保存备注" })).toBeEnabled();
+  await reviewButton.click();
+  await expect(record).toHaveCount(1);
+  await expect(record.getByLabel("利润费用待对账处理状态", { exact: true })).toHaveValue("DISMISSED");
+  await expect(record.getByLabel("利润费用待对账复核备注", { exact: true })).toHaveValue("测试库：等待费用对账，暂不调整价格");
+  await expect(record.getByText("首次基线：", { exact: false })).toBeVisible();
+  expect((await page.request.post("/api/team", { headers: { origin: "https://evil.invalid" }, data: { kind: "task", sku: "MA007", title: "forged" } })).status()).toBe(403);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("scheduled WPS settings persist while missing authorization and worker stay explicit", async ({ page }) => {
+  await page.goto("/inventory/data");
+  const form = page.locator("form").filter({ has: page.getByRole("heading", { name: "WPS 库存规划同步", exact: true }) });
+  await expect(form.getByRole("checkbox", { name: "开启定时拉取", exact: true })).not.toBeChecked();
+  await expect(form.getByRole("spinbutton", { name: "间隔（分钟）" })).toHaveValue("240");
+  await form.getByRole("checkbox", { name: "开启定时拉取", exact: true }).check();
+  await form.getByRole("spinbutton", { name: "间隔（分钟）" }).fill("180");
+  await form.getByRole("button", { name: "保存设置", exact: true }).click();
+  await page.reload();
+  await expect(form.getByRole("checkbox", { name: "开启定时拉取", exact: true })).toBeChecked();
+  await expect(form.getByRole("spinbutton", { name: "间隔（分钟）" })).toHaveValue("180");
+  await expect(form).toContainText("等待凭证或文件授权，尚未开始拉取");
+  await expect(page.getByRole("button", { name: "立即同步 WPS", exact: true })).toBeDisabled();
+  await page.getByText("配置金山文档应用和库存文件", { exact: true }).click();
+  await page.getByLabel("WPS APPID", { exact: true }).fill("wps-browser-fixture-id");
+  await page.getByLabel("WPS APPKEY", { exact: true }).fill("wps-browser-fixture-private-key");
+  await page.getByLabel("库存文件 ID（file_token，不是分享短码）", { exact: true }).fill("fixture-file-id");
+  const saved = page.waitForResponse(r => r.url().endsWith("/api/inventory/data-refresh") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "保存配置（需要重新授权）", exact: true }).click();
+  const response = await saved; expect(response.status()).toBe(200);
+  expect(await response.text()).not.toContain("wps-browser-fixture-private-key");
+  await expect(page.getByLabel("WPS APPKEY", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "授权库存表", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "立即同步 WPS", exact: true })).toBeDisabled();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain("wps-browser-fixture-private-key");
+  // No worker or external OAuth request in UI acceptance. Keep the test schedule paused.
+  await form.getByRole("checkbox", { name: "开启定时拉取", exact: true }).uncheck();
+  await form.getByRole("button", { name: "保存设置", exact: true }).click();
 });
 test("profit calculator validates assumptions and clears currency-dependent fees", async ({ page }) => {
   await page.goto("/inventory/calculator");
   await page.getByLabel("类目", { exact: true }).selectOption("OTHER");
   for (const [label, value] of [["售价（USD）", "20"], ["采购成本 / 件（USD）", "4"], ["长 cm", "50"], ["宽 cm", "40"], ["高 cm", "30"], ["件 / 箱", "10"], ["头程费率（USD/m³）", "100"], ["佣金率 %", "15"], ["配送费 / 件（USD）", "3"]]) await page.getByLabel(label, { exact: true }).fill(value);
+  await expect(page.getByRole("status")).toContainText("请先核对并确认费率");
+  await page.getByRole("checkbox", { name: /我已核对本次市场/ }).check();
   await expect(page.getByText("$6.20", { exact: true })).toBeVisible();
+  await page.getByText("对比三个售价方案", { exact: true }).click();
+  await page.getByLabel("保守售价（USD）", { exact: true }).fill("18");
+  await page.getByLabel("提价售价（USD）", { exact: true }).fill("22");
+  await expect(page.getByLabel("售价方案对比")).toContainText("保守");
+  await expect(page.getByLabel("售价方案对比")).toContainText("提价");
+  await expect(page.getByLabel("售价方案对比")).toContainText("$4.82");
+  await expect(page.getByLabel("售价方案对比")).toContainText("$7.58");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: "../../runtime/reports/ui-review-20261007/calculator-mobile.png", fullPage: false });
   await page.getByLabel("配送费 / 件（USD）", { exact: true }).fill("-1");
+  await expect(page.getByRole("checkbox", { name: /我已核对本次市场/ })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: /我已核对本次市场/ }).check();
   await expect(page.getByRole("status")).toContainText("数值无效");
   await page.getByLabel("站点", { exact: true }).selectOption("CA");
   await expect(page.getByLabel("售价（CAD）", { exact: true })).toHaveValue("");
@@ -101,6 +188,8 @@ test("forged session cannot read or update reports; member creation is closed", 
   expect((await request.get("/api/inventory/master-data")).status()).toBe(401);
   expect((await request.post("/api/inventory/new-product-research", { data: {} })).status()).toBe(401);
   expect((await request.post("/api/inventory/data-refresh", { data: { action: "test_gerpgo" } })).status()).toBe(401);
+  expect((await request.get("/api/team")).status()).toBe(401);
+  expect((await request.post("/api/team", { data: {} })).status()).toBe(401);
   expect((await request.post("/api/inventory/data-refresh", { data: { action: "save_gerpgo_credentials", appId: "fixture", appKey: "fixture" } })).status()).toBe(401);
   expect((await request.post("/api/auth/create-member", { data: {} })).status()).toBe(410);
   await request.dispose();

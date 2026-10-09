@@ -19,7 +19,7 @@ export const operatingPerformanceSchema = z.object({
   storeScope: z.object({ storeName: z.string().min(1), serverId: z.number().int().positive(), marketIds: z.array(z.number().int().positive()).min(1) }).optional(),
   scopes: z.array(z.object({ market: z.enum(["US", "CA", "MX", "AU"]), reportMonth: z.string().regex(/^\d{4}-\d{2}$/) })),
   rows: z.array(operatingPerformanceRowSchema),
-  publication: z.object({ version: z.string(), actor: z.literal("shared-account"), baseline: z.string(), previewHash: z.string(), reviewedAt: z.string() }),
+  publication: z.object({ version: z.string(), actor: z.enum(["shared-account", "scheduled-worker"]), baseline: z.string(), previewHash: z.string(), reviewedAt: z.string() }),
 });
 export type OperatingPerformance = z.infer<typeof operatingPerformanceSchema>;
 export type OperatingPerformanceRow = z.infer<typeof operatingPerformanceRowSchema>;

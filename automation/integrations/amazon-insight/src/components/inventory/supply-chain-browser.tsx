@@ -8,8 +8,8 @@ type SupplyData = {
   lots: Array<{ warehouseId: string; warehouse: { code: string; name: string }; sku: string; lotCode: string; poNumber: string | null; receivedAt: string; receivedQty: number; remainingQty: number }>;
 };
 
-export function SupplyChainBrowser({ data }: { data: SupplyData }) {
-  const [query, setQuery] = useState("");
+export function SupplyChainBrowser({ data, initialQuery = "" }: { data: SupplyData; initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery);
   const [tab, setTab] = useState<"outbound" | "stock" | "timeline">("outbound");
   const filteredDocs = useMemo(() => data.documents.filter((doc) => `${doc.documentNo} ${doc.reference ?? ""} ${doc.lines.map((line) => `${line.sku} ${line.poNumber ?? ""} ${line.allocations.map((allocation) => allocation.poNumber ?? "").join(" ")}`).join(" ")}`.toLowerCase().includes(query.trim().toLowerCase())), [data.documents, query]);
   const filteredLots = useMemo(() => data.lots.filter((lot) => `${lot.sku} ${lot.poNumber ?? ""} ${lot.lotCode} ${lot.warehouse.name}`.toLowerCase().includes(query.trim().toLowerCase())), [data.lots, query]);

@@ -71,7 +71,7 @@ export function getOnlineSourceConfiguration(env: Record<string, string | undefi
         if (parsed.protocol === "https:" && ["www.kdocs.cn", "kdocs.cn"].includes(parsed.hostname) && !parsed.username && !parsed.password && /^\/l\/[a-zA-Z0-9]+\/?$/.test(parsed.pathname) && !parsed.search && !parsed.hash) url = parsed.href;
       } catch { /* Invalid configuration is surfaced, never used as a link. */ }
     }
-    return { ...source, url, status: value ? url ? "分享链接已配置；自动同步尚未接入" : "分享链接无效，请配置 HTTPS 金山文档分享地址" : "尚未配置分享链接" };
+    return { ...source, url, status: value ? url ? source.key === "inventory" ? "分享链接已配置；请在同步任务中完成 WPS 授权并开启定时同步" : "分享链接已配置；新品自动同步尚未启用" : "分享链接无效，请配置 HTTPS 金山文档分享地址" : "尚未配置分享链接" };
   });
 }
 

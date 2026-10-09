@@ -382,6 +382,10 @@ model CollaborationTask {
   sku         String
   title       String
   note        String?
+  market      String?
+  issueKey    String?
+  contextJson String?
+  historyJson String    @default("[]")
   status      String    @default("OPEN")
   assigneeId  String?
   createdById String
@@ -395,5 +399,6 @@ model CollaborationTask {
 
   @@index([workspaceId, status])
   @@index([workspaceId, sku])
+  @@unique([workspaceId, issueKey])
   @@index([assigneeId])
 }

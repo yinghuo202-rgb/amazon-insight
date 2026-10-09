@@ -4,12 +4,63 @@ import { CheckCircle2, DatabaseZap, FileSpreadsheet, FolderSearch, History, Load
 import { useEffect, useRef, useState } from "react";
 
 import { OpsBadge, OpsCard, OpsCardHeader, OpsKpi } from "@/components/inventory/ops-ui";
-import type { RefreshTask } from "@/lib/inventory/refresh-task-store";
+import type { RefreshTask, SyncSchedule } from "@/lib/inventory/refresh-task-store";
 import type { OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
 import type { GerpgoPreview, GerpgoCollectionSummary } from "@/lib/inventory/gerpgo-preview";
 import type { DataRefreshStatus } from "@/lib/inventory/data-refresh";
 import type { DataVersion, ImportBatch } from "@/lib/inventory/data-import";
 import type { GerpgoConnectionResult, GerpgoSettingsStatus } from "@/lib/inventory/gerpgo";
+import type { getWpsStatus } from "@/lib/inventory/wps";
+
+type WpsStatus = ReturnType<typeof getWpsStatus>;
+function SyncScheduleControls({ value, ready, onSave, onRestart }: { value: SyncSchedule; ready: boolean; onSave: (input: Record<string, unknown>) => Promise<void>; onRestart: (key: SyncSchedule["key"]) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const activeWorker = value.workerActive;
+  return <form key={`${value.enabled}-${value.intervalMinutes}-${value.autoPublish}`} onSubmit={async event => {
+    event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true);
+    try { await onSave({ key: value.key, enabled: data.has("enabled"), intervalMinutes: Number(data.get("interval")), autoPublish: data.has("automatic") }); }
+    finally { setBusy(false); }
+  }} aria-label={value.key === "gerpgo" ? "积加定时设置" : "WPS 库存定时设置"} className="rounded-xl bg-[#f5f5f7] p-4 text-xs">
+    <h3 className="font-semibold">{value.key === "gerpgo" ? "积加经营及 FBA 采集" : "WPS 库存规划同步"}</h3>
+    <div className="mt-3 flex flex-wrap items-center gap-4"><label className="flex min-h-11 items-center gap-2"><input name="enabled" type="checkbox" defaultChecked={value.enabled} />开启定时拉取</label><label>间隔（分钟）<input name="interval" type="number" required min={60} max={10080} defaultValue={value.intervalMinutes} className="ml-2 min-h-11 w-24 rounded-lg border px-2" /></label><button disabled={busy} className="min-h-11 rounded-full bg-[#1d1d1f] px-4 text-white disabled:opacity-50">{busy ? "保存中…" : "保存设置"}</button></div>
+    <label className="mt-2 flex min-h-11 items-center gap-2"><input name="automatic" type="checkbox" defaultChecked={value.autoPublish} />通过校验后自动发布，首次仍须人工确认</label>
+    <p className="leading-6 text-slate-500">{!ready ? "等待凭证或文件授权，尚未开始拉取。" : !activeWorker ? "未检测到近期 worker 心跳，请检查同步容器。" : value.enabled ? `已开启；计划执行 ${formatDateTime(value.nextRunAt)}` : "定时同步已暂停。"}{value.lastStatus && ` 上次任务：${value.lastStatus}。`}</p>
+    {value.lastStatus && ["awaiting_review", "awaiting_mapping", "interrupted"].includes(value.lastStatus) && <p className="mt-1 leading-6 text-amber-800">当前任务需要审核或恢复确认；不会继续堆积新任务。</p>}
+    {value.enabled && value.lastStatus && ["awaiting_review", "awaiting_mapping", "interrupted", "failed"].includes(value.lastStatus) && <button type="button" disabled={busy} onClick={async () => {
+      if (!window.confirm("确认重新拉取？原始文件和旧预览会保留，当前报告不变；不会直接重放中断的发布任务。")) return;
+      setBusy(true); try { await onRestart(value.key); } finally { setBusy(false); }
+    }} className="mt-2 min-h-11 rounded-full border bg-white px-3">确认后重新拉取</button>}
+  </form>;
+}
+
+function WpsSyncSettings({ value, onChange, onError }: { value: WpsStatus; onChange: (s: WpsStatus) => void; onError: (s: string) => void }) {
+  const [busy, setBusy] = useState(false), [appId, setAppId] = useState(""), [appKey, setAppKey] = useState("");
+  async function action(payload: Record<string, unknown>) {
+    if (window.location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) { setAppKey(""); onError("WPS 配置请通过 HTTPS 操作，本次未发送密钥。"); return; }
+    setBusy(true); onError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || "WPS 操作失败。");
+      if (data.wps) onChange(data.wps);
+      if (data.authorizationUrl) { const u = new URL(data.authorizationUrl); if (u.origin !== "https://developer.kdocs.cn") throw new Error("授权地址异常。"); window.location.assign(u.href); }
+    } catch (error) { onError(error instanceof Error ? error.message : "WPS 操作失败。"); }
+    finally { setBusy(false); }
+  }
+  return <div className="mt-4 rounded-xl border border-black/5 p-4 text-xs">
+    <h3 className="font-semibold">WPS 自动下载授权</h3><p role="status" className="mt-2 leading-6 text-slate-500">{value.message}</p>
+    <details className="mt-2"><summary className="min-h-11 cursor-pointer">配置金山文档应用和库存文件</summary>
+      <form onSubmit={event => { event.preventDefault(); const d = new FormData(event.currentTarget), payload = { action: "save_wps_settings", appId, appKey, fileToken: d.get("fileToken"), shareUrl: d.get("shareUrl") }; setAppId(""); setAppKey(""); void action(payload); }} className="grid gap-3 sm:grid-cols-2">
+        <label>WPS APPID<input required autoComplete="off" value={appId} onChange={e => setAppId(e.target.value)} className="mt-1 min-h-11 w-full rounded-lg border px-3" /></label>
+        <label>WPS APPKEY<input required type="password" autoComplete="new-password" value={appKey} onChange={e => setAppKey(e.target.value)} className="mt-1 min-h-11 w-full rounded-lg border px-3" /></label>
+        <label>库存文件 ID（file_token，不是分享短码）<input required name="fileToken" defaultValue={value.fileToken} className="mt-1 min-h-11 w-full rounded-lg border px-3" /></label>
+        <label>库存分享链接<input required name="shareUrl" type="url" defaultValue={value.shareUrl} className="mt-1 min-h-11 w-full rounded-lg border px-3" /></label>
+        <button disabled={busy} className="min-h-11 rounded-full bg-[#1d1d1f] px-4 text-white disabled:opacity-50">保存配置（需要重新授权）</button>
+      </form><p className="mt-2 leading-6 text-slate-500">回调地址：本站 /api/inventory/data-refresh?wps_callback=1。需开放平台下载个人文件权限，文件 ID 从开放平台文件列表取得。密钥及刷新令牌仅加密保存在服务器。</p>
+    </details>
+    <div className="mt-3 flex flex-wrap gap-2"><button disabled={busy || !value.configured} onClick={() => void action({ action: "authorize_wps" })} className="min-h-11 rounded-full bg-[#0071e3] px-4 text-white disabled:opacity-50">授权库存表</button><button disabled={busy || !value.authorized} onClick={() => void action({ action: "pull_wps" })} className="min-h-11 rounded-full border px-4 disabled:opacity-50">立即同步 WPS</button></div>
+    <p className="mt-2 leading-6 text-slate-500">授权可使用当前 WPS 登录态，无需复制 Cookie。分享链接本身不是下载授权；授权失效时保留旧数据。WPS 规划值不覆盖积加海外库存。</p>
+  </div>;
+}
 
 export function GerpgoConnectionCheck({ initialConfiguration }: { initialConfiguration: GerpgoSettingsStatus }) {
   const [configuration, setConfiguration] = useState(initialConfiguration);
@@ -149,7 +200,7 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
       {message ? <p className={`border-t px-5 py-3 text-xs ${message.startsWith("已") || message.includes("发布") ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{message}</p> : null}
     </OpsCard>
 
-    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => void publish(batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.source && <p className="mt-3 text-[11px] text-slate-500">来源：WPS 现有登录态下载 · 文件校验 {batch.source.sha256.slice(0, 12)} · 业务截止日期 {batch.source.businessAsOf ?? "待核验"}</p>}{batch.warnings.map(warning => <p key={warning} role="status" className="mt-2 text-[11px] leading-6 text-amber-800">{warning}</p>)}{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
+    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => void publish(batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.source && <p className="mt-3 text-[11px] text-slate-500">来源：{batch.source.kind === "wps-api-download" ? "WPS 官方授权自动下载" : "WPS 现有登录态下载"} · 文件校验 {batch.source.sha256.slice(0, 12)} · 业务截止日期 {batch.source.businessAsOf ?? "待核验"}</p>}{batch.warnings.map(warning => <p key={warning} role="status" className="mt-2 text-[11px] leading-6 text-amber-800">{warning}</p>)}{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
 
     {isAdmin && versions.length ? <OpsCard><OpsCardHeader title="数据版本与回滚" description="每次发布前都会保存完整报告快照；回滚时也会先备份当前版本。" action={<History className="h-4 w-4 text-blue-700" />} /><div className="divide-y divide-slate-100">{versions.slice(0, 8).map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-mono text-xs font-semibold text-slate-800">{version.version}</p><p className="mt-1 text-[10px] text-slate-500">{formatDateTime(version.createdAt)} · {version.fileCount} 份报告</p></div><button type="button" disabled={Boolean(importBusy)} onClick={() => void restore(version.version)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" />回滚</button></div>)}</div></OpsCard> : null}
     <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -175,6 +226,22 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
 
 function RefreshTaskPanel() {
   const [tasks, setTasks] = useState<RefreshTask[]>([]), [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const [schedules, setSchedules] = useState<SyncSchedule[]>([]), [wps, setWps] = useState<WpsStatus | null>(null), [gerpgoReady, setGerpgoReady] = useState(false);
+  const [wpsReturn, setWpsReturn] = useState(""), [pollError, setPollError] = useState("");
+  async function saveSchedule(input: Record<string, unknown>) {
+    setError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "save_sync_schedule", ...input }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || "定时设置保存失败。"); setSchedules(data.schedules);
+    } catch (error) { setError(error instanceof Error ? error.message : "定时设置保存失败。"); }
+  }
+  async function restartSchedule(key: SyncSchedule["key"]) {
+    setError("");
+    try {
+      const response = await fetch("/api/inventory/data-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "restart_sync_schedule", key, acknowledged: true }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || "重新拉取失败。"); setSchedules(data.schedules);
+    } catch (error) { setError(error instanceof Error ? error.message : "重新拉取失败。"); }
+  }
   const [preview, setPreview] = useState<GerpgoPreview | null>(null), [confirmed, setConfirmed] = useState(false);
   const [records, setRecords] = useState<OperatingPerformanceRow[]>([]), [nextOffset, setNextOffset] = useState<number | null>(null);
   const [collection, setCollection] = useState<GerpgoCollectionSummary | null>(null);
@@ -213,13 +280,15 @@ function RefreshTaskPanel() {
   }
   useEffect(() => {
     const controller = new AbortController();
+    const result = new URL(window.location.href).searchParams.get("wps");
     async function check() {
       try {
         const response = await fetch("/api/inventory/data-refresh?tasks=1", { signal: controller.signal, cache: "no-store" });
         const payload = await response.json();
         if (!response.ok) throw new Error("同步任务状态暂不可用。");
-        setTasks(payload.tasks ?? []); setError("");
-      } catch { if (!controller.signal.aborted) setError("同步任务状态暂不可用，请稍后重新打开页面。"); }
+        if (result) setWpsReturn(result === "authorized" ? "WPS 授权已保存，请先拉取并审核首次库存预览。" : "WPS 授权未完成或回调过期，请重新授权并检查注册回调地址。");
+        setTasks(payload.tasks ?? []); setSchedules(payload.schedules ?? []); setWps(payload.wps ?? null); setGerpgoReady(Boolean(payload.gerpgoConfigured)); setPollError("");
+      } catch { if (!controller.signal.aborted) setPollError("同步任务状态暂不可用，请稍后重新打开页面。"); }
     }
     void check(); const timer = setInterval(() => void check(), 5000);
     return () => { controller.abort(); clearInterval(timer); };
@@ -234,12 +303,18 @@ function RefreshTaskPanel() {
     } catch (error) { setError(error instanceof Error ? error.message : "提交失败。"); }
     finally { setBusy(false); }
   }
-  const labels: Record<string, string> = { queued: "已排队", running: "处理中", awaiting_mapping: "映射待核验", awaiting_review: "待对账确认", completed: "已完成", failed: "失败", interrupted: "已中断，需核查" };
+  const labels: Record<string, string> = { queued: "已排队", running: "处理中", awaiting_mapping: "映射待核验", awaiting_review: "待对账确认", completed: "已完成", failed: "失败", interrupted: "已中断，需核查", superseded: "旧预览已保留，已重新拉取" };
   return <section className="rounded-2xl border border-black/5 bg-white p-5" aria-label="同步任务">
+    <h2 className="text-sm font-semibold">定时同步</h2>
+    <div className="mb-4 mt-3 grid gap-3 lg:grid-cols-2">{schedules.map(value => <SyncScheduleControls key={value.key} value={value} ready={value.key === "gerpgo" ? gerpgoReady : Boolean(wps?.authorized)} onSave={saveSchedule} onRestart={restartSchedule} />)}</div>
+    {wpsReturn && <p role="status" className="mb-3 text-xs leading-6 text-slate-600">{wpsReturn}</p>}
+    {pollError && <p role="alert" className="mb-3 text-xs leading-6 text-rose-700">{pollError}</p>}
+    {wps && <WpsSyncSettings value={wps} onChange={setWps} onError={setError} />}
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">同步任务</h2><div className="flex flex-wrap gap-2"><button disabled={busy} onClick={() => void pull()} className="min-h-11 rounded-full bg-[#0071e3] px-4 text-sm text-white disabled:opacity-50">{busy ? "正在提交…" : "拉取核心预览"}</button><button disabled={busy} onClick={() => void pull(true)} className="min-h-11 rounded-full border px-4 text-sm disabled:opacity-50">全量采集（含费用明细）</button></div></div>
-    <p className="mt-2 text-xs leading-6 text-slate-500">核心预览先拉取指定店铺的近六个完整月、当月、产品和 FBA，便于首次对账。全量采集另含逐日广告、退货和仓储明细，可能耗时较长；只安排指定店铺的广告站点，不能按店铺筛选的接口取全分页后过滤。原始接口总数不等于本店有效记录数。未核验字段不覆盖业务报告；自动调度暂未启用。长期排队请检查 worker 容器。</p>
+    <p className="mt-2 text-xs leading-6 text-slate-500">首次核心预览拉取近六个完整月、当月、产品和 FBA；首次发布后，定时任务重拉上月和当月，并保留更早历史。全量费用采集仍需手动发起。完整月金额或同范围 SKU 数变化超过 10%、映射异常或首次接入会停在审核，不自动覆盖报告。FBA 原始数据已采集，但未经映射对账不当作已更新库存。长期排队请检查 worker 容器。</p>
+    {tasks.filter(task => task.kind === "wps_inventory").map(task => <div key={task.id} className="mt-3 rounded-xl bg-slate-50 p-3 text-xs"><p>WPS 库存同步 · {labels[task.status] || task.status}</p><p role="status" className="mt-1 leading-6 text-slate-500">{task.progress}{task.error ? ` · ${task.error}` : ""}</p>{task.batchId && <button type="button" onClick={() => window.location.reload()} className="mt-2 min-h-11 rounded-full border px-3">查看上传批次预览 · {task.batchId}</button>}</div>)}
     {error && <p role="alert" className="mt-2 text-xs text-rose-700">{error}</p>}
-    <div className="mt-3 divide-y divide-slate-100">{tasks.slice(0, 10).map(task => <div key={task.id} className="py-3 text-xs"><p className="font-medium">{task.kind === "gerpgo" ? "积加采集" : task.kind === "gerpgo_publish" ? "积加审核发布" : "报告重建"} · {labels[task.status] || task.status}</p><p role="status" className="mt-1 break-words leading-6 text-slate-500">{task.progress || "等待 worker"}{task.error ? ` · ${task.error}` : ""}</p><p className="mt-1 text-[10px] text-slate-400">{formatDateTime(task.createdAt)} · {task.id.slice(0, 8)}</p>{task.kind === "gerpgo" && task.status !== "queued" && <button disabled={busy} onClick={() => void inspectCollection(task.id)} className="mr-2 mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看采集明细</button>}{task.kind === "gerpgo" && ["awaiting_mapping", "awaiting_review"].includes(task.status) && <button disabled={busy} onClick={() => void inspect(task.id)} className="mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看差异预览</button>}</div>)}</div>
+    <div className="mt-3 divide-y divide-slate-100">{tasks.filter(task => task.kind !== "wps_inventory").slice(0, 10).map(task => <div key={task.id} className="py-3 text-xs"><p className="font-medium">{task.kind === "gerpgo" ? "积加采集" : task.kind === "gerpgo_publish" ? "积加审核发布" : "报告重建"} · {labels[task.status] || task.status}</p><p role="status" className="mt-1 break-words leading-6 text-slate-500">{task.progress || "等待 worker"}{task.error ? ` · ${task.error}` : ""}</p><p className="mt-1 text-[10px] text-slate-400">{formatDateTime(task.createdAt)} · {task.id.slice(0, 8)}</p>{task.kind === "gerpgo" && task.status !== "queued" && <button disabled={busy} onClick={() => void inspectCollection(task.id)} className="mr-2 mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看采集明细</button>}{task.kind === "gerpgo" && ["awaiting_mapping", "awaiting_review"].includes(task.status) && <button disabled={busy} onClick={() => void inspect(task.id)} className="mt-2 min-h-11 rounded-lg border border-slate-200 px-3 disabled:opacity-50">查看差异预览</button>}</div>)}</div>
     {collection && <div className="mt-4 rounded-xl bg-slate-50 p-4 text-xs leading-6" aria-label="积加采集覆盖"><h3 className="font-semibold">原始数据采集覆盖</h3><p>采集 {formatDateTime(collection.capturedAt)}；成功采集不等于业务映射已核验或已发布。</p>{collection.domains.map(domain => <div key={domain.name} className="mt-2 rounded-lg bg-white p-3"><p className="font-medium">{{ shops: "店铺站点", products: "产品", performance: "经营表现", fba: "FBA", ads: "广告（逐日逐站点）", returns: "退货", storage: "仓储" }[domain.name] || domain.name}</p><p>完成 {domain.completed} 个范围 · 失败 {domain.failed} · 跳过 {domain.skipped} · {domain.pages} 页 / {domain.records} 条</p>{domain.errors.map(error => <p key={error} className="text-rose-700">{error}</p>)}</div>)}</div>}
     {preview && <div className="mt-4 rounded-xl bg-slate-50 p-4 text-xs leading-6" aria-label="积加差异预览"><h3 className="font-semibold">经营报告预览 · {preview.recordCount} 条 SKU 月度记录</h3><p>采集日期 {formatDateTime(preview.capturedAt)}；基线 {preview.baseline.slice(0, 12)}。跳过父体汇总 {preview.ignoredParentRows} 条。</p>{preview.withheld.map(text => <p key={text} className="text-amber-800">{text}</p>)}{preview.reviewReasons.map(text => <p key={text}>{text}</p>)}<div className="mt-3 space-y-2">{preview.differences.map(item => <div key={`${item.market}-${item.reportMonth}`} className="rounded-lg bg-white p-3"><p className="font-medium">{item.market} {item.reportMonth} · {item.currency} · {item.completePeriod ? "完整月" : "当月截至采集日"}</p><p>销售额 {item.previousRevenue ?? "无历史"} → {item.candidateRevenue}；SKU {item.previousSkuCount} → {item.candidateSkuCount}</p><p>销售额变化 {item.revenueChangePercent == null ? "无可比基线" : `${item.revenueChangePercent.toFixed(1)}%`}{item.protected ? " · 超过发布保护线，需重点对账" : ""}</p></div>)}</div>{records.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer font-medium">逐 SKU 对账明细（已加载 {records.length} 条）</summary><div className="max-h-96 overflow-y-auto">{records.map(record => <div key={`${record.market}-${record.reportMonth}-${record.sku}`} className="border-t border-slate-200 py-2"><p>{record.market} {record.reportMonth} · {record.sku}</p><p>{record.units} 件 · 销售额 {record.currency} {record.productSales} · 来源利润 {record.actualProfit ?? "未提供"}</p></div>)}</div>{nextOffset !== null && <button disabled={busy} onClick={() => void inspect(preview.taskId, nextOffset)} className="min-h-11 rounded-lg border px-3">继续加载 20 条对账明细</button>}</details>}{preview.blocked ? <div role="alert" className="mt-3 text-rose-700"><p>有 {preview.issueCount} 条校验问题，禁止发布。补齐口径后重新拉取。</p>{preview.issues.map((item, index) => <p key={index}>{item.source} 第 {item.row} 条：{item.reason}</p>)}</div> : <><label className="mt-3 flex min-h-11 items-start gap-2"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} className="mt-2" /><span>已核对站点、SKU、原币种、期间及金额差异；仅确认经营报告，不确认完整利润、退货口径或 FBA 库存。</span></label><button disabled={busy || !confirmed} onClick={() => void publish()} className="mt-2 min-h-11 rounded-full bg-[#0071e3] px-4 text-white disabled:opacity-50">确认并交给 worker 发布</button></>}</div>}
     {!tasks.length && <p className="mt-3 text-xs text-slate-500">尚无同步任务。</p>}

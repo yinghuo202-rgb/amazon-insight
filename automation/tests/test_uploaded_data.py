@@ -6,7 +6,7 @@ from pathlib import Path
 
 import openpyxl
 
-from store_ops.uploaded_data import inspect_batch, publish_batch, restore_version, receive_wps_download
+from store_ops.uploaded_data import inspect_batch, publish_batch, restore_version, receive_wps_download, auto_publish_wps
 from store_ops.config import load_config
 from dataclasses import replace
 
@@ -22,6 +22,57 @@ def dashboard(market: str):
 
 
 class UploadedDataTests(unittest.TestCase):
+    def test_authorized_wps_sync_requires_first_review_then_publishes_only_planning_with_valid_lease(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = replace(load_config(Path(__file__).parents[1] / "config/project.json"), runtime_root=root / "runtime")
+            reports, snapshots = config.runtime_root / "reports", config.runtime_root / "snapshots"
+            reports.mkdir(parents=True)
+            (reports / "inventory_dashboard.json").write_text(json.dumps(dashboard("US")))
+            source = root / "库存规划.xlsx"
+            def write_source(quantity, reference=30):
+                book = openpyxl.Workbook()
+                book.active.title = "库存规划"
+                book.active.append(["SKU", "品名", "工厂库存及已下订单", "参考月销", "FBA库存", "FBA+在途库存"])
+                book.active.append(["MA001", "产品", quantity, reference, 999, 1999])
+                book.save(source)
+            write_source(30)
+            first = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", file_token="authorized-file")
+            self.assertEqual(first["source"]["authentication"], "official-oauth")
+            batch = config.runtime_root / "uploads" / first["batchId"]
+            self.assertEqual(auto_publish_wps(batch, reports, snapshots, "task", "lease")["status"], "awaiting_review")
+            publish_batch(batch, reports, snapshots)
+            current = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
+            self.assertEqual(current["rows"][0]["fbaSellable"], 5)
+            self.assertEqual(current["rows"][0]["localInventory"], 10)
+            self.assertEqual(current["rows"][0]["domesticSupplyTotal"], 30)  # not 30 + pending orders
+            write_source(45)
+            second = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", file_token="authorized-file")
+            batch = config.runtime_root / "uploads" / second["batchId"]
+            with sqlite3.connect(config.runtime_root / "db" / "operations.sqlite3") as db:
+                db.executescript("CREATE TABLE data_refresh_tasks_v1(id TEXT,kind TEXT,request_json TEXT,lease TEXT,status TEXT,updated_at TEXT); INSERT INTO data_refresh_tasks_v1 VALUES('task','wps_inventory','{\"scheduled\":true}','lease','running','2000'); CREATE TABLE data_sync_schedules_v1(key TEXT,enabled INTEGER,auto_publish INTEGER,last_task_id TEXT); INSERT INTO data_sync_schedules_v1 VALUES('wps_inventory',1,1,'task');")
+            with self.assertRaisesRegex(ValueError, "租约"):
+                auto_publish_wps(batch, reports, snapshots, "task", "wrong")
+            result = auto_publish_wps(batch, reports, snapshots, "task", "lease")
+            self.assertEqual(result["status"], "completed")
+            current = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
+            self.assertEqual(current["rows"][0]["domesticSupplyTotal"], 45)
+            self.assertEqual(current["rows"][0]["fbaSellable"], 5)
+            self.assertEqual(current["rows"][0]["referenceMonthlySales"], 30)
+            write_source(-1)
+            invalid = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", file_token="authorized-file")
+            self.assertEqual(invalid["status"], "needs_review")
+            self.assertEqual(auto_publish_wps(config.runtime_root / "uploads" / invalid["batchId"], reports, snapshots, "task", "lease")["status"], "awaiting_review")
+            write_source(45)
+            book = openpyxl.load_workbook(source)
+            book.active.append(["unrecognized-sku", "新增产品", 10, 30, 0, 0])
+            book.save(source); book.close()
+            skipped = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", file_token="authorized-file")
+            self.assertEqual(skipped["status"], "needs_review")
+            self.assertEqual(skipped["files"][0]["preview"]["markets"]["US"]["skipped"]["invalidSku"], 1)
+            self.assertEqual(auto_publish_wps(config.runtime_root / "uploads" / skipped["batchId"], reports, snapshots, "task", "lease")["status"], "awaiting_review")
+
     def test_shipment_upload_adds_sku_history_to_document_master(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

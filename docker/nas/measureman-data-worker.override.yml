@@ -3,9 +3,13 @@
 # This variant expects existing operations_data/runtime_output named volumes.
 services:
   app:
-    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.1}"
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:?use the same tested release tag for app and worker}"
     environment:
       GERPGO_STORE_NAME: "${GERPGO_STORE_NAME:-MEASUREMAN}"
+      STORE_OPS_WPS_APP_ID: "${STORE_OPS_WPS_APP_ID:-}"
+      STORE_OPS_WPS_APP_KEY: "${STORE_OPS_WPS_APP_KEY:-}"
+      STORE_OPS_WPS_INVENTORY_FILE_TOKEN: "${STORE_OPS_WPS_INVENTORY_FILE_TOKEN:-}"
+      STORE_OPS_WPS_INVENTORY_URL: "${STORE_OPS_WPS_INVENTORY_URL:-}"
       STORE_OPS_UPLOAD_ROOT: /data/uploads
       STORE_OPS_SNAPSHOT_ROOT: /data/snapshots
     volumes:
@@ -16,7 +20,7 @@ services:
       - data_snapshots:/data/snapshots
 
   data-worker:
-    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-v1.4.1}"
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:?use the same tested release tag for app and worker}"
     user: "0:0"
     restart: unless-stopped
     init: true
@@ -30,6 +34,10 @@ services:
       GERPGO_BASE_URL: "${GERPGO_BASE_URL:-https://open.gerpgo.com/api/open}"
       GERPGO_SIGNING_ENABLED: "${GERPGO_SIGNING_ENABLED:-true}"
       GERPGO_TIMEOUT_MS: "${GERPGO_TIMEOUT_MS:-10000}"
+      STORE_OPS_WPS_APP_ID: "${STORE_OPS_WPS_APP_ID:-}"
+      STORE_OPS_WPS_APP_KEY: "${STORE_OPS_WPS_APP_KEY:-}"
+      STORE_OPS_WPS_INVENTORY_FILE_TOKEN: "${STORE_OPS_WPS_INVENTORY_FILE_TOKEN:-}"
+      STORE_OPS_WPS_INVENTORY_URL: "${STORE_OPS_WPS_INVENTORY_URL:-}"
       STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
       STORE_OPS_DATA_ROOT: /data/sources
       STORE_OPS_RUNTIME_ROOT: /data/runtime

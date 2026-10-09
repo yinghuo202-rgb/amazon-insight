@@ -54,6 +54,54 @@ class GerpgoPreviewTests(unittest.TestCase):
     def approval(self, preview):
         return {"sourceTaskId": TASK, "previewHash": preview["previewHash"], "confirmed": True, "taskId": "publish-task", "lease": "lease"}
 
+    def automatic_request(self, preview):
+        import sqlite3
+        with sqlite3.connect(self.runtime / "db" / "operations.sqlite3") as db:
+            db.executescript("CREATE TABLE IF NOT EXISTS data_sync_schedules_v1(key TEXT PRIMARY KEY,enabled INTEGER,auto_publish INTEGER,last_task_id TEXT); INSERT OR REPLACE INTO data_sync_schedules_v1 VALUES('gerpgo',1,1,'publish-task');")
+            db.execute("UPDATE data_refresh_tasks_v1 SET kind='gerpgo',request_json=? WHERE id='publish-task'", (json.dumps({"scheduled": True}),))
+        return {"sourceTaskId": TASK, "previewHash": preview["previewHash"], "automatic": True, "taskId": "publish-task", "lease": "lease"}
+
+    def scoped_preview(self):
+        shops = [{"marketListVos": [{"marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1}]}]
+        (self.folder / "shops-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
+        return build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+
+    def test_automatic_publication_requires_manual_review_and_durable_schedule_authorization(self):
+        import sqlite3
+        preview = self.scoped_preview()
+        with self.assertRaisesRegex(ValueError, "首次"):
+            publish(self.runtime, self.automatic_request(preview))
+        publish(self.runtime, self.approval(preview))
+        next_preview = self.scoped_preview()
+        result = publish(self.runtime, self.automatic_request(next_preview))
+        report = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+        self.assertEqual(report["publication"]["actor"], "scheduled-worker")
+        self.assertEqual(report["publication"]["initialReview"]["sourceTaskId"], TASK)
+        after = self.scoped_preview()
+        with sqlite3.connect(self.runtime / "db" / "operations.sqlite3") as db:
+            db.execute("UPDATE data_sync_schedules_v1 SET enabled=0")
+        with self.assertRaisesRegex(ValueError, "授权已关闭"):
+            publish(self.runtime, {"sourceTaskId": TASK, "previewHash": after["previewHash"], "automatic": True, "taskId": "publish-task", "lease": "lease"})
+        self.assertEqual(current_reports(self.reports).parent.name, result["publishedVersion"])
+
+    def test_recent_collection_preserves_older_history_and_protected_changes_stop_automatic_publish(self):
+        preview = self.scoped_preview()
+        publish(self.runtime, self.approval(preview))
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["collectionScope"] = "recent"
+        manifest["sources"] = [s for s in manifest["sources"] if not s["name"].startswith("performance-") or s["name"] in {"performance-" + self.month, "performance-" + self.previous_month}]
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        recent = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertEqual(recent["recordCount"], 2)
+        publish(self.runtime, self.automatic_request(recent))
+        report = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+        self.assertEqual(len(report["rows"]), 7)
+        source = next(s for s in self.sources if s["name"] == "performance-" + self.previous_month)
+        (self.folder / f"{source['name']}-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": [self.row(125)]}))
+        protected = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        with self.assertRaisesRegex(ValueError, "保护线"):
+            publish(self.runtime, self.automatic_request(protected))
+
     def test_store_identity_excludes_other_store_same_sku_and_australia(self):
         shops = [{"marketListVos": [
             {"marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1, "warehouseName": "MEASUREMAN:US_FBA"},

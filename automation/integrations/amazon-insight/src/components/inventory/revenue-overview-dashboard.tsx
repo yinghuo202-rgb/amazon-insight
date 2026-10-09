@@ -8,29 +8,49 @@ import { operatingFacts, type OperatingSku } from "@/lib/inventory/dashboard-vie
 import { resolveOperatingRules, type OperatingRules } from "@/lib/inventory/operating-rules";
 import type { OperatingPage } from "@/lib/inventory/operating-query";
 import { fullCurrency } from "@/lib/inventory/presentation";
+import { skuOperatingHref } from "@/lib/inventory/operating-navigation";
 
 const percent = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
 const money = (value: number | null | undefined, currency: string) => value == null ? "—" : fullCurrency(value, currency);
 const fieldClass = "min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm";
+const returnPages = new Map<string, { page: OperatingPage; scroll: number }>();
+const pageKey = (p: OperatingPage, brief: boolean) => JSON.stringify([brief, p.market, p.period, p.query, p.filter, p.sort]);
 export function RevenueOverviewDashboard({ initial, brief = false }: { initial: OperatingPage; brief?: boolean }) {
   const [page, setPage] = useState(initial);
   const [market, setMarket] = useState(initial.market), [period, setPeriod] = useState(initial.period);
   const [query, setQuery] = useState(initial.query), [filter, setFilter] = useState(initial.filter);
+  const [sort, setSort] = useState(initial.sort);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const sentinel = useRef<HTMLDivElement>(null);
   const model = page.model, currency = page.currency, snapshot = model.snapshots.find(item => item.market === market);
   const { revenue, profit, units, returns, adSales, coverage, delta } = page.summary;
-  const search = query.trim(), shown = model.rows, loading = market !== page.market || period !== page.period || query.trim().toLowerCase() !== page.query || filter !== page.filter;
+  const search = query.trim(), shown = model.rows, loading = market !== page.market || period !== page.period || query.trim().toLowerCase() !== page.query || filter !== page.filter || sort !== page.sort;
+  const context = { filter, query, sort, origin: brief ? "brief" : "overview" };
+  function remember() {
+    if (loading) return;
+    returnPages.set(pageKey(page, brief), { page, scroll: window.scrollY });
+    while (returnPages.size > 10) returnPages.delete(returnPages.keys().next().value!);
+  }
+  useEffect(() => {
+    const previous = returnPages.get(pageKey(initial, brief));
+    if (!previous || previous.page.model.dataVersion !== initial.model.dataVersion) return;
+    const timer = setTimeout(() => { setPage(previous.page); requestAnimationFrame(() => window.scrollTo(0, previous.scroll)); }, 0);
+    return () => clearTimeout(timer);
+  }, [initial, brief]);
+  useEffect(() => {
+    const params = new URLSearchParams({ market: page.market, period: page.period, query: page.query, filter: page.filter, sort: page.sort });
+    window.history.replaceState(window.history.state, "", `${brief ? "/inventory/brief" : "/inventory"}?${params}`);
+  }, [page.market, page.period, page.query, page.filter, page.sort, brief]);
   function endpoint(offset = 0, version?: string) {
-    const params = new URLSearchParams({ market, period, query, filter, brief: String(brief), offset: String(offset) });
+    const params = new URLSearchParams({ market, period, query, filter, sort, brief: String(brief), offset: String(offset) });
     if (version) params.set("version", version);
     return "/api/inventory/operating-data?" + params;
   }
   useEffect(() => {
-    if (market === page.market && period === page.period && query.trim().toLowerCase() === page.query && filter === page.filter) return;
+    if (market === page.market && period === page.period && query.trim().toLowerCase() === page.query && filter === page.filter && sort === page.sort) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      const params = new URLSearchParams({ market, period, query, filter, brief: String(brief) });
+      const params = new URLSearchParams({ market, period, query, filter, sort, brief: String(brief) });
       void fetch("/api/inventory/operating-data?" + params, { signal: controller.signal, cache: "no-store" }).then(async response => {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || "加载失败。");
@@ -38,7 +58,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       }).catch(error => { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "加载失败。"); });
     }, 200);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [market, period, query, filter, brief, page.market, page.period, page.query, page.filter]);
+  }, [market, period, query, filter, sort, brief, page.market, page.period, page.query, page.filter, page.sort]);
   async function more() {
     if (busy || loading || page.nextOffset === null) return;
     setBusy(true); setError("");
@@ -46,7 +66,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       const response = await fetch(endpoint(page.nextOffset, page.model.dataVersion), { cache: "no-store" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "加载失败。");
-      setPage(current => current.market === payload.market && current.period === payload.period && current.query === payload.query && current.filter === payload.filter && current.model.dataVersion === payload.model.dataVersion
+      setPage(current => current.market === payload.market && current.period === payload.period && current.query === payload.query && current.filter === payload.filter && current.sort === payload.sort && current.model.dataVersion === payload.model.dataVersion
         ? { ...payload, model: { ...payload.model, rows: [...current.model.rows, ...payload.model.rows] } } : current);
     } catch (error) { setError(error instanceof Error ? error.message : "加载失败。"); }
     finally { setBusy(false); }
@@ -68,7 +88,8 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
     {(model.warnings.length > 0 || snapshot?.stale) && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-6 text-amber-900">{model.warnings.map(item => <p key={item}>{item}</p>)}{snapshot?.stale && <p>{market} 库存快照 {snapshot.date} 已过期；库存覆盖仅作为历史参考，请先更新数据。</p>}</div>}
     <p className="text-xs leading-5 text-slate-500">经营周期 {period || "未提供"}；库存日期 {snapshot?.date || "未提供"}{snapshot?.awdAvailable ? `，AWD ${snapshot.awdDate}` : "，AWD 来源未提供"}。经营指标与库存是两类时间口径，缺失项显示“—”。</p>
     {!brief && <>
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-3 2xl:grid-cols-6" aria-label="经营指标">
+      <section aria-label="经营观察摘要" className="rounded-2xl border border-black/5 bg-white p-5 text-sm leading-7"><h2 className="font-semibold">经营观察</h2><p className="mt-2">事实：{period || "暂无期间"} · {currency} 销售额 {money(revenue, currency)}；{page.summary.profitVerified ? "已核验利润" : "来源利润待对账"} {money(profit, currency)}。{page.summary.complete ? "完整月份。" : "当前月或期间不完整，不直接与完整月判断涨跌。"}</p><p className="text-slate-500">规则线索：{page.priorities.length ? "存在需复核的经营或数据问题，见下方证据入口；尚未确认具体原因。" : "当前未触发提醒，不代表已排除全部经营风险。"}</p></section>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-3" aria-label="经营指标">
         <OpsKpi label="销售额" value={money(revenue, currency)} detail={delta === null ? "环比待补上月报告" : `环比 ${delta >= 0 ? "+" : ""}${delta.toFixed(1)}%`} />
         <OpsKpi label={page.summary.profitVerified ? "实际利润" : "来源利润（待对账）"} value={money(profit, currency)} detail={period || "无报告"} tone={profit !== null && profit < 0 ? "danger" : "positive"} />
         <OpsKpi label="利润率" value={percent(revenue !== null && revenue > 0 && profit !== null ? profit / revenue : null)} detail={page.summary.profitVerified ? "实际利润 ÷ 销售额" : "来源利润口径，费用待对账"} />
@@ -76,27 +97,30 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
         <OpsKpi label="退货率" value={percent(units !== null && units > 0 && returns !== null ? returns / units : null)} detail="退货件数 ÷ 销售件数；口径以已核验报告为准" />
         <OpsKpi label="库存覆盖" value={percent(coverage)} detail={`按配置覆盖目标达标占比；${page.summary.unknownCoverageCount} 个未能计算`} tone={snapshot?.stale ? "warning" : "default"} />
       </section>
-      <div>
-        <section className="rounded-2xl border border-black/5 bg-white p-5"><h2 className="text-sm font-semibold">销售额变化</h2><p className="mt-1 text-xs text-slate-500">销售额和来源利润均使用原币种月报金额；利润未经费用对账时仅作来源参考。缺失月份留空，不用销量推算金额。</p>{page.chart.filter(point => point.revenue !== null).length > 1 ? <div className="mt-5 h-60"><ResponsiveContainer width="100%" height="100%"><AreaChart data={page.chart}><CartesianGrid vertical={false} stroke="#e5edef" /><XAxis dataKey="month" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 10 }} width={60} /><Tooltip formatter={value => money(Number(value), currency)} /><Area dataKey="revenue" name="销售额" stroke="#0071e3" fill="#e4f0fc" strokeWidth={2} connectNulls={false} /><Area dataKey="profit" name="来源利润（待对账）" stroke="#6e6e73" fill="transparent" strokeWidth={2} strokeDasharray="5 5" connectNulls={false} /></AreaChart></ResponsiveContainer></div> : <div className="mt-5 rounded-xl bg-[#f5f5f7] p-5"><p className="text-sm leading-7 text-slate-500">目前只有 {page.chart.filter(point => point.revenue !== null).length} 个月的金额报告，暂不绘制趋势。补充历史月报后，将显示真实销售额变化。</p></div>}</section>
-      </div>
+      <section aria-label="优先复核问题" className="rounded-2xl border border-black/5 bg-white p-5"><h2 className="text-sm font-semibold">优先复核问题</h2><p className="mt-1 text-xs leading-6 text-slate-500">排序：已核验亏损 → 当前供货风险 → 其他经营提醒 → 数据核查；同组按可比已核验利润变化金额，否则按销售规模。不是预计损失或综合评分。</p><ul className="mt-3 grid gap-3 sm:grid-cols-2">{page.priorities.map(item => <li key={item.listingId}><Link onClick={remember} href={skuOperatingHref(item.sku, market, period, { ...context, filter: item.filter, returnFilter: filter })} className="block min-h-12 rounded-xl bg-[#f5f5f7] p-3 text-xs leading-6"><span className="font-semibold text-[#0071e3]">{item.sku} · {item.title}</span><p>{item.fact}</p><p className="text-slate-500">{item.impactBasis}：{money(item.impact, currency)}</p></Link></li>)}</ul>{!page.priorities.length && <p className="mt-3 text-xs text-slate-500">暂无匹配的复核问题。</p>}</section>
+
     </>}
     {!brief && <nav aria-label="经营变化入口" className="flex flex-wrap gap-2">{([["decline", "销售下降"], ["loss", "亏损复核"], ["advertising", "广告复核"], ["stock", "供货复核"], ["missing", "数据核查"]] as const).map(([kind, label]) => <Link key={kind} href={`/inventory/brief?market=${market}&period=${period}&filter=${kind}`} className="inline-flex min-h-11 items-center rounded-full border bg-white px-4 text-sm text-[#0071e3]">{label} {page.counts[kind]}</Link>)}</nav>}
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold tracking-tight">{brief ? "SKU 经营卡片" : "查看一个 SKU"}</h2>{!brief && <Link href={`/inventory/brief?market=${market}&period=${period}&query=${encodeURIComponent(query)}`} className="text-sm text-[#0071e3]">浏览经营简报</Link>}</div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_190px]"><label className="relative"><Search size={17} className="absolute left-3 top-3 text-slate-400" /><input aria-label="搜索 SKU、产品或 ASIN" value={query} onChange={event => { setQuery(event.target.value); reset(); }} placeholder="搜索 SKU、产品或 ASIN" className={fieldClass + " w-full pl-10"} /></label><label className="relative"><SlidersHorizontal size={15} className="absolute left-3 top-3.5 text-slate-400" /><select aria-label="关注类型" value={filter} onChange={event => { setFilter(event.target.value); reset(); }} className={fieldClass + " w-full pl-9"}><option value="focus">优先关注</option><option value="revenue">销售额贡献</option><option value="loss">利润为负</option><option value="advertising">广告待核查</option><option value="returns">退货复核</option><option value="decline">销售下降</option><option value="stock">供货复核</option><option value="missing">数据核查</option><option value="all">全部（按需加载）</option></select></label></div>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_190px]"><label className="relative"><Search size={17} className="absolute left-3 top-3 text-slate-400" /><input aria-label="搜索 SKU、产品或 ASIN" value={query} onChange={event => { setQuery(event.target.value); reset(); }} placeholder="搜索 SKU、产品或 ASIN" className={fieldClass + " w-full pl-10"} /></label><label className="relative"><SlidersHorizontal size={15} className="absolute left-3 top-3.5 text-slate-400" /><select aria-label="关注类型" value={filter} onChange={event => { setFilter(event.target.value); reset(); }} className={fieldClass + " w-full pl-9"}><option value="focus">优先关注</option><option value="revenue">销售额贡献</option><option value="loss">利润复核</option><option value="advertising">广告待核查</option><option value="returns">退货复核</option><option value="decline">销售下降</option><option value="stock">供货复核</option><option value="missing">数据核查</option><option value="all">全部（按需加载）</option></select></label></div>
       <p className="text-xs text-slate-500">{brief ? `匹配 ${page.total} 个，当前展示 ${shown.length} 个。搜索或按需加载更多。` : search ? `匹配 ${page.total} 个，先展示 ${shown.length} 个。` : "输入 SKU 或产品名称查看经营卡片，不在总览罗列全部产品。"}</p>
-      <div className="grid items-start gap-4 xl:grid-cols-2">{!loading && shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={period} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div>
+      <label className="block text-xs text-slate-500">排序 <select aria-label="经营排序" value={sort} onChange={event => { setSort(event.target.value); reset(); }} className={fieldClass + " ml-2"}><option value="impact">经营影响</option><option value="revenue">销售额从高到低</option><option value="margin">来源利润率从低到高（缺失置后）</option></select></label>
+      <div className="grid items-start gap-4 xl:grid-cols-2">{!loading && shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={period} context={context} onNavigate={remember} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div>
       {!loading && (brief || search) && !shown.length && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">没有匹配产品。请更换站点、月份或清除筛选。</div>}
       {loading && <p role="status" className="text-sm text-slate-500">正在加载经营数据…</p>}
       {error && <div role="alert" className="text-sm text-rose-700"><p>{error}</p><button onClick={() => window.location.reload()} className="mt-2 min-h-11 rounded-lg border px-4">重新加载当前筛选</button></div>}
       <div ref={sentinel} aria-hidden="true" />
       {brief && page.nextOffset !== null && <button disabled={busy || loading} onClick={() => void more()} className="min-h-12 w-full rounded-lg border border-slate-300 bg-white text-sm disabled:opacity-50">{busy ? "正在加载…" : "加载更多 20 张卡片"}</button>}
     </section>
+    {!brief && <div>
+        <section className="rounded-2xl border border-black/5 bg-white p-5"><h2 className="text-sm font-semibold">销售额变化</h2><p className="mt-1 text-xs text-slate-500">销售额和来源利润均使用原币种月报金额；利润未经费用对账时仅作来源参考。缺失月份留空，不用销量推算金额。</p>{page.chart.filter(point => point.revenue !== null).length > 1 ? <div className="mt-5 h-60"><ResponsiveContainer width="100%" height="100%"><AreaChart data={page.chart}><CartesianGrid vertical={false} stroke="#e5edef" /><XAxis dataKey="month" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 10 }} width={60} /><Tooltip formatter={value => money(Number(value), currency)} /><Area dataKey="revenue" name="销售额" stroke="#0071e3" fill="#e4f0fc" strokeWidth={2} connectNulls={false} /><Area dataKey="profit" name="来源利润（待对账）" stroke="#6e6e73" fill="transparent" strokeWidth={2} strokeDasharray="5 5" connectNulls={false} /></AreaChart></ResponsiveContainer></div> : <div className="mt-5 rounded-xl bg-[#f5f5f7] p-5"><p className="text-sm leading-7 text-slate-500">目前只有 {page.chart.filter(point => point.revenue !== null).length} 个月的金额报告，暂不绘制趋势。补充历史月报后，将显示真实销售额变化。</p></div>}</section>
+      </div>}
     <details className="rounded-lg border border-slate-200 bg-white p-4 text-xs leading-6 text-slate-500"><summary className="cursor-pointer font-medium text-slate-700">数据来源与口径</summary><p className="mt-3">经营报告按已审核发布的积加数据优先、未覆盖期间沿用 Excel 展示。API 授权不等于已经同步；只有后台对账确认并发布后才切换。缺失费用留空，来源利润未经对账不当作完整实际利润。</p><p>库存覆盖由当前库存快照计算，不随经营月份变化。国内库存与采购订单在业务后台查看；历史销量只能解释件数趋势，不代替历史销售额或售价。</p><p>报表更新时间：{model.generatedAt || "未提供"}。缺失报告不会按零经营处理。</p></details>
   </div>;
 }
 
-export function SkuOperatingCard({ row, period, rules, rulesAvailable = true }: { row: OperatingSku; period: string; rules?: OperatingRules; rulesAvailable?: boolean }) {
+export function SkuOperatingCard({ row, period, rules, rulesAvailable = true, initialEvidenceOpen, context, onNavigate }: { row: OperatingSku; period: string; rules?: OperatingRules; rulesAvailable?: boolean; initialEvidenceOpen?: boolean; context?: { filter?: string; query?: string; sort?: string; origin?: string }; onNavigate?: () => void }) {
   const facts = operatingFacts(row, period, rules, new Date(), rulesAvailable);
   const current = facts.current, displayCurrency = current?.currency || row.currency;
   const history = row.unitHistory.filter(point => point.month <= period).slice(-6);
@@ -104,7 +128,7 @@ export function SkuOperatingCard({ row, period, rules, rulesAvailable = true }: 
   const priceHistory = row.history.filter(point => point.reportMonth <= period).slice(-6);
   const source = current?.sourceKind === "gerpgo" ? "积加快照" : "Excel 快照";
   return <article className="overflow-hidden rounded-2xl border border-black/5 bg-white">
-    <header className="flex items-start justify-between gap-3 p-5 pb-3"><div className="min-w-0"><h3 className="text-base font-semibold text-[#1d1d1f]">{row.sku}<span className="ml-2 text-xs font-normal text-slate-400">{row.market}</span></h3><p className="mt-1 break-words text-xs leading-5 text-slate-500">{row.productName}</p><p className="mt-1 text-[11px] text-slate-400">{period || "无报告"} · {source}</p></div><Link aria-label={`查看 ${row.sku} 业务明细`} href={`/inventory/sku/${encodeURIComponent(row.sku)}?market=${row.market}`} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-500"><ArrowUpRight size={18} /></Link></header>
+    <header className="flex items-start justify-between gap-3 p-5 pb-3"><div className="min-w-0"><h3 className="text-base font-semibold text-[#1d1d1f]"><Link onClick={onNavigate} href={skuOperatingHref(row.sku, row.market, period, context)}>{row.sku}</Link><span className="ml-2 text-xs font-normal text-slate-400">{row.market}</span></h3><p className="mt-1 break-words text-xs leading-5 text-slate-500">{row.productName}</p><p className="mt-1 text-[11px] text-slate-400">{period || "无报告"} · {source}</p></div><Link onClick={onNavigate} aria-label={`查看 ${row.sku} 业务明细`} href={skuOperatingHref(row.sku, row.market, period, context)} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-500"><ArrowUpRight size={18} /></Link></header>
     <div className="grid grid-cols-3 gap-x-3 gap-y-4 px-5 py-3">
       <Metric label="销售额" value={money(current?.productSales, displayCurrency)} />
       <Metric label={current?.quality?.profitVerified ? "实际利润" : "来源利润（待对账）"} value={money(current?.actualProfit, displayCurrency)} negative={current?.actualProfit != null && current.actualProfit < 0} />
@@ -114,8 +138,8 @@ export function SkuOperatingCard({ row, period, rules, rulesAvailable = true }: 
       <Metric label={current?.quality?.returnsVerified ? "退货率" : "来源退货率（待核验）"} value={percent(facts.returnRate)} />
     </div>
     {facts.dataIssues.length > 0 && <p className="mx-5 mt-3 text-xs leading-6 text-amber-800">{facts.dataIssues.join(" · ")}</p>}
-    <div className="mx-5 my-3 rounded-xl bg-[#f5f5f7] px-3 py-2.5"><p className="text-xs font-medium text-[#1d1d1f]">建议复核</p><p className="mt-1 text-xs leading-6 text-slate-600">{facts.suggestion}</p></div>
-    <details className="group border-t border-slate-100"><summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-5 text-xs font-medium text-slate-600">展开经营依据<ChevronDown size={15} className="transition-transform group-open:rotate-180" /></summary><div className="space-y-5 px-5 pb-5">
+    <div className="mx-5 my-3 rounded-xl bg-[#f5f5f7] px-3 py-2.5 text-xs leading-6"><p className="font-medium text-[#1d1d1f]">规则标签：{facts.issues.join(" · ") || "当前未触发经营提醒"}</p><p className="text-slate-500">待验证解释：价格、流量、费用与可售状态可能有关，现有证据不能确认因果。</p><p className="mt-1 text-slate-600">建议复核：{facts.suggestion}</p>{facts.revenueChange !== null && <p>销售额相邻完整月变化 {facts.revenueChange.toFixed(1)}%（不是百分点）。</p>}</div>
+    <details open={initialEvidenceOpen} className="group border-t border-slate-100"><summary className="flex min-h-12 cursor-pointer list-none items-center justify-between px-5 text-xs font-medium text-slate-600">展开经营依据<ChevronDown size={15} className="transition-transform group-open:rotate-180" /></summary><div className="space-y-5 px-5 pb-5">
       <div className="grid grid-cols-2 gap-4"><Metric label="当前售价（报告值）" value={money(current?.currentPrice, displayCurrency)} /><Metric label="销售额环比" value={facts.revenueChange === null ? "待补相邻月报" : `${facts.revenueChange >= 0 ? "+" : ""}${facts.revenueChange.toFixed(1)}%`} /><Metric label="ACOS" value={percent(facts.acos)} /><Metric label="当前 FBA 覆盖" value={facts.fbaCover === null ? "—" : `${Math.round(facts.fbaCover)} 天`} /><Metric label="广告投入 / 销售额" value={percent(facts.advertisingSpendShare)} /><Metric label="当月仓储费" value={money(current?.storageCost, displayCurrency)} /><Metric label="库存与在途覆盖" value={row.stock?.cover == null ? "—" : `${Math.round(row.stock.cover)} 天`} /><Metric label="当月退货数量" value={current?.returns != null ? `${current.returns} 件` : "—"} /></div>
       <section><h4 className="text-xs font-medium">历史成交均价</h4><div className="mt-2 flex flex-wrap gap-2">{priceHistory.map(point => <span key={point.reportMonth} className="rounded-md bg-slate-50 px-2 py-1 text-[11px] text-slate-600">{point.reportMonth}：{money(point.averagePrice ?? (point.units > 0 ? point.productSales / point.units : null), point.currency)}</span>)}</div><p className="mt-2 text-[11px] leading-5 text-slate-400">销售额 ÷ 件数是计算均价，不是当时 Listing 标价；不足两个月不判断价格趋势。</p></section>
       <section><h4 className="text-xs font-medium">最近六个月销量（辅助证据）</h4>{history.length ? <div className="mt-3 flex h-24 items-end gap-2">{history.map(point => <div key={point.month} className="flex h-full min-w-0 flex-1 flex-col justify-end gap-1 text-center"><span className="text-[10px] text-slate-500">{point.units}</span><div className="mx-auto w-full max-w-12 rounded-t bg-[#86b9ed]" style={{ height: `${Math.max(2, point.units / maxUnits * 55)}px` }} /><span className="text-[10px] text-slate-400">{point.month.slice(5)}</span></div>)}</div> : <p className="mt-2 text-xs text-slate-500">暂无历史件数数据。</p>}</section>

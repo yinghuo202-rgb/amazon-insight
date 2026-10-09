@@ -171,7 +171,7 @@ export async function loadContentWorkflowData() {
 }
 
 export type ShipmentHistoryItem = {
-  market: OperationsMarket;
+  market: OperationsMarket | "MX";
   batch: number;
   shipmentDate: string;
   sku: string;
@@ -193,7 +193,8 @@ export async function loadDocumentMasterData() {
       if (!item || typeof item !== "object") return [];
       const row = item as Record<string, unknown>;
       const sku = String(row.sku ?? "").trim().toUpperCase();
-      const market = String(row.market ?? "").toUpperCase() === "CA" ? "CA" : "US";
+      const market = String(row.market ?? "").toUpperCase();
+      if (market !== "US" && market !== "CA" && market !== "MX") return [];
       const quantity = Number(row.quantity ?? 0);
       if (!sku || !Number.isFinite(quantity) || quantity <= 0) return [];
       return [{ market, batch: Number(row.batch ?? 0), shipmentDate: String(row.shipmentDate ?? ""), sku, quantity: Math.round(quantity), cartonCount: Math.max(0, Math.round(Number(row.cartonCount ?? 0))), sourcePath: String(row.sourcePath ?? "") }] satisfies ShipmentHistoryItem[];

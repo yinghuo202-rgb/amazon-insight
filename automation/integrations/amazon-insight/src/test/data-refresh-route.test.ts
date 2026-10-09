@@ -1,15 +1,52 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ user: vi.fn(), rebuild: vi.fn(), check: vi.fn(), status: vi.fn(), save: vi.fn(), settings: vi.fn(), submit: vi.fn(), preview: vi.fn(), candidate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), rebuild: vi.fn(), check: vi.fn(), status: vi.fn(), save: vi.fn(), settings: vi.fn(), submit: vi.fn(), preview: vi.fn(), candidate: vi.fn(), schedules: vi.fn(), scheduleSave: vi.fn(), restart: vi.fn(), wpsStatus: vi.fn(), wpsSave: vi.fn(), wpsBegin: vi.fn(), wpsFinish: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ getCurrentUser: mocks.user }));
 vi.mock("@/lib/inventory/data-refresh", () => ({ runFullDataRefresh: mocks.rebuild, runGerpgoConnectionCheck: mocks.check, getDataRefreshStatus: mocks.status }));
 vi.mock("@/lib/inventory/gerpgo", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/inventory/gerpgo")>(), saveGerpgoCredentials: mocks.save, getGerpgoSettingsStatus: mocks.settings }));
-vi.mock("@/lib/inventory/refresh-task-store", () => ({ submitRefreshTask: mocks.submit, listRefreshTasks: vi.fn() }));
+vi.mock("@/lib/inventory/refresh-task-store", async original => ({ ...await original<typeof import("@/lib/inventory/refresh-task-store")>(), submitRefreshTask: mocks.submit, listRefreshTasks: vi.fn(), listSyncSchedules: mocks.schedules, saveSyncSchedule: mocks.scheduleSave, restartSyncSchedule: mocks.restart }));
+vi.mock("@/lib/inventory/wps", async original => ({ ...await original<typeof import("@/lib/inventory/wps")>(), getWpsStatus: mocks.wpsStatus, saveWpsSettings: mocks.wpsSave, beginWpsAuthorization: mocks.wpsBegin, finishWpsAuthorization: mocks.wpsFinish }));
 vi.mock("@/lib/inventory/gerpgo-preview", async original => ({ ...await original<typeof import("@/lib/inventory/gerpgo-preview")>(), readGerpgoPreview: mocks.preview, readGerpgoCandidatePage: mocks.candidate }));
 import { GET, POST } from "@/app/api/inventory/data-refresh/route";
 import { GerpgoConnectionError } from "@/lib/inventory/gerpgo";
 const request = (body?: string, headers?: HeadersInit) => new Request("https://example.invalid/api/inventory/data-refresh", { method: "POST", body, headers: { origin: "https://example.invalid", ...headers } });
-beforeEach(() => { vi.resetAllMocks(); vi.stubEnv("NEXT_PUBLIC_APP_URL", ""); mocks.user.mockResolvedValue({ id: "shared" }); mocks.settings.mockReturnValue({ configured: false }); mocks.status.mockResolvedValue({ summary: { missingCount: 0 } }); mocks.submit.mockReturnValue({ status: "queued" }); });
+beforeEach(() => { vi.resetAllMocks(); vi.stubEnv("NEXT_PUBLIC_APP_URL", ""); mocks.user.mockResolvedValue({ id: "shared" }); mocks.settings.mockReturnValue({ configured: false }); mocks.wpsStatus.mockReturnValue({ authorized: false }); mocks.schedules.mockReturnValue([]); mocks.status.mockResolvedValue({ summary: { missingCount: 0 } }); mocks.submit.mockReturnValue({ status: "queued" }); });
 afterEach(() => vi.unstubAllEnvs());
+
+describe("durable schedule and WPS writes reuse session and CSRF checks", () => {
+  const headers = { "content-type": "application/json" };
+  it("saves bounded schedules but rejects unknown sources and simple cross-site forms", async () => {
+    const input = { action: "save_sync_schedule", key: "gerpgo", enabled: true, intervalMinutes: 240, autoPublish: true };
+    expect((await POST(request(JSON.stringify(input), headers))).status).toBe(200);
+    expect(mocks.scheduleSave).toHaveBeenCalledWith({ key: "gerpgo", enabled: true, intervalMinutes: 240, autoPublish: true });
+    expect((await POST(request(JSON.stringify({ ...input, key: "AU" }), headers))).status).toBe(422);
+    expect((await POST(request(JSON.stringify({ ...input, intervalMinutes: 1 }), headers))).status).toBe(422);
+    expect((await POST(request(JSON.stringify(input), { ...headers, origin: "https://attacker.invalid" }))).status).toBe(403);
+    expect((await POST(request(JSON.stringify(input)))).status).toBe(403);
+    expect(mocks.scheduleSave).toHaveBeenCalledOnce();
+  });
+  it("requires explicit interrupted-task recovery and blocks recovery of running jobs", async () => {
+    expect((await POST(request('{"action":"restart_sync_schedule","key":"gerpgo","acknowledged":false}', headers))).status).toBe(422);
+    mocks.restart.mockImplementation(() => { throw new Error("running"); });
+    expect((await POST(request('{"action":"restart_sync_schedule","key":"gerpgo","acknowledged":true}', headers))).status).toBe(409);
+  });
+  it("does not download WPS in an HTTP request and requires stored authorization", async () => {
+    expect((await POST(request('{"action":"pull_wps"}', headers))).status).toBe(422);
+    mocks.wpsStatus.mockReturnValue({ authorized: true });
+    expect((await POST(request('{"action":"pull_wps"}', headers))).status).toBe(202);
+    expect(mocks.submit).toHaveBeenCalledWith("wps_inventory");
+  });
+  it("protects WPS keys over plaintext HTTP and redirects callback without exposing code or secrets", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://example.invalid");
+    expect((await POST(request(JSON.stringify({ action: "save_wps_settings", appId: "id", appKey: "key", fileToken: "file", shareUrl: "https://www.kdocs.cn/l/Example123" }), { ...headers, origin: "http://example.invalid" }))).status).toBe(403);
+    expect(mocks.wpsSave).not.toHaveBeenCalled();
+    const response = await GET(new Request("https://example.invalid/api/inventory/data-refresh?wps_callback=1&code=private-code&state=test-state"));
+    expect(mocks.wpsFinish).toHaveBeenCalledWith("shared", "private-code", "test-state");
+    expect(response.status).toBe(303); expect(response.headers.get("location")).toBe("/inventory/data?wps=authorized");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    mocks.user.mockResolvedValue(null);
+    expect((await GET(new Request("https://example.invalid/api/inventory/data-refresh?wps_callback=1"))).status).toBe(401);
+  });
+});
 
 describe("existing refresh endpoint authorization dispatch", () => {
   it("queues explicit core/full imports but rejects unconfigured and invalid options", async () => {

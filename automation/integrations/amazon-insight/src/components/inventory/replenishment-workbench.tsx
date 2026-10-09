@@ -25,12 +25,12 @@ type PlanResponse = {
 };
 type ExportMeta = { defaultBatchNumber?: string; readiness?: { shipmentSkus?: string[]; declarationSkus?: string[] } };
 
-export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActions }: { data: InventoryPlanningViewModel; seasonalActions: SeasonalShipmentAction[] }) {
+export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActions, initialQuery = "" }: { data: InventoryPlanningViewModel; seasonalActions: SeasonalShipmentAction[]; initialQuery?: string }) {
   const [leadTimeDays, setLeadTimeDays] = useState(data.parameters.leadTimeDays);
   const [targetCoverDays, setTargetCoverDays] = useState(data.parameters.targetCoverDays);
   const [safetyStockDays, setSafetyStockDays] = useState(data.parameters.safetyStockDays);
   const [demandPercent, setDemandPercent] = useState(100);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [batches, setBatches] = useState<ShipmentBatch[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState("");
   const [batchItems, setBatchItems] = useState<ShipmentPlanItem[]>([]);

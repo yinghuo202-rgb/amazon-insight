@@ -15,14 +15,14 @@ type ProductCostView = {
   parameters: { vatRate: number; exchangeRate: number };
 };
 
-export function ProductCostWorkbench({ view }: { view: ProductCostView }) {
+export function ProductCostWorkbench({ view, initialQuery = "" }: { view: ProductCostView; initialQuery?: string }) {
   const pageSize = 30;
   const rowBySku = useMemo(() => new Map(view.rows.map((row) => [row.sku, row] as const)), [view.rows]);
   const [drafts, setDrafts] = useState<Record<string, ProductCostValues>>(() => valuesBySku(view.rows));
   const [savedValues, setSavedValues] = useState<Record<string, ProductCostValues>>(() => valuesBySku(view.rows));
   const [overrideMeta, setOverrideMeta] = useState<Record<string, string>>(() => Object.fromEntries(view.rows.flatMap((row) => row.updatedAt ? [[row.sku, row.updatedAt]] : [])));
   const [seriesFilter, setSeriesFilter] = useState("ALL");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [exchangeRate, setExchangeRate] = useState(view.parameters.exchangeRate);
   const [batchPercent, setBatchPercent] = useState(0);
   const [visibleCount, setVisibleCount] = useState(pageSize);

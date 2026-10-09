@@ -45,7 +45,7 @@ const riskTones: Record<InventoryRisk, "rose" | "amber" | "emerald" | "slate"> =
 const riskRank: Record<InventoryRisk, number> = { critical: 0, watch: 1, data: 2, healthy: 3, excess: 4 };
 const seasonLabels: Record<SeasonalityBand, string> = { peak: "旺季中", steady: "相对平稳", low: "淡季", insufficient: "样本不足" };
 
-export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningViewModel; purchasePlan: StockPurchasePlanViewModel }) {
+export function StockBrowser({ data, purchasePlan, initialQuery = "" }: { data: InventoryPlanningViewModel; purchasePlan: StockPurchasePlanViewModel; initialQuery?: string }) {
   const currentMonth = new Date(data.generatedAt).getUTCMonth() + 1;
   const latestSalesMonth = data.sales.historyMonths.at(-1) ?? data.sales.windowMonths.at(-1) ?? "最近月";
   const purchaseBySku = useMemo(() => new Map(purchasePlan.rows.map((row) => [row.sku, row])), [purchasePlan.rows]);
@@ -70,7 +70,7 @@ export function StockBrowser({ data, purchasePlan }: { data: InventoryPlanningVi
     };
   }), [currentMonth, data, latestSalesMonth, purchaseBySku]);
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [risk, setRisk] = useState<"all" | InventoryRisk>("all");
   const [prefix, setPrefix] = useState("all");
   const [stockSource, setStockSource] = useState<StockSource>("all");

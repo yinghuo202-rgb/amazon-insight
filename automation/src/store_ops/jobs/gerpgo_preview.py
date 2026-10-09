@@ -132,7 +132,9 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         raise ValueError("采集日期无效或超过七天，请重新拉取")
     sources = {source["name"]: source for source in manifest["sources"]}
     expected_months = set()
-    for offset in range(7):
+    if manifest.get("collectionScope", "initial") not in {"initial", "recent"}:
+        raise ValueError("采集历史范围无效")
+    for offset in range(2 if manifest.get("collectionScope") == "recent" else 7):
         absolute = captured.year * 12 + captured.month - 1 - offset
         expected_months.add(f"performance-{absolute // 12:04d}-{absolute % 12 + 1:02d}")
     required = {"shops", "products", "fba", *expected_months}
@@ -352,6 +354,7 @@ def publish(runtime: Path, request: dict) -> dict:
         if item["sourceTaskId"] != request["sourceTaskId"] or Path(item["file"]).name != item["file"] or hashlib.sha256((folder / item["file"]).read_bytes()).hexdigest() != item["sha256"]:
             raise ValueError("采集原始证据已变化，请重新拉取")
     root = runtime / "reports"
+    automatic = request.get("automatic") is True
     def guard():
         if not request.get("taskId") or not request.get("lease"):
             raise ValueError("发布任务缺少有效 worker 租约")
@@ -360,6 +363,11 @@ def publish(runtime: Path, request: dict) -> dict:
             cursor = connection.execute("UPDATE data_refresh_tasks_v1 SET updated_at=? WHERE id=? AND lease=? AND status='running'", (datetime.now(timezone.utc).isoformat(), request["taskId"], request["lease"]))
             if cursor.rowcount != 1:
                 raise ValueError("发布任务租约失效，已停止发布")
+            if automatic:
+                schedule = connection.execute("SELECT enabled,auto_publish,last_task_id FROM data_sync_schedules_v1 WHERE key='gerpgo'").fetchone()
+                task = connection.execute("SELECT kind,request_json FROM data_refresh_tasks_v1 WHERE id=?", (request["taskId"],)).fetchone()
+                if not schedule or schedule[:2] != (1, 1) or schedule[2] != request["taskId"] or not task or task[0] != "gerpgo" or json.loads(task[1]).get("scheduled") is not True:
+                    raise ValueError("自动发布授权已关闭或任务不属于当前定时任务")
             connection.commit()
         finally:
             connection.close()
@@ -377,6 +385,15 @@ def publish(runtime: Path, request: dict) -> dict:
             raise ValueError("现有报告已更新，本次确认失效，请重新拉取和对账")
         file = stage / "gerpgo-performance.json"
         previous = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {"scopes": [], "rows": []}
+        prior_publication = previous.get("publication", {})
+        initial_review = prior_publication.get("initialReview")
+        if not initial_review and prior_publication.get("actor") == "shared-account":
+            initial_review = {"storeScope": previous.get("storeScope"), "reviewedAt": prior_publication.get("reviewedAt"), "sourceTaskId": previous.get("sourceTaskId")}
+        if automatic:
+            if not candidate.get("storeScope") or not initial_review or initial_review.get("storeScope") != candidate.get("storeScope"):
+                raise ValueError("首次或店铺范围变化须人工对账，已保留差异预览")
+            if any(item.get("protected") for item in preview["differences"]):
+                raise ValueError("修订超过发布保护线，已保留预览，请人工对账")
         if previous.get("rows") and previous.get("storeScope") != candidate.get("storeScope"):
             old_scope, new_scope = previous.get("storeScope") or {}, candidate.get("storeScope") or {}
             narrowing = old_scope.get("serverId") == new_scope.get("serverId") and old_scope.get("storeName") == new_scope.get("storeName") and bool(new_scope.get("marketIds")) and set(new_scope["marketIds"]).issubset(old_scope.get("marketIds", []))
@@ -386,7 +403,9 @@ def publish(runtime: Path, request: dict) -> dict:
         candidate["rows"] = [r for r in previous["rows"] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
         candidate["scopes"] = [s for s in previous["scopes"] if s["market"] in allowed_markets and (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
         candidate["evidence"] = previous.get("evidence", []) + candidate["evidence"]
-        candidate["publication"] = {"version": version, "actor": "shared-account", "previewHash": request["previewHash"], "baseline": preview["baseline"], "reviewedAt": datetime.now(timezone.utc).isoformat()}
+        reviewed_at = datetime.now(timezone.utc).isoformat()
+        candidate["publication"] = {"version": version, "actor": "scheduled-worker" if automatic else "shared-account", "previewHash": request["previewHash"], "baseline": preview["baseline"], "reviewedAt": reviewed_at,
+                                    "initialReview": initial_review if automatic else {"storeScope": candidate.get("storeScope"), "reviewedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}}
         _json_write(file, candidate)
         if source_data is not None:
             source_data["publication"] = candidate["publication"]
@@ -398,7 +417,7 @@ def run(config, db: StateDb, request: dict, *, approve=False) -> dict:
     run_id = db.start_run("publish-gerpgo-performance" if approve else "preview-gerpgo-performance")
     try:
         if approve:
-            if request.get("confirmed") is not True:
+            if request.get("confirmed") is not True and request.get("automatic") is not True:
                 raise ValueError("需要人工对账确认")
             result = publish(config.runtime_root, request)
         else:

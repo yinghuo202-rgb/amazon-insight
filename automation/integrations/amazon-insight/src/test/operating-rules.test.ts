@@ -75,7 +75,7 @@ describe("operating thresholds", () => {
     expect(first.nextOffset).toBe(20);
     const second = queryOperatingModel(data, { brief: true, offset: 20 }, now);
     expect(new Set([...first.model.rows, ...second.model.rows].map(row => row.sku)).size).toBe(40);
-    expect(queryOperatingModel(data, { brief: true, filter: "loss" }, now).total).toBe(0);
+    expect(queryOperatingModel(data, { brief: true, filter: "loss" }, now).total).toBe(45);
     expect(queryOperatingModel(data, { query: "MA1" }, now).model.rows.length).toBeLessThanOrEqual(3);
   });
 });
