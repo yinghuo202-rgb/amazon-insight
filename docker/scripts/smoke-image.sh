@@ -12,9 +12,13 @@ script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 cleanup() {
   if [ "$?" -ne 0 ]; then
     docker inspect --format '{{.Name}} {{json .State}}' "$app" "$worker" 2>/dev/null || true
+    docker inspect --format '{{json .Config.Entrypoint}} {{json .Config.Cmd}}' "$worker" 2>/dev/null || true
     docker logs --tail 100 "$app" 2>/dev/null || true
     docker logs --tail 100 "$worker" 2>/dev/null || true
     docker exec "$app" node -e 'const{DatabaseSync}=require("node:sqlite");const d=new DatabaseSync(process.env.STORE_OPS_STATE_DB);console.log(d.prepare("SELECT key,enabled,worker_heartbeat FROM data_sync_schedules_v1").all());d.close();' 2>/dev/null || true
+    # Use the app container's identical filesystem to surface module-loading
+    # errors even if a separate container exits before its logs are available.
+    docker exec "$app" node -e 'setTimeout(()=>process.exit(0),10000);console.log("Loading packaged worker");try{require("/app/worker/worker/data-worker.js")}catch(e){console.error(e);process.exit(1)}' || true
   fi
   docker rm -f "$app" "$worker" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
