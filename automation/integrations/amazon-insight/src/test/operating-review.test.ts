@@ -55,8 +55,9 @@ describe("navigation and financial ranking", () => {
     expect(safeSkuReturnHref("/inventory/sku/../../login")).toBeNull();
   });
   it("does not substitute a later month for missing facts", () => {
-    const page = queryOperatingModel(model(), { brief: true, market: "US", period: "2026-07" }, now);
+    const page = queryOperatingModel(model(), { brief: true, market: "US", period: "2026-07", filter: "all" }, now);
     expect(page.summary.revenue).toBeNull(); expect(page.model.rows[0].history).toEqual([]);
+    expect(page.model.rows[0].analysis.current).toBeNull(); expect(page.priorities).toEqual([]);
   });
   it("sorts known revenue and margin without placing unknown profit first", () => {
     const data = model(), a = data.rows[0];
@@ -64,6 +65,6 @@ describe("navigation and financial ranking", () => {
     expect(queryOperatingModel(data, { brief: true, sort: "revenue" }, now).model.rows.map(row => row.sku)).toEqual(["SKU-B", "SKU-A"]);
     expect(queryOperatingModel(data, { brief: true, sort: "margin" }, now).model.rows.map(row => row.sku)).toEqual(["SKU-A", "SKU-B"]);
     expect(queryOperatingModel(data, { brief: true, sort: "revenue" }, now).priorities[0].sku).toBe("SKU-A");
-    expect(queryOperatingModel(data, { brief: true }, now).priorities[0].impactBasis).toContain("销售规模");
+    expect(queryOperatingModel(data, { brief: true }, now).priorities[0].impactBasis).toBe("销售额");
   });
 });
