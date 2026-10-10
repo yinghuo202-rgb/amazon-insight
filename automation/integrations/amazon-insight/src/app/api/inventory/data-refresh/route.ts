@@ -68,6 +68,7 @@ export async function POST(request: Request) {
         if (payload.action === "save_sync_schedule") {
           const parsed = z.object({ action: z.literal("save_sync_schedule"), ...syncScheduleSchema.shape }).strict().safeParse(payload);
           if (!parsed.success) return Response.json({ error: "同步频率必须为 60–10080 分钟，其他设置也需有效。" }, { status: 422 });
+          if (parsed.data.key === "gerpgo" && getGerpgoSettingsStatus().source === "env") return Response.json({ error: "积加定时同步由 NAS env 管理，无需网页保存设置。" }, { status: 409 });
           const settings = { key: parsed.data.key, enabled: parsed.data.enabled, intervalMinutes: parsed.data.intervalMinutes, autoPublish: parsed.data.autoPublish };
           return Response.json({ schedules: saveSyncSchedule(settings) }, { headers: { "Cache-Control": "no-store" } });
         }
@@ -96,6 +97,7 @@ export async function POST(request: Request) {
       } catch { return Response.json({ error: "审核提交失败，请重新打开预览并检查运营数据库。" }, { status: 422 }); }
     }
     if (payload?.action === "pull_gerpgo") {
+      if (getGerpgoSettingsStatus().source === "env") return Response.json({ error: "积加由 worker 根据 NAS env 自动拉取，请查看同步任务状态。" }, { status: 409 });
       const parsed = z.object({ action: z.literal("pull_gerpgo"), includeSupplemental: z.boolean().default(false) }).strict().safeParse(payload);
       if (!parsed.success) return Response.json({ error: "采集范围参数无效。" }, { status: 422 });
       if (!getGerpgoSettingsStatus().configured) return Response.json({ error: "请先配置积加凭证。" }, { status: 422 });

@@ -5,6 +5,12 @@ import { fireEvent, render, screen, cleanup } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { GerpgoConnectionCheck } from "@/components/inventory/data-refresh-center";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+it("shows env status without a webpage credential form", () => {
+  render(createElement(GerpgoConnectionCheck, { initialConfiguration: { configured: true, canSave: false, source: "env", updatedAt: null, message: "env 自动同步，无需手动保存" } }));
+  expect(screen.queryByLabelText("积加 appKey")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "保存积加凭证" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("env 自动同步");
+});
 it("does not send credentials from a plaintext public or NAS address", () => {
   const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);

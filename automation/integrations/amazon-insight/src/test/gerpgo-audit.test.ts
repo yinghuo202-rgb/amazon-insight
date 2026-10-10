@@ -11,7 +11,7 @@ import { GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironmen
 let folder: string;
 let db: DatabaseSync;
 const success = { status: "authorized", marketAccess: true, message: "店铺可读，尚未同步。" };
-const settingsEnv = { SECRET_KEY: "test-only-encryption-secret-at-least-32-characters", GERPGO_APP_ID: "environment-id", GERPGO_APP_KEY: "environment-key" };
+const settingsEnv = { SECRET_KEY: "test-only-encryption-secret-at-least-32-characters" };
 const credentials = { appId: "saved-test-id", appKey: "saved-private-test-key" };
 beforeEach(() => {
   vi.resetAllMocks();
@@ -37,11 +37,18 @@ describe("encrypted webpage credentials in the existing operations database", ()
       expect(JSON.stringify(result)).not.toContain(secret);
     }
   });
-  it("keeps environment credentials as fallback until a complete pair is saved", () => {
-    expect(getGerpgoSettingsStatus(settingsEnv)).toMatchObject({ configured: true, source: "env" });
-    expect(resolveGerpgoEnvironment(settingsEnv)).toEqual(settingsEnv);
+  it("uses env credentials without reading or decrypting stale saved credentials", () => {
     saveGerpgoCredentials(credentials, settingsEnv);
-    expect(resolveGerpgoEnvironment({ ...settingsEnv, GERPGO_APP_ID: "changed-id" }).GERPGO_APP_ID).toBe(credentials.appId);
+    const environment = { GERPGO_APP_ID: "environment-id", GERPGO_APP_KEY: "environment-key" };
+    expect(getGerpgoSettingsStatus(environment)).toMatchObject({ configured: true, canSave: false, source: "env" });
+    expect(resolveGerpgoEnvironment(environment)).toEqual(environment);
+    expect(() => saveGerpgoCredentials(credentials, environment)).toThrow("env 管理");
+    expect(() => resolveGerpgoEnvironment({ ...settingsEnv, GERPGO_APP_ID: "partial-id" })).toThrow("尚未配置");
+    expect(getGerpgoSettingsStatus({ GERPGO_APP_ID: "partial-id" })).toMatchObject({ configured: false, canSave: false, source: "env" });
+    db.close(); mocks.dbPath = path.join(folder, "missing.sqlite3");
+    expect(resolveGerpgoEnvironment(environment)).toEqual(environment);
+    expect(getGerpgoSettingsStatus(environment).configured).toBe(true);
+    db = new DatabaseSync(path.join(folder, "replacement.sqlite3"));
   });
   it("cannot persist or decrypt a key without a stable strong SECRET_KEY", () => {
     expect(() => saveGerpgoCredentials(credentials, {})).toThrow("SECRET_KEY");

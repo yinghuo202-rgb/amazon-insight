@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { absoluteAppUrl } from "@/lib/utils";
 
 import "./globals.css";
+import "./operations-reference.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL(absoluteAppUrl()),
@@ -31,7 +32,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b1220",
+  themeColor: "#25584e",
   colorScheme: "light",
 };
 

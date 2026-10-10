@@ -57,7 +57,7 @@ jobs:
       - name: Validate NAS worker Compose overlay
         env:
           IMAGE_REPOSITORY: ghcr.io/yinghuo202-rgb/amazon-insight
-          IMAGE_TAG: v1.5.0-rc.2
+          IMAGE_TAG: v1.5.0-rc.3
           CONTAINER_NAME: measureman-compose-check
           APP_PORT: "3001"
           PUBLIC_APP_URL: https://example.invalid

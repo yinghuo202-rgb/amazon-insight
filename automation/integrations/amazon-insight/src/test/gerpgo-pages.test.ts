@@ -25,12 +25,12 @@ describe("GERPgo full page collector", () => {
     expect(await collectGerpgoPages(c, "/middle/base/market/page", {}, async page => { evidence.push(page); }, options)).toEqual({ pages: 2, total: 3, totalUnit: "markets" });
     expect(evidence).toHaveLength(2);
   });
-  it("uses daily market scopes for ads and separate return/storage periods", () => {
+  it("uses daily market scopes for ads without calling inventory, returns or storage", () => {
     const sources = gerpgoSupplementalSources([{ condition: { beginDate: "2026-09-29", endDate: "2026-09-30" } }], [1, 2, 1]);
     expect(sources.filter(source => source.name.startsWith("ads-")).length).toBe(4);
     expect(sources.find(source => source.name === "ads-2-2026-09-30")?.condition).toEqual({ marketId: 2, startDateData: "2026-09-30", endDateData: "2026-09-30" });
-    expect(sources.find(source => source.name.startsWith("storage-"))?.condition).toEqual({ year: "2026", month: "9" });
-    expect(sources.find(source => source.name.startsWith("returns-"))?.condition).toEqual({ returnStartDate: "2026-09-29", returnEndDate: "2026-09-30" });
+    expect(sources).toHaveLength(4);
+    expect(sources.every(source => source.name.startsWith("ads-"))).toBe(true);
     expect(() => gerpgoSupplementalSources([{ condition: {} }], [1])).toThrow();
   });
   it("streams every page without exposing a token", async () => {
@@ -38,6 +38,18 @@ describe("GERPgo full page collector", () => {
     expect(await collectGerpgoPages(c, endpoint, {}, async page => { saved.push(...page.rows.map(row => Number(row.id))); }, options)).toEqual({ pages: 3, total: 201 });
     expect(new Set(saved).size).toBe(201);
     expect(c.post).toHaveBeenLastCalledWith(endpoint, { page: 3, pagesize: 100 });
+  });
+  it("accepts the observed zero-total null advertising page, retaining empty evidence", async () => {
+    const c = client({ total: 0, rows: null, page: 1, pagesize: 100 });
+    const save = vi.fn().mockResolvedValue(undefined);
+    expect(await collectGerpgoPages(c, "/operation/ads/adsAsinAnalytical/page", { marketId: 3 }, save, options)).toEqual({ pages: 1, total: 0 });
+    expect(save).toHaveBeenCalledWith({ total: 0, page: 1, rows: [] });
+  });
+  it.each([{ total: 1, rows: null }, { total: 0 }, { total: "0", rows: null }, { total: 0, rows: {} }, { total: 0, rows: null, page: 2 }])("still rejects malformed advertising responses", async response => {
+    await expect(collectGerpgoPages(client(response), "/operation/ads/adsAsinAnalytical/page", {}, async () => {}, options)).rejects.toThrow();
+  });
+  it("does not normalize null rows for unrelated endpoints", async () => {
+    await expect(collectGerpgoPages(client({ total: 0, rows: null }), endpoint, {}, async () => {}, options)).rejects.toThrow();
   });
   it("uses top-level performance parameters, but nested shop conditions", async () => {
     const c = client({ total: 0, rows: [] }, { total: 0, rows: [] });

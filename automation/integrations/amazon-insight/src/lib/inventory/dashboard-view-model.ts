@@ -2,7 +2,7 @@ import { defaultOperatingRules, type OperatingRules, type OperatingRuleOverride 
 import type { InventoryDashboardData, ProfitabilityData, VariantCatalogData } from "@/lib/inventory/contracts";
 import { calculateCampaignRows, calculateInventoryRows } from "@/lib/inventory/presentation";
 import { buildSeasonalityProfile } from "@/lib/inventory/seasonality";
-import { operatingMarkets, type OperatingPerformance, type OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
+import { operatingMarkets, selectAdvertisingPeriod, type OperatingPerformance, type OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
 
 export type OperatingModel = ReturnType<typeof buildOperatingModel>;
 export type OperatingSku = OperatingModel["rows"][number];
@@ -12,17 +12,33 @@ export type OperatingSku = OperatingModel["rows"][number];
 export function buildOperatingModel(inventories: InventoryDashboardData[], profitability?: ProfitabilityData, variants?: VariantCatalogData, warnings: string[] = [], now = new Date(), performance?: OperatingPerformance) {
   const replaced = new Set(performance?.scopes.map(scope => `${scope.market}:${scope.reportMonth}`) ?? []);
   const profits: OperatingPerformanceRow[] = [...(profitability?.rows ?? []).filter(row => !replaced.has(`${row.market}:${row.reportMonth}`)), ...(performance?.rows ?? [])].filter(row => (operatingMarkets as readonly string[]).includes(row.market));
-  const periods = [...new Set(profits.map((row) => row.reportMonth))].sort().reverse();
-  const markets = [...new Set([...inventories.map((item) => item.market), ...profits.map((item) => item.market), ...(performance?.scopes.map(scope => scope.market) ?? [])])].filter((market) => (operatingMarkets as readonly string[]).includes(market));
+  const advertising = performance?.advertising;
+  const aliases = new Map(advertising?.identities.flatMap(identity => identity.aliases.map(alias => [alias, identity.sku] as const)) ?? []);
+  const canonical = new Map<string, string>();
+  for (const identity of advertising?.identities ?? []) {
+    const known = new Set([...inventories.flatMap(data => data.rows.map(row => row.sku)), ...profits.filter(row => row.sourceKind !== "gerpgo").map(row => row.sku)].filter(sku => identity.aliases.includes(sku)));
+    // Retain a historical/local SKU only when the explicit product mapping is unique.
+    if (known.size === 1) canonical.set(identity.sku, [...known][0]);
+  }
+  const displaySku = (sku: string) => canonical.get(aliases.get(sku) ?? sku) ?? sku;
+  const collision = new Set<string>();
+  const seen = new Set<string>();
+  for (const row of profits) { const key = JSON.stringify([row.market, row.reportMonth, displaySku(row.sku)]); if (seen.has(key)) collision.add(displaySku(row.sku)); seen.add(key); }
+  const resolveSku = (sku: string) => collision.has(displaySku(sku)) ? sku : displaySku(sku);
+  const normalizedProfits = profits.map(row => ({ ...row, sku: resolveSku(row.sku) }));
+  const periods = [...new Set([...profits.map((row) => row.reportMonth), ...(advertising?.scopes.map(scope => scope.reportMonth) ?? [])])].sort().reverse();
+  const markets = [...new Set([...inventories.map((item) => item.market), ...profits.map((item) => item.market), ...(performance?.scopes.map(scope => scope.market) ?? []), ...(advertising?.scopes.map(scope => scope.market) ?? [])])].filter((market) => (operatingMarkets as readonly string[]).includes(market));
   const inventoryMap = new Map(inventories.map((item) => [item.market, item]));
   const rows = markets.flatMap((market) => {
     const inventory = inventoryMap.get(market);
-    const skus = new Set([...profits.filter((item) => item.market === market).map((item) => item.sku), ...(inventory?.rows ?? []).map((item) => item.sku)]);
+    const ads = advertising?.rows.filter(row => row.market === market) ?? [];
+    const skus = new Set([...normalizedProfits.filter((item) => item.market === market).map((item) => item.sku), ...(inventory?.rows ?? []).map((item) => item.sku), ...ads.map(row => resolveSku(row.sku))]);
     return [...skus].map((sku) => {
       const stock = inventory?.rows.find((item) => item.sku === sku);
       const supplyConfirmed = Boolean(stock && (stock.inTransitInventory === 0 || inventory?.snapshots.inTransitConfirmed === true) && (stock.awdAvailable === 0 || inventory?.snapshots.awdAvailableConfirmed === true));
       const variant = variants?.items.find((item) => item.market === market && item.sku === sku);
-      const history = profits.filter((item) => item.market === market && item.sku === sku).sort((a, b) => a.reportMonth.localeCompare(b.reportMonth));
+      const history = normalizedProfits.filter((item) => item.market === market && item.sku === sku).sort((a, b) => a.reportMonth.localeCompare(b.reportMonth));
+      const advertisingHistory = ads.filter(row => resolveSku(row.sku) === sku || aliases.get(sku) === row.sku).sort((a, b) => a.reportMonth.localeCompare(b.reportMonth));
       const unitPoints = new Map((stock?.salesHistoryByMonth.length ? stock.salesHistoryByMonth : stock?.salesByMonth ?? []).filter(point => /^\d{4}-\d{2}$/.test(point.month)).map(point => [point.month, point]));
       for (const point of history) {
         if (point.reportMonth < now.toISOString().slice(0, 7) && point.quality?.completePeriod !== false) unitPoints.set(point.reportMonth, { month: point.reportMonth, units: point.units });
@@ -33,14 +49,15 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
       return {
         sku, market, listingId: JSON.stringify([performance?.storeScope?.storeName ?? "MEASUREMAN", market, sku]), parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
         currency: history.at(-1)?.currency || inventory?.currency || (market === "MX" ? "MXN" : market === "AU" ? "AUD" : market === "CA" ? "CAD" : "USD"),
-        history, unitHistory, seasonality, inventoryDate: inventory?.snapshots.fbaDate ?? null,
+        sourceSkus: [...new Set(profits.filter(item => item.market === market && resolveSku(item.sku) === sku).map(item => item.sku))],
+        history, advertisingHistory, unitHistory, seasonality, inventoryDate: inventory?.snapshots.fbaDate ?? null,
         awdDate: inventory?.snapshots.awdSourceAvailable ? inventory.snapshots.awdDate : null,
         stock: stock ? { fba: stock.fbaSellable, awd: stock.awdAvailable, awdTransfer: stock.awdOutboundToFba, transit: stock.inTransitInventory, domestic: stock.localInventory, orders: stock.pendingOrderQty, dailySales: stock.dailySales,
           supplyConfirmed, cover: supplyConfirmed && stock.dailySales > 0 ? (stock.fbaSellable + stock.awdAvailable + stock.inTransitInventory) / stock.dailySales : null, target: inventory!.parameters.targetCoverDays } : null,
       };
     });
   });
-  return { markets, periods, rows, warnings, storeName: performance?.storeScope?.storeName ?? null, ruleOverrides: [] as OperatingRuleOverride[], dataVersion: "legacy", publishedVersion: performance?.publication.version ?? null, rulesAvailable: true, generatedAt: performance?.generatedAt ?? profitability?.generatedAt ?? null,
+  return { markets, periods, rows, warnings, advertisingScopes: advertising?.scopes ?? [], storeName: performance?.storeScope?.storeName ?? null, ruleOverrides: [] as OperatingRuleOverride[], dataVersion: "legacy", publishedVersion: performance?.publication.version ?? null, rulesAvailable: true, generatedAt: performance?.generatedAt ?? profitability?.generatedAt ?? null,
     snapshots: inventories.map((item) => ({ market: item.market, date: item.snapshots.fbaDate, awdDate: item.snapshots.awdDate, awdAvailable: item.snapshots.awdSourceAvailable,
       stale: snapshotAgeDays(item.snapshots.fbaDate, now) === null || snapshotAgeDays(item.snapshots.fbaDate, now)! > item.snapshots.staleAfterDays })) };
 }
@@ -62,32 +79,60 @@ export function operatingFacts(row: OperatingSku, period: string, rules: Operati
   const revenueChange = comparable && current && previous.productSales > 0 ? (current.productSales / previous.productSales - 1) * 100 : null;
   const averagePrice = current ? current.averagePrice ?? (current.units > 0 ? current.productSales / current.units : null) : null;
   const returnRate = current && current.units > 0 && current.returns !== null ? current.returns / current.units : null;
-  const advertisingShare = current && current.productSales > 0 && current.advertisingSales != null ? current.advertisingSales / current.productSales : null;
-  const advertisingSpendShare = current && current.productSales > 0 && current.advertisingCost !== null ? current.advertisingCost / current.productSales : null;
-  const acos = current?.advertisingSales && current.advertisingSales > 0 && current.advertisingCost !== null ? current.advertisingCost / current.advertisingSales : null;
+  const ads = selectAdvertisingPeriod(row.advertisingHistory ?? [], period);
+  const advertisingPeriod = ads?.reportMonth ?? (current && (current.advertisingCost !== null || current.advertisingSales != null) ? period : null);
+  const advertisingCost = ads ? ads.cost : current?.advertisingCost ?? null;
+  const advertisingSales = ads ? ads.sales : current?.advertisingSales ?? null;
+  const adsAligned = advertisingPeriod === period && (!ads || !current?.quality?.businessAsOf || ads.businessAsOf === current.quality.businessAsOf);
+  const advertisingShare = adsAligned && current && current.productSales > 0 && advertisingSales !== null ? advertisingSales / current.productSales : null;
+  const advertisingSpendShare = adsAligned && current && current.productSales > 0 && advertisingCost !== null ? advertisingCost / current.productSales : null;
+  const acos = advertisingSales !== null && advertisingSales > 0 && advertisingCost !== null ? advertisingCost / advertisingSales : null;
   const issues: string[] = [], suggestions: string[] = [], dataIssues: string[] = [];
   if (!current) dataIssues.push("经营数据缺失");
   if (current && !currencyAligned) dataIssues.push("币种不一致");
   if (current && !current.quality?.profitVerified) dataIssues.push("利润费用待对账");
-  if (current && current.advertisingCost === null) dataIssues.push("广告花费未提供");
+  if (advertisingCost === null) dataIssues.push("广告花费未提供");
   if (current && current.storageCost === null) dataIssues.push("仓储费用未提供");
   if (current && !current.quality?.returnsVerified) dataIssues.push("退货口径待核验");
   if (current && !complete) dataIssues.push("当月尚未结束或期间不完整");
   if (current && current.units < rules.minSalesUnits) dataIssues.push("销售样本不足");
-  if (!rulesAvailable) dataIssues.push("提醒配置不可用，暂不触发经营提醒");
+  if (!rulesAvailable) dataIssues.push("提醒配置不可用");
   const enough = Boolean(rulesAvailable && current && complete && currencyAligned && current.units >= rules.minSalesUnits);
+  const ratio = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const hypotheses: string[] = [];
   if (enough && current?.quality?.profitVerified && current.actualMargin !== null && current.actualMargin * 100 < rules.profitMarginMinPercent) {
     issues.push(current.actualProfit !== null && current.actualProfit < 0 ? "利润为负" : "利润待核查");
-    suggestions.push("结合已核验成本与费用，复核利润变化；不自动调价。");
+    suggestions.push(`利润率 ${ratio(current.actualMargin)}；检查单件成本和主要费用。`);
+    if (previous?.quality?.profitVerified && comparable && current.productSales > 0 && previous.productSales > 0 && current.storageCost !== null && previous.storageCost !== null && current.storageCost / current.productSales > previous.storageCost / previous.productSales) {
+      hypotheses.push(`仓储费占销售额升至 ${ratio(current.storageCost / current.productSales)}，可能正在拖低利润。`);
+    }
   }
-  if (enough && current?.quality?.profitVerified && advertisingSpendShare !== null && advertisingSpendShare * 100 > rules.adSpendMaxPercent) {
-    issues.push("广告待核查"); suggestions.push("结合广告归因窗口与利润复核投入，不直接缩减预算。");
+  if (enough && advertisingSpendShare !== null && advertisingSpendShare * 100 > rules.adSpendMaxPercent) {
+    issues.push("广告待核查"); suggestions.push(`广告投入占销售额 ${ratio(advertisingSpendShare)}；先检查高花费、低转化的活动。`);
+    if (current?.quality?.profitVerified && current.actualMargin !== null && current.actualMargin * 100 < rules.profitMarginMinPercent) hypotheses.push("广告投入偏高，可能是利润偏低的原因之一。");
   }
   if (enough && current?.quality?.returnsVerified && current.units >= rules.minReturnSalesUnits && current.returns !== null && current.returns >= rules.minReturnUnits && returnRate !== null && returnRate * 100 > rules.returnRateMaxPercent) {
-    issues.push("退货待核查"); suggestions.push("按已确认的退货统计口径核查原因。");
+    issues.push("退货待核查"); suggestions.push(`退货率 ${ratio(returnRate)}（${current.returns} 件）；查看退货原因是否集中在同一问题。`);
   }
   if (enough && previous && previous.units >= rules.minSalesUnits && revenueChange !== null && revenueChange < -rules.revenueDeclinePercent) {
-    issues.push("销售额下降"); suggestions.push("对比成交均价、销量、流量和可售状态，核查销售下降。");
+    issues.push("销售额下降");
+    // Use realized revenue per unit, not the current listing price, to explain the change.
+    const unitChange = current!.units / previous.units - 1;
+    const previousPrice = previous.productSales / previous.units;
+    const priceChange = previousPrice > 0 ? current!.productSales / current!.units / previousPrice - 1 : null;
+    const drivers: string[] = [];
+    if (unitChange < -.05) drivers.push(`销量下降 ${ratio(-unitChange)}`);
+    if (priceChange !== null && priceChange < -.05) drivers.push(`成交均价下降 ${ratio(-priceChange)}`);
+    if (drivers.length) hypotheses.push(`${drivers.join("、")}，${drivers.length > 1 ? "共同" : ""}拉低了销售额。`);
+    if (priceChange !== null && priceChange < -.05 && current?.quality?.profitVerified && current.actualProfit !== null) suggestions.push("检查降价或促销后的单件利润。");
+    const previousAdShare = previous.advertisingSales != null && previous.productSales > 0 ? previous.advertisingSales / previous.productSales : null;
+    if (advertisingShare !== null && previousAdShare !== null && advertisingShare - previousAdShare > .05) {
+      hypotheses.push(`广告销售占比上升 ${((advertisingShare - previousAdShare) * 100).toFixed(1)} 个百分点，可能更依赖广告获客。`);
+    }
+    // Evaluate seasonality at the selected month using only preceding months.
+    const seasonalHistory = row.unitHistory.filter(point => point.month < period);
+    const seasonality = buildSeasonalityProfile(seasonalHistory, Number(period.slice(5)));
+    if (new Set(seasonalHistory.map(point => point.month.slice(5))).size === 12 && seasonality.band === "low") hypotheses.push("历史上这个月份销量偏低，本期下降可能有淡季因素。");
   }
   const inventoryAge = row.inventoryDate ? snapshotAgeDays(row.inventoryDate, now) : null;
   const awdAge = row.awdDate ? snapshotAgeDays(row.awdDate, now) : null;
@@ -99,14 +144,13 @@ export function operatingFacts(row: OperatingSku, period: string, rules: Operati
   const supplyFresh = stockFresh && Boolean(row.stock?.supplyConfirmed) && awdFresh;
   if (row.stock?.awd && !awdFresh) dataIssues.push("AWD 日期待核验或过期");
   if (rulesAvailable && stockFresh && fbaCover !== null && fbaCover < rules.fbaCoverDays) {
-    issues.push("当前供货风险"); suggestions.push("先核查 FBA 可售与到货日期，AWD 不视为已上架。");
+    issues.push("当前供货风险"); suggestions.push(`FBA 可售约 ${Math.floor(fbaCover)} 天；优先确认下一批到货时间。`);
   }
   if (rulesAvailable && supplyFresh && row.stock?.cover !== null && row.stock?.cover !== undefined && row.stock.cover < rules.supplyCoverDays) {
-    issues.push("供应覆盖不足"); suggestions.push("按三个月供应目标复核库存与在途，不将国内订单计入海外可售。");
+    issues.push("供应覆盖不足"); suggestions.push(`库存与在途覆盖约 ${Math.floor(row.stock.cover)} 天；按 ${rules.supplyCoverDays} 天目标安排补货。`);
   }
-  if (!suggestions.length) suggestions.push(dataIssues.length ? "先补齐或核验标记的数据，再判断经营情况。" : "当前未触发已配置提醒；继续观察历史变化。");
-  return { current, previous, revenueChange, averagePrice, returnRate, advertisingShare, advertisingSpendShare, acos, complete,
-    fbaCover, stockFresh, supplyFresh, issues, dataIssues, suggestion: suggestions.slice(0, 2).join(" ") };
+  return { current, previous, revenueChange, averagePrice, returnRate, advertisingShare, advertisingSpendShare, advertisingCost, advertisingSales, advertisingPeriod, advertisingAsOf: ads?.businessAsOf ?? current?.quality?.businessAsOf ?? null, acos, complete,
+    fbaCover, stockFresh, supplyFresh, issues, dataIssues, hypotheses, suggestion: suggestions.slice(0, 2).join(" ") };
 }
 
 type MarketCode = "US" | "CA";

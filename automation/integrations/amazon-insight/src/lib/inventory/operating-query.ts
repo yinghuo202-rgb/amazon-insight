@@ -1,6 +1,6 @@
 import { operatingFacts, type OperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { resolveOperatingRules } from "@/lib/inventory/operating-rules";
-import { operatingMarkets } from "@/lib/inventory/operating-performance";
+import { operatingMarkets, selectAdvertisingPeriod } from "@/lib/inventory/operating-performance";
 
 export const operatingFilters = ["focus", "revenue", "loss", "advertising", "returns", "decline", "stock", "missing", "all"] as const;
 export type OperatingFilter = typeof operatingFilters[number];
@@ -18,10 +18,19 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const sum = (key: "productSales" | "actualProfit" | "units" | "returns") => reported.length && reported.every(item => item.current![key] !== null) ? reported.reduce((total, item) => total + item.current![key]!, 0) : null;
   const revenue = sum("productSales"), profit = sum("actualProfit"), units = sum("units"), returns = sum("returns");
   const adSales = reported.length && reported.every(item => item.current!.advertisingSales != null) ? reported.reduce((total, item) => total + item.current!.advertisingSales!, 0) : null;
+  const adCost = reported.length && reported.every(item => item.current!.advertisingCost !== null) ? reported.reduce((total, item) => total + item.current!.advertisingCost!, 0) : null;
+  const adScopes = (model.advertisingScopes ?? []).filter(scope => scope.market === market && scope.currency === currency && (scope.cost !== null || scope.sales !== null)).sort((a, b) => b.reportMonth.localeCompare(a.reportMonth));
+  const adScope = selectAdvertisingPeriod(adScopes, period);
+  const adsAligned = adScope?.reportMonth === period && reported.every(item => !item.current?.quality?.businessAsOf || item.current.quality.businessAsOf === adScope.businessAsOf);
+  const advertising = adScope ? { ...adScope,
+    acos: adScope.cost !== null && adScope.sales !== null && adScope.sales > 0 ? adScope.cost / adScope.sales : null,
+    share: adsAligned && adScope.sales !== null && revenue !== null && revenue > 0 ? adScope.sales / revenue : null,
+    spendShare: adsAligned && adScope.cost !== null && revenue !== null && revenue > 0 ? adScope.cost / revenue : null,
+  } : null;
   const covered = facts.filter(item => item.supplyFresh && item.row.stock?.cover != null);
   const coverage = covered.length ? covered.filter(item => item.row.stock!.cover! >= resolveOperatingRules(market, item.row.sku, model.ruleOverrides).supplyCoverDays).length / covered.length : null;
   const matches = (item: typeof facts[number], kind: string) => kind === "all" || kind === "revenue"
-    || kind === "focus" && (item.issues.length > 0 || item.dataIssues.length > 0)
+    || kind === "focus" && item.issues.length > 0
     || kind === "loss" && item.issues.some(issue => issue === "利润为负" || issue === "利润待核查")
     || kind === "advertising" && item.issues.includes("广告待核查")
     || kind === "returns" && item.issues.includes("退货待核查")
@@ -29,7 +38,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     || kind === "stock" && item.issues.some(issue => issue === "当前供货风险" || issue === "供应覆盖不足")
     || kind === "missing" && item.dataIssues.length > 0;
   // Searching a specific product is independent of attention thresholds.
-  const matched = facts.filter(item => query ? [item.row.sku, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
+  const matched = facts.filter(item => query ? [item.row.sku, ...item.row.sourceSkus, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
   const impact = (item: typeof facts[number]) => {
     if (item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency) return Math.abs(item.current.actualProfit - item.previous.actualProfit);
     // Missing prior profit is not zero profit. Use a known revenue fact instead.
@@ -46,16 +55,19 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     return impactRank(a, b);
   };
   matched.sort(rank);
-  const priorities = facts.filter(item => item.issues.length || item.dataIssues.length).sort(impactRank).slice(0, 6).map(item => ({
+  const priorities = facts.filter(item => item.issues.length).sort(impactRank).slice(0, 3).map(item => ({
     listingId: item.row.listingId, sku: item.row.sku, market, title: item.issues[0] || "数据核查",
     filter: item.issues.some(issue => issue === "利润为负" || issue === "利润待核查") ? "loss" : item.issues.includes("当前供货风险") || item.issues.includes("供应覆盖不足") ? "stock" : item.issues.includes("销售额下降") ? "decline" : item.issues.includes("广告待核查") ? "advertising" : item.issues.includes("退货待核查") ? "returns" : "missing",
-    impact: item.current ? impact(item) : null, impactBasis: item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency ? "已核验利润变化金额" : "当期销售规模（非预计损失）",
-    fact: item.issues.join(" · ") || item.dataIssues.join(" · "), suggestion: item.suggestion,
+    impact: item.current ? impact(item) : null, impactBasis: item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency ? "利润变化" : "销售额",
+    fact: item.issues.join(" · "), suggestion: item.suggestion,
   }));
   const offset = input.offset ?? 0;
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("加载位置无效。");
   const limit = input.brief ? 20 : query ? 3 : 0;
-  const shown = matched.slice(offset, offset + limit).map(item => ({ ...item.row, history: item.row.history.filter(point => point.reportMonth <= period).slice(-6), unitHistory: item.row.unitHistory.filter(point => point.month <= period).slice(-6) }));
+  const shown = matched.slice(offset, offset + limit).map(item => {
+    const { row, ...analysis } = item;
+    return { ...row, analysis, advertisingHistory: row.advertisingHistory.slice(-6), history: row.history.filter(point => point.reportMonth <= period).slice(-6), unitHistory: row.unitHistory.filter(point => point.month <= period).slice(-6) };
+  });
   const selected = { ...model, rows: shown };
   const priorDate = /^\d{4}-\d{2}$/.test(period) ? new Date(`${period}-01T00:00:00Z`) : null;
   priorDate?.setUTCMonth(priorDate.getUTCMonth() - 1);
@@ -78,7 +90,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     return { month, revenue: points.length ? points.reduce((total, point) => total + point.productSales, 0) : null, profit: points.length && points.every(point => point.actualProfit !== null) ? points.reduce((total, point) => total + point.actualProfit!, 0) : null };
   });
   return { model: selected, market, period, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
-    summary: { revenue, profit, units, returns, adSales, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
+    summary: { revenue, profit, units, returns, adSales, adCost, advertising, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
       coveredCount: covered.length, unknownCoverageCount: facts.length - covered.length }, chart,
     counts: Object.fromEntries(operatingFilters.map(kind => [kind, facts.filter(item => matches(item, kind)).length])) };
 }

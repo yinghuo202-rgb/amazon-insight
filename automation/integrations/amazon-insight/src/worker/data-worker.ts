@@ -5,8 +5,8 @@ import { runFullDataRefresh, runPythonJob } from "@/lib/inventory/data-refresh";
 import { automationRoot, runtimePath } from "@/lib/inventory/paths";
 import { readGerpgoPreview } from "@/lib/inventory/gerpgo-preview";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
-import { claimRefreshTask, updateRefreshTask, listRefreshTasks, listSyncSchedules, enqueueDueSyncTasks, completeReviewedSyncTask } from "@/lib/inventory/refresh-task-store";
-import { collectGerpgoPages, createGerpgoClient, gerpgoSupplementalSources, GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironment, resolveGerpgoStoreScope } from "@/lib/inventory/gerpgo";
+import { claimRefreshTask, updateRefreshTask, listRefreshTasks, listSyncSchedules, enqueueDueSyncTasks, completeReviewedSyncTask, configureGerpgoEnvironmentSchedule } from "@/lib/inventory/refresh-task-store";
+import { collectGerpgoPages, createGerpgoClient, gerpgoSupplementalSources, GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironment, resolveGerpgoStoreScope, getGerpgoAutoSyncConfiguration } from "@/lib/inventory/gerpgo";
 import { publishedReportPath } from "@/lib/inventory/report-version";
 import { getWpsStatus, downloadWpsInventory, WpsError } from "@/lib/inventory/wps";
 import { receiveWpsInventoryDownload, autoPublishWpsInventory, getImportBatch } from "@/lib/inventory/data-import";
@@ -22,7 +22,7 @@ async function currentPerformance() {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
 
-async function collect(task: NonNullable<ReturnType<typeof claimRefreshTask>>) {
+export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof claimRefreshTask>>) {
   const environment = resolveGerpgoEnvironment();
   if (!environment.GERPGO_STORE_NAME?.trim()) throw new GerpgoConnectionError("请配置 GERPGO_STORE_NAME；禁止自动汇总全部授权店铺。", 422);
   const client = await createGerpgoClient(environment);
@@ -39,21 +39,22 @@ async function collect(task: NonNullable<ReturnType<typeof claimRefreshTask>>) {
     { name: "shops", endpoint: "/middle/base/market/page", condition: {} },
     { name: "products", endpoint: "/purchase/goods/product/page", condition: {} },
     ...scopes,
-    { name: "fba", endpoint: "/purchase/store/fbaInventory/page/V2", condition: {} },
   ];
   type SourceResult = { name: string; endpoint: string; condition: Record<string, unknown>; status: "completed" | "failed" | "skipped"; pages: number; total: number | null; error?: string; totalUnit?: "markets" };
   const completed: SourceResult[] = [], sellers: Record<string, unknown>[] = [], failedEndpoints = new Map<string, string>();
   let storeScope: ReturnType<typeof resolveGerpgoStoreScope> | undefined;
   async function saveManifest(status = "collecting") {
     const manifest = { schemaVersion: 1, taskId: task.id, source: "gerpgo", capturedAt: now.toISOString(), businessAsOf: null, status, sources: completed, storeScope,
-      collectionMode: task.includeSupplemental ? "full" : "core", collectionScope: recent ? "recent" : "initial", deferredDomains: task.includeSupplemental ? [] : ["ads", "returns", "storage"],
+      collectionMode: task.includeSupplemental ? "sales_ads" : "sales", collectionScope: recent ? "recent" : "initial", deferredDomains: task.includeSupplemental ? [] : ["ads"],
+      excludedDomains: ["fba", "returns", "storage", "shipments"],
       reason: "全部原始分页保存在服务端；未完成的数据域和未核验的字段不会伪装成已发布业务数据。" };
     await writeFile(path.join(folder, "manifest.json.tmp"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
     await rename(path.join(folder, "manifest.json.tmp"), path.join(folder, "manifest.json"));
   }
-  async function collectSource(source: typeof sources[number]) {
+  async function collectSource(source: Pick<SourceResult, "name" | "endpoint" | "condition">) {
     if (stopping) throw new Error("worker 正在停止。");
-    const priorFailure = failedEndpoints.get(source.endpoint);
+    const failureKey = source.name.startsWith("ads-") ? `${source.endpoint}:${source.condition.marketId}` : source.endpoint;
+    const priorFailure = failedEndpoints.get(failureKey);
     if (priorFailure) {
       completed.push({ ...source, status: "skipped", pages: 0, total: null, error: priorFailure });
       return;
@@ -71,7 +72,7 @@ async function collect(task: NonNullable<ReturnType<typeof claimRefreshTask>>) {
       if (stopping) throw error;
       const safe = error instanceof GerpgoConnectionError ? error.message : "该数据域采集未完成，请检查 worker 和数据卷权限。";
       // Only permission/rate/provider failures suppress remaining scopes of the same endpoint.
-      failedEndpoints.set(source.endpoint, safe);
+      if (!source.name.startsWith("ads-") || error instanceof GerpgoConnectionError && [401, 403, 429].includes(error.httpStatus)) failedEndpoints.set(failureKey, safe);
       completed.push({ ...source, status: "failed", pages: 0, total: null, error: safe });
     }
     await saveManifest();
@@ -90,12 +91,14 @@ async function collect(task: NonNullable<ReturnType<typeof claimRefreshTask>>) {
   }
   await saveManifest(completed.some(source => source.status !== "completed") ? "incomplete" : "collected");
   const missingCore = completed.filter(source => sources.some(core => core.name === source.name) && source.status !== "completed");
-  if (missingCore.length) throw new GerpgoConnectionError(`基础数据采集未完成：${missingCore.map(source => source.name).join("、")}。其他成功分页已保留，请查看采集明细；旧报告未修改。`);
+  const missingAds = completed.filter(source => source.name.startsWith("ads") && source.status !== "completed");
+  if (missingCore.length || missingAds.length) throw new GerpgoConnectionError(`销售或广告采集未完成：${missingCore.length} 个基础范围、${missingAds.length} 个广告范围。成功分页已保留，请查看采集明细；旧报告未修改。`);
   const requestFile = path.join(folder, "prepare-request.json");
   await writeFile(requestFile, JSON.stringify({ sourceTaskId: task.id }), { mode: 0o600 });
   await runPythonJob(automationRoot(), "preview-gerpgo", requestFile);
 }
 async function main() {
+configureGerpgoEnvironmentSchedule();
 while (!stopping) {
   // Reconcile manually published WPS batches before scheduling their next update.
   for (const waiting of listRefreshTasks().filter(t => t.kind === "wps_inventory" && t.status === "awaiting_review" && t.batchId)) {
@@ -113,7 +116,7 @@ while (!stopping) {
   try {
     let wpsResult: { status: string; batchId: string; reason?: string } | null = null;
     let automaticallyPublished = false;
-    if (task.kind === "gerpgo") await collect(task);
+    if (task.kind === "gerpgo") await collectGerpgoTask(task);
     else if (task.kind === "gerpgo_publish") {
       const requestFile = runtimePath("incoming", "gerpgo", task.request!.sourceTaskId, `approval-${task.id}.json`);
       await writeFile(requestFile, JSON.stringify({ ...task.request, taskId: task.id, lease: task.lease }), { mode: 0o600 });
@@ -131,9 +134,11 @@ while (!stopping) {
     if (preview && task.scheduled && !preview.blocked && !preview.differences.some(d => d.protected)) {
       const settings = listSyncSchedules().find(s => s.key === "gerpgo")!, previous = await currentPerformance();
       const candidate = JSON.parse(await readFile(runtimePath("incoming", "gerpgo", task.id, "candidate.json"), "utf8"));
+      const policy = getGerpgoAutoSyncConfiguration();
       const reviewed = previous?.publication?.initialReview?.storeScope ?? (previous?.publication?.actor === "shared-account" ? previous.storeScope : null);
       const scope = candidate.storeScope;
-      const sameScope = reviewed && scope && reviewed.storeName === scope.storeName && reviewed.serverId === scope.serverId && Array.isArray(reviewed.marketIds) && reviewed.marketIds.join(",") === scope.marketIds.join(",");
+      const authorized = policy.managed && policy.enabled ? previous?.storeScope ?? scope : reviewed;
+      const sameScope = authorized && scope && authorized.storeName === scope.storeName && authorized.serverId === scope.serverId && Array.isArray(authorized.marketIds) && authorized.marketIds.join(",") === scope.marketIds.join(",");
       if (settings.enabled && settings.autoPublish && sameScope) {
         const requestFile = runtimePath("incoming", "gerpgo", task.id, "automatic-publication.json");
         await writeFile(requestFile, JSON.stringify({ sourceTaskId: task.id, previewHash: preview.previewHash, automatic: true, taskId: task.id, lease: task.lease }), { mode: 0o600 });
@@ -151,4 +156,6 @@ while (!stopping) {
 }
 
 }
-void main().catch(() => { console.error("数据 worker 已停止，请检查运营数据库与容器配置。"); process.exitCode = 1; });
+if (require.main === module) {
+  void main().catch(() => { console.error("数据 worker 已停止，请检查运营数据库与容器配置。"); process.exitCode = 1; });
+}

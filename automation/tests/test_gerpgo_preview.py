@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -84,6 +85,30 @@ class GerpgoPreviewTests(unittest.TestCase):
             publish(self.runtime, {"sourceTaskId": TASK, "previewHash": after["previewHash"], "automatic": True, "taskId": "publish-task", "lease": "lease"})
         self.assertEqual(current_reports(self.reports).parent.name, result["publishedVersion"])
 
+    def test_env_authorized_first_publish_is_automatic_not_a_fake_manual_review(self):
+        from unittest.mock import patch
+        environment = {"GERPGO_APP_ID": "fixture-id", "GERPGO_APP_KEY": "fixture-key", "GERPGO_STORE_NAME": "MEASUREMAN", "GERPGO_AUTO_SYNC": "true"}
+        with patch.dict(os.environ, environment):
+            preview = self.scoped_preview()
+            result = publish(self.runtime, self.automatic_request(preview))
+            report = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+            self.assertEqual(report["publication"]["actor"], "scheduled-worker")
+            self.assertIsNone(report["publication"]["initialReview"])
+            self.assertEqual(report["publication"]["initialAuthorization"]["actor"], "environment-policy")
+            source = next(s for s in self.sources if s["name"] == "performance-" + self.previous_month)
+            source_file = self.folder / f"{source['name']}-1.json"
+            original = source_file.read_text()
+            source_file.write_text(json.dumps({"page": 1, "total": 1, "rows": [self.row(125)]}))
+            protected = self.scoped_preview()
+            with self.assertRaisesRegex(ValueError, "保护线"):
+                publish(self.runtime, self.automatic_request(protected))
+            source_file.write_text(original)
+            next_preview = self.scoped_preview()
+            with patch.dict(os.environ, {"GERPGO_AUTO_SYNC": "false"}):
+                with self.assertRaisesRegex(ValueError, "首次"):
+                    publish(self.runtime, self.automatic_request(next_preview))
+            self.assertEqual(current_reports(self.reports).parent.name, result["publishedVersion"])
+
     def test_recent_collection_preserves_older_history_and_protected_changes_stop_automatic_publish(self):
         preview = self.scoped_preview()
         publish(self.runtime, self.approval(preview))
@@ -128,6 +153,51 @@ class GerpgoPreviewTests(unittest.TestCase):
         self.assertTrue(any("其他店铺" in item for item in preview["withheld"]))
         with self.assertRaisesRegex(ValueError, "指定店铺"):
             build_preview(self.runtime, TASK, store_name="MEASURE")
+
+    def sales_manifest(self, ads=False):
+        from datetime import timedelta
+        self.sources = [s for s in self.sources if s["name"] != "fba"]
+        if ads:
+            for performance in list(self.sources):
+                if not performance["name"].startswith("performance-"):
+                    continue
+                date = datetime.fromisoformat(performance["condition"]["beginDate"])
+                end = performance["condition"]["endDate"]
+                while date.date().isoformat() <= end:
+                    day = date.date().isoformat()
+                    self.source(f"ads-1-{day}", [], {"marketId": 1, "startDateData": day, "endDateData": day})
+                    date += timedelta(days=1)
+        self.manifest()
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["collectionMode"] = "sales_ads" if ads else "sales"
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+
+    def test_sales_only_does_not_require_inventory_and_preserves_local_shipment_report(self):
+        self.scoped_preview()
+        self.sales_manifest()
+        original = '{"shipmentHistory":[{"sku":"SKU-A","quantity":80,"shipmentDate":"2026-08-01"}]}'
+        (self.reports / "document_master.json").write_text(original)
+        preview = self.scoped_preview()
+        self.assertFalse(preview["blocked"])
+        publish(self.runtime, self.approval(preview))
+        self.assertEqual((current_reports(self.reports) / "document_master.json").read_text(), original)
+
+    def test_sales_ads_requires_every_day_market_and_page_before_publication(self):
+        self.scoped_preview()
+        self.sales_manifest(ads=True)
+        preview = self.scoped_preview()
+        self.assertFalse(preview["blocked"])
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        index = next(i for i, s in enumerate(manifest["sources"]) if s["name"].startswith("ads-"))
+        manifest["sources"][index]["status"] = "failed"
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "广告逐日"):
+            self.scoped_preview()
+        manifest["sources"][index]["status"] = "completed"
+        manifest["sources"][index]["condition"]["marketId"] = 17
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "范围不匹配"):
+            self.scoped_preview()
 
     def test_declared_scope_must_match_shop_evidence(self):
         manifest = json.loads((self.folder / "manifest.json").read_text())

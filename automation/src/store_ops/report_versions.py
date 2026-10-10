@@ -32,8 +32,10 @@ def current_reports(root: Path) -> Path:
 def _copy_reports(source: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for item in source.glob("*.json"):
-        if item.name != "current.json":
-            shutil.copy2(item, destination / item.name)
+        if item.name != "current.json" and not item.name.startswith("."):
+            # Report generations need file contents, not macOS resource forks.
+            # copy2 creates binary ._*.json sidecars on some NAS mounts.
+            shutil.copyfile(item, destination / item.name)
 
 
 def _json_write(path: Path, value: dict) -> None:
@@ -93,6 +95,8 @@ def report_transaction(root: Path, snapshots: Path, before_commit=None):
         yield stage, version
         files = {}
         for item in sorted(stage.glob("*.json")):
+            if item.name.startswith("."):
+                continue  # Finder's AppleDouble metadata is not a report.
             value = json.loads(item.read_text(encoding="utf-8"))
             json.dumps(value, allow_nan=False)
             if not isinstance(value, dict):

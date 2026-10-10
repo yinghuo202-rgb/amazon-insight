@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 
 export function OpsPageHeader({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description: string; action?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 border-b border-slate-200/80 pb-6 sm:flex-row sm:items-end sm:justify-between">
-      <div className="min-w-0">{eyebrow ? <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-blue-700"><span className="h-1.5 w-1.5 rounded-full bg-blue-600" />{eyebrow}</p> : null}<h1 className="break-words text-[1.75rem] font-semibold tracking-[-0.035em] text-slate-950 sm:text-[2rem]">{title}</h1><p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{description}</p></div>
+    <div className="ops-page-heading mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0"><p className="ops-eyebrow">{eyebrow || "MEASUREMAN · OPERATIONS DESK"}</p><h1 className="ops-page-title break-words">{title}</h1><p className="ops-page-description mt-2 max-w-4xl">{description}</p></div>
       {action ? <div className="max-w-full shrink-0">{action}</div> : null}
     </div>
   );
@@ -20,7 +20,7 @@ export function OpsCardHeader({ title, description, action }: { title: string; d
 export function OpsKpi({ label, value, detail, tone = "default", icon, className = "" }: { label: string; value: string; detail: string; tone?: "default" | "danger" | "positive" | "warning"; icon?: ReactNode; className?: string }) {
   const colors = { default: "text-slate-950", danger: "text-rose-700", positive: "text-emerald-700", warning: "text-amber-700" };
   const iconColors = { default: "bg-slate-100 text-slate-600", danger: "bg-rose-50 text-rose-600", positive: "bg-emerald-50 text-emerald-600", warning: "bg-amber-50 text-amber-600" };
-  return <div className={`group rounded-2xl border border-slate-200/90 bg-white px-3.5 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,.03)] transition hover:border-slate-300 hover:shadow-[0_8px_24px_rgba(15,23,42,.06)] sm:px-4 sm:py-4 ${className}`}><div className="flex items-start justify-between gap-2 sm:gap-3"><p className="text-[10px] font-medium leading-4 text-slate-500 sm:text-[11px]">{label}</p>{icon ? <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg sm:h-8 sm:w-8 sm:rounded-xl ${iconColors[tone]}`}>{icon}</span> : null}</div><p className={`mt-2.5 break-words text-xl font-semibold tracking-[-0.035em] sm:mt-3 sm:text-2xl ${colors[tone]}`}>{value}</p><p className="mt-1.5 text-[10px] leading-4 text-slate-500 sm:text-[11px]">{detail}</p></div>;
+  return <div className={`ops-kpi group rounded-2xl border border-slate-200/90 bg-white px-3.5 py-3.5 sm:px-4 sm:py-4 ${className}`}><div className="flex items-start justify-between gap-2 sm:gap-3"><p className="ops-kpi-label">{label}</p>{icon ? <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${iconColors[tone]}`}>{icon}</span> : null}</div><p className={`ops-kpi-value break-words ${colors[tone]}`}>{value}</p><p className="ops-kpi-detail">{detail}</p></div>;
 }
 
 export function OpsBadge({ children, tone = "slate" }: { children: ReactNode; tone?: "slate" | "emerald" | "amber" | "rose" | "blue" }) {

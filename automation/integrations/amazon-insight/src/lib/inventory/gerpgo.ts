@@ -32,7 +32,7 @@ function configuration(env: Environment) {
   const signing = env.GERPGO_SIGNING_ENABLED?.trim() || "true";
   const timeoutMs = Number(env.GERPGO_TIMEOUT_MS?.trim() || "10000");
   let error = "";
-  if (!appId || !appKey) error = "尚未配置积加凭证，请在此页面填写 appId 和 appKey，或配置 NAS 环境变量。";
+  if (!appId || !appKey) error = "尚未配置积加凭证，请在 NAS env 中完整配置 GERPGO_APP_ID 和 GERPGO_APP_KEY；不会混用网页保存的旧凭证。";
   // Never send credentials to a configurable third-party origin or a redirect.
   else if (baseUrl !== "https://open.gerpgo.com/api/open") error = "GERPGO_BASE_URL 必须使用积加官方 HTTPS 开放接口地址。";
   else if (!["true", "false"].includes(signing)) error = "GERPGO_SIGNING_ENABLED 只能为 true 或 false。";
@@ -69,8 +69,24 @@ function decryptCredentials(row: Record<string, unknown>, env: Environment) {
   } catch { throw new GerpgoConnectionError("已保存的积加凭证无法解密，请检查 SECRET_KEY 是否改变；恢复原密钥或重新填写两项凭证。", 422); }
 }
 
-// A saved pair overrides the environment pair, never mixing values from two sources.
+export function getGerpgoAutoSyncConfiguration(env: Environment = process.env) {
+  const managed = Boolean(env.GERPGO_APP_ID?.trim() || env.GERPGO_APP_KEY?.trim());
+  const enabled = env.GERPGO_AUTO_SYNC?.trim() || "true";
+  const supplemental = env.GERPGO_SYNC_SUPPLEMENTAL?.trim() || "true";
+  const intervalMinutes = Number(env.GERPGO_SYNC_INTERVAL_MINUTES?.trim() || "1440");
+  if (managed && (!["true", "false"].includes(enabled) || !["true", "false"].includes(supplemental) || !Number.isInteger(intervalMinutes) || intervalMinutes < 60 || intervalMinutes > 10080)) {
+    throw new GerpgoConnectionError("积加自动同步配置无效：开关只能为 true/false，间隔需为 60–10080 分钟。", 422);
+  }
+  return { managed, enabled: managed && enabled === "true", intervalMinutes, includeSupplemental: supplemental === "true" };
+}
+
+// Environment pairs are authoritative. Never mix a partial env pair with saved values.
 export function resolveGerpgoEnvironment(env: Environment = process.env): Environment {
+  if (env.GERPGO_APP_ID?.trim() || env.GERPGO_APP_KEY?.trim()) {
+    const config = configuration(env);
+    if (config.error) throw new GerpgoConnectionError(config.error, 422);
+    return env;
+  }
   let database: DatabaseSync | undefined;
   try {
     database = new DatabaseSync(shipmentPlanDbPath(), { readOnly: true });
@@ -82,6 +98,10 @@ export function resolveGerpgoEnvironment(env: Environment = process.env): Enviro
 }
 
 export function getGerpgoSettingsStatus(env: Environment = process.env): GerpgoSettingsStatus {
+  if (env.GERPGO_APP_ID?.trim() || env.GERPGO_APP_KEY?.trim()) {
+    const status = getGerpgoConfigurationStatus(env);
+    return { ...status, canSave: false, source: "env", updatedAt: null, message: status.configured ? "使用 NAS env 凭证；worker 自动验证连接和同步，无需网页保存或手动更新。配置成功不代表数据已发布，请查看任务状态。" : status.message };
+  }
   let database: DatabaseSync | undefined;
   const canSave = (env.SECRET_KEY?.trim().length ?? 0) >= 32;
   try {
@@ -96,6 +116,7 @@ export function getGerpgoSettingsStatus(env: Environment = process.env): GerpgoS
 }
 
 export function saveGerpgoCredentials(input: { appId: string; appKey: string }, env: Environment = process.env): GerpgoSettingsStatus {
+  if (getGerpgoAutoSyncConfiguration(env).managed) throw new GerpgoConnectionError("凭证由 NAS env 管理，请修改 env 并重新创建 app 和 data-worker 容器。", 409);
   const appId = input.appId.trim(), appKey = input.appKey.trim();
   if (!appId || !appKey || appId.length > 512 || appKey.length > 4096 || /[\u0000-\u001f\u007f]/.test(appId + appKey)) throw new GerpgoConnectionError("请填写有效的 appId 和 appKey。", 422);
   const key = encryptionKey(env);
@@ -156,12 +177,12 @@ export async function createGerpgoClient(env: Environment = process.env, fetcher
     }
     const stage = accessToken ? "店铺读取" : "凭证申请";
     if (response.status === 429) throw new GerpgoConnectionError("积加接口限流，请稍后重试。", 429);
-    if (!response.ok) throw new GerpgoConnectionError(`积加${stage}失败（HTTP ${response.status}）；请核对凭证、出口 IP 白名单和开放平台权限。`);
+    if (!response.ok) throw new GerpgoConnectionError(`积加${stage}失败（HTTP ${response.status}）；请核对凭证、出口 IP 白名单和开放平台权限。`, response.status);
     let value: unknown;
     try { value = await response.json(); }
     catch { throw new GerpgoConnectionError("积加返回了无效响应，请检查接口服务状态。"); }
     const result = object(value);
-    if (!result || result.code !== 200) throw new GerpgoConnectionError(`积加${stage}未通过；请核对 appId/appKey、NAS 公网出口 IP 白名单和开放平台权限。`);
+    if (!result || result.code !== 200) throw new GerpgoConnectionError(`积加${stage}未通过；请核对 appId/appKey、NAS 公网出口 IP 白名单和开放平台权限。`, result?.code === 401 || result?.code === 403 || result?.code === 429 ? result.code : 502);
     const data = object(result.data);
     if (!data) throw new GerpgoConnectionError("积加响应缺少有效数据，请检查接口服务状态。");
     const extra = object(result.extObj);
@@ -200,14 +221,12 @@ export const gerpgoPageEndpoints = new Set([
   "/operation/ads/adsAsinAnalytical/page", "/operation/sale/returnOrder/page", "/finance/asset/storageFee/page",
 ]);
 
-/** Dates remain explicit evidence; advertising is a daily, market-specific API. */
+/** Supplemental now means advertising only; local supply-chain history is independent. */
 export function gerpgoSupplementalSources(scopes: Array<{ condition: Record<string, unknown> }>, marketIds: number[]) {
   const sources: Array<{ name: string; endpoint: string; condition: Record<string, unknown> }> = [];
   for (const scope of scopes) {
-    const begin = String(scope.condition.beginDate), end = String(scope.condition.endDate), month = begin.slice(0, 7);
+    const begin = String(scope.condition.beginDate), end = String(scope.condition.endDate);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(begin) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !Number.isFinite(Date.parse(begin)) || !Number.isFinite(Date.parse(end)) || begin > end || Date.parse(end) - Date.parse(begin) > 31 * 86400000 || marketIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new GerpgoConnectionError("积加补充采集范围无效。", 422);
-    sources.push({ name: "returns-" + month, endpoint: "/operation/sale/returnOrder/page", condition: { returnStartDate: begin, returnEndDate: end } });
-    sources.push({ name: "storage-" + month, endpoint: "/finance/asset/storageFee/page", condition: { year: month.slice(0, 4), month: String(Number(month.slice(5))) } });
     for (let date = new Date(begin + "T00:00:00Z"); date.toISOString().slice(0, 10) <= end; date = new Date(date.getTime() + 86400000)) {
       const day = date.toISOString().slice(0, 10);
       for (const marketId of [...new Set(marketIds)]) sources.push({ name: `ads-${marketId}-${day}`, endpoint: "/operation/ads/adsAsinAnalytical/page", condition: { marketId, startDateData: day, endDateData: day } });
@@ -241,7 +260,10 @@ export async function collectGerpgoPages(
         await pause(2000 * 2 ** attempt);
       }
     }
-    const total = data?.total, raw = data?.rows;
+    const total = data?.total;
+    // Observed official ASIN response for a zero-record market: total=0, rows=null.
+    // Never normalize missing rows, nonzero totals or later pages to an empty success.
+    const raw = endpoint === "/operation/ads/adsAsinAnalytical/page" && page === 1 && total === 0 && data?.rows === null ? [] : data?.rows;
     if (!Number.isSafeInteger(total) || (total as number) < 0 || !Array.isArray(raw) || raw.length > pagesize || raw.some(row => !object(row))) throw new GerpgoConnectionError("积加分页格式变化，已停止采集；旧业务数据未修改。");
     if (expected !== undefined && total !== expected) throw new GerpgoConnectionError("积加分页总数发生变化，请重新拉取完整批次。");
     expected = total as number;

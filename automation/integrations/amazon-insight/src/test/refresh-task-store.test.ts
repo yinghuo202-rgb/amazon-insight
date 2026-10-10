@@ -5,14 +5,40 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ file: "" }));
 vi.mock("@/lib/inventory/shipment-plan", () => ({ shipmentPlanDbPath: () => mocks.file }));
-import { claimRefreshTask, listRefreshTasks, submitRefreshTask, updateRefreshTask, listSyncSchedules, saveSyncSchedule, enqueueDueSyncTasks, completeReviewedSyncTask, restartSyncSchedule } from "@/lib/inventory/refresh-task-store";
+import { claimRefreshTask, listRefreshTasks, submitRefreshTask, updateRefreshTask, listSyncSchedules, saveSyncSchedule, enqueueDueSyncTasks, completeReviewedSyncTask, restartSyncSchedule, configureGerpgoEnvironmentSchedule } from "@/lib/inventory/refresh-task-store";
 let folder: string;
 beforeEach(() => {
   folder = mkdtempSync(path.join(tmpdir(), "measureman-worker-tests-")); mocks.file = path.join(folder, "operations.sqlite3");
   const db = new DatabaseSync(mocks.file);
   db.exec("CREATE TABLE runs(id INTEGER PRIMARY KEY,job_name TEXT,status TEXT,started_at TEXT,finished_at TEXT,summary_json TEXT)"); db.close();
 });
-afterEach(() => rmSync(folder, { recursive: true, force: true }));
+afterEach(() => { vi.unstubAllEnvs(); rmSync(folder, { recursive: true, force: true }); });
+it("boots env automatic collections and preserves due dates and safe retries across restart", () => {
+  vi.stubEnv("GERPGO_APP_ID", "fixture-id"); vi.stubEnv("GERPGO_APP_KEY", "fixture-key"); vi.stubEnv("GERPGO_STORE_NAME", "MEASUREMAN");
+  const now = new Date("2026-10-09T00:00:00Z");
+  configureGerpgoEnvironmentSchedule(process.env, now);
+  expect(listSyncSchedules()[0]).toMatchObject({ environmentManaged: true, enabled: true, autoPublish: true, intervalMinutes: 1440 });
+  expect(() => saveSyncSchedule({ key: "gerpgo", enabled: false, intervalMinutes: 60, autoPublish: false })).toThrow("env 管理");
+  enqueueDueSyncTasks({ gerpgo: true, wps_inventory: false }, now);
+  const task = claimRefreshTask()!;
+  expect(task).toMatchObject({ scheduled: true, includeSupplemental: true });
+  const due = listSyncSchedules()[0].nextRunAt;
+  configureGerpgoEnvironmentSchedule(process.env, new Date(now.getTime() + 30000));
+  expect(listSyncSchedules()[0].nextRunAt).toBe(due);
+  updateRefreshTask(task.id, task.lease, "awaiting_review");
+  enqueueDueSyncTasks({ gerpgo: true, wps_inventory: false }, new Date(due));
+  expect(listRefreshTasks()).toHaveLength(2);
+  expect(listRefreshTasks().find(t => t.id === task.id)?.status).toBe("superseded");
+  vi.stubEnv("GERPGO_AUTO_SYNC", "false"); configureGerpgoEnvironmentSchedule();
+  expect(listSyncSchedules()[0].enabled).toBe(false);
+  vi.stubEnv("GERPGO_AUTO_SYNC", "true"); configureGerpgoEnvironmentSchedule();
+  configureGerpgoEnvironmentSchedule({});
+  expect(listSyncSchedules()[0].enabled).toBe(false); // removing env never silently enables stale database credentials
+});
+it("rejects malformed env scheduling rather than silently using defaults", () => {
+  expect(() => configureGerpgoEnvironmentSchedule({ GERPGO_APP_ID: "id", GERPGO_SYNC_INTERVAL_MINUTES: "3" })).toThrow("配置无效");
+  expect(() => configureGerpgoEnvironmentSchedule({ GERPGO_APP_ID: "id", GERPGO_AUTO_SYNC: "yes" })).toThrow("配置无效");
+});
 it("separates core and full collections while rejecting ambiguous request options", () => {
   const core = submitRefreshTask("gerpgo");
   const full = submitRefreshTask("gerpgo", { includeSupplemental: true });

@@ -7,6 +7,20 @@ from store_ops.report_versions import current_reports, report_transaction, resto
 
 
 class ReportVersionTests(unittest.TestCase):
+    def test_appledouble_files_are_not_copied_or_published(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "reports"
+            root.mkdir()
+            (root / "one.json").write_text('{"n":1}')
+            (root / "._one.json").write_bytes(b'\x00\x05\x16\x07\xff')
+            with report_transaction(root, Path(folder) / "snapshots") as (stage, _):
+                self.assertFalse((stage / "._one.json").exists())
+                # Metadata can also appear after copying on a mounted share.
+                (stage / "._two.json").write_bytes(b'\xff')
+            pointer = json.loads((root / "current.json").read_text())
+            self.assertEqual(set(pointer["files"]), {"one.json"})
+            self.assertEqual(json.loads((current_reports(root) / "one.json").read_text()), {"n": 1})
+
     def test_publish_and_rollback_remove_new_only_files_and_keep_captured_reader(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "reports"

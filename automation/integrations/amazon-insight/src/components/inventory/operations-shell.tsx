@@ -1,8 +1,8 @@
 "use client";
-import { ChartNoAxesCombined, ClipboardList, Calculator, ChevronDown, Database, LogOut, Menu, Warehouse, X } from "lucide-react";
+import { ChartNoAxesCombined, ClipboardList, Calculator, ChevronDown, ChevronRight, Database, LogOut, Menu, Search, Warehouse, X } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 const primary = [
   { href: "/inventory", label: "运营总览", icon: ChartNoAxesCombined },
@@ -30,19 +30,41 @@ const backendGroups = [
   ] },
 ];
 const backend = backendGroups.flatMap(group => group.links);
-function active(href: string, path: string) { return href === "/inventory" || href === "/inventory/data" ? path === href : path === href || path.startsWith(href + "/"); }
+function active(href: string, path: string) { return href === "/inventory/brief" && path.startsWith("/inventory/sku/") || (href === "/inventory" || href === "/inventory/data" ? path === href : path === href || path.startsWith(href + "/")); }
 export function OperationsShell({ children, currentUser }: { children: ReactNode; snapshots: Record<"US" | "CA", string | null>; currentUser: { name: string; email: string; role: string } }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const drawer = useRef<HTMLDialogElement>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [backendOpen, setBackendOpen] = useState(backend.some(item => active(item.href, pathname)));
-  const nav = <><nav className="space-y-2" aria-label="主导航">{primary.map(({ href, label, icon: Icon }) => <Link onClick={() => setMobileOpen(false)} key={href} href={href} aria-current={active(href, pathname) ? "page" : undefined} className={`flex min-h-12 items-center gap-3 rounded-lg px-4 text-sm ${active(href, pathname) ? "bg-white font-semibold text-[#0071e3] shadow-sm" : "text-[#6e6e73] hover:bg-white/70"}`}><Icon size={19} />{label}</Link>)}</nav>
-    <div className="mt-7 border-t border-black/5 pt-5"><button onClick={() => setBackendOpen(!backendOpen)} aria-expanded={backendOpen} aria-controls="business-navigation" className="flex min-h-11 w-full items-center gap-3 px-4 text-sm text-[#6e6e73]"><Warehouse size={18} />业务后台<ChevronDown size={16} className={`ml-auto transition-transform ${backendOpen ? "rotate-180" : ""}`} /></button>
-    {backendOpen && <nav id="business-navigation" aria-label="业务后台" className="mt-2 space-y-3">{backendGroups.map(group => <details key={group.label} open={group.links.some(link => active(link.href, pathname))}><summary className="min-h-11 cursor-pointer py-3 pl-8 text-xs font-medium text-slate-600">{group.label}</summary>{group.links.map(({ href, label }) => <Link key={href} href={href} onClick={() => setMobileOpen(false)} aria-current={active(href, pathname) ? "page" : undefined} className={`block min-h-11 rounded-md py-3 pl-12 text-xs ${active(href, pathname) ? "bg-white text-[#0071e3]" : "text-[#6e6e73] hover:text-[#1d1d1f]"}`}>{label}</Link>)}</details>)}</nav>}</div></>;
+  useEffect(() => {
+    if (!backend.some(item => active(item.href, pathname))) return;
+    const timer = setTimeout(() => setBackendOpen(true), 0);
+    return () => clearTimeout(timer);
+  }, [pathname]);
+  useEffect(() => {
+    const dialog = drawer.current;
+    if (mobileOpen && !dialog?.open) dialog?.showModal();
+    if (!mobileOpen && dialog?.open) dialog.close();
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const media = window.matchMedia("(min-width: 1024px)");
+    const resize = () => { if (media.matches) setMobileOpen(false); };
+    media.addEventListener("change", resize);
+    return () => { document.body.style.overflow = previous; media.removeEventListener("change", resize); };
+  }, [mobileOpen]);
+  const title = pathname.startsWith("/inventory/sku/") ? "单 SKU 业务详情" : [...primary, ...backend].find(item => active(item.href, pathname))?.label || "经营工作台";
+  const brand = <Link href="/inventory" className="ops-brand" onClick={() => setMobileOpen(false)}><span className="ops-brand-mark">M</span><span><strong>MEASUREMAN</strong><small>OPERATIONS DESK</small></span></Link>;
+  const navigation = (prefix: string) => <><p className="ops-nav-label">OPERATIONS</p><nav className="space-y-1" aria-label="主导航">{primary.map(({ href, label, icon: Icon }) => <Link onClick={() => setMobileOpen(false)} key={href} href={href} aria-current={active(href, pathname) ? "page" : undefined} className="ops-nav-item"><Icon size={18} />{label}</Link>)}</nav>
+    <div className="ops-backend-nav"><button onClick={() => setBackendOpen(!backendOpen)} aria-expanded={backendOpen} aria-controls={`${prefix}-business-navigation`} className="ops-backend-toggle"><Warehouse size={17} />业务后台<ChevronDown size={15} className={`ml-auto transition-transform ${backendOpen ? "rotate-180" : ""}`} /></button>
+    {backendOpen && <nav id={`${prefix}-business-navigation`} aria-label="业务后台" className="mt-2 space-y-3">{backendGroups.map(group => <details key={group.label} open={group.links.some(link => active(link.href, pathname))}><summary className="ops-backend-group">{group.label}</summary>{group.links.map(({ href, label }) => <Link key={href} href={href} onClick={() => setMobileOpen(false)} aria-current={active(href, pathname) ? "page" : undefined} className="ops-backend-link">{label}</Link>)}</details>)}</nav>}</div></>;
   return <div className="ops-root min-h-screen">
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col bg-[#f5f5f7] px-3 py-6 lg:flex"><Link href="/inventory" className="mb-10 px-4 text-xl font-semibold tracking-tight text-[#1d1d1f]">Measureman</Link><div className="min-h-0 flex-1 overflow-y-auto">{nav}</div><div className="mt-5 border-t border-black/5 px-4 pt-5 text-xs leading-5 text-[#6e6e73]"><p>共用经营工作区</p><p className="mt-1 truncate text-slate-400">{currentUser.email}</p></div></aside>
-    <div className="lg:pl-60"><header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 backdrop-blur-xl px-4 sm:px-7"><div className="flex items-center gap-3"><button onClick={() => setMobileOpen(true)} aria-label="展开导航" aria-expanded={mobileOpen} className="grid h-11 w-11 place-items-center lg:hidden"><Menu size={21} /></button><span className="text-sm font-medium text-[#1d1d1f]">经营工作台</span></div><div className="flex items-center gap-3"><Link href="/inventory/data" className="flex min-h-11 items-center gap-2 text-xs text-slate-500"><Database size={15} /><span className="hidden sm:inline">数据管理</span></Link><button onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }} aria-label="退出当前设备" className="flex min-h-11 items-center gap-2 text-xs text-slate-500"><LogOut size={16} /><span>退出</span></button></div></header><main className="mx-auto max-w-[1320px] px-4 pb-24 pt-6 sm:px-7 lg:pb-10">{children}</main></div>
-    {mobileOpen && <div className="fixed inset-0 z-50 lg:hidden"><button aria-label="关闭导航遮罩" onClick={() => setMobileOpen(false)} className="absolute inset-0 bg-slate-950/40" /><aside aria-label="移动导航" className="relative flex h-full w-[min(300px,85vw)] flex-col overflow-y-auto bg-[#f5f5f7] p-4"><div className="mb-7 flex items-center justify-between text-[#1d1d1f]"><span className="text-lg font-semibold">Measureman</span><button onClick={() => setMobileOpen(false)} aria-label="关闭导航" className="grid h-11 w-11 place-items-center"><X size={21} /></button></div>{nav}</aside></div>}
-    <nav aria-label="快捷导航" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-slate-200 bg-white/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] lg:hidden">{primary.map(({ href, label, icon: Icon }) => <Link key={href} href={href} aria-current={active(href, pathname) ? "page" : undefined} className={`flex min-h-16 flex-col items-center justify-center gap-1 text-[11px] ${active(href, pathname) ? "font-semibold text-[#0071e3]" : "text-slate-500"}`}><Icon size={19} />{label}</Link>)}</nav>
+    <aside className="ops-sidebar fixed inset-y-0 left-0 z-40 hidden flex-col lg:flex">{brand}<div className="ops-nav-scroll min-h-0 flex-1 overflow-y-auto">{navigation("desktop")}</div><div className="ops-sidebar-footer"><p>共用经营工作区</p><p className="mt-1 truncate">{currentUser.email}</p></div></aside>
+    <div className="ops-workspace"><header className="ops-topbar sticky top-0 z-30"><div className="ops-breadcrumb"><span>经营工作台</span><ChevronRight size={13} /><strong>{title}</strong></div><div className="flex items-center gap-2"><button onClick={() => setMobileOpen(true)} aria-label="展开导航" aria-expanded={mobileOpen} aria-controls="ops-mobile-drawer" className="ops-tool-button lg:hidden"><Menu size={20} /></button><form className="ops-global-search" role="search" onSubmit={event => { event.preventDefault(); const params = new URLSearchParams(window.location.search); params.set("query", search.trim()); params.set("filter", "all"); params.delete("tab"); router.push(`/inventory/brief?${params}`); setMobileOpen(false); }}><Search size={15} aria-hidden="true" /><input aria-label="全局搜索 SKU 或 ASIN" placeholder="搜索 SKU / ASIN" value={search} onChange={event => setSearch(event.target.value)} /></form><Link href="/inventory/data" className="ops-tool-button" aria-label="数据管理"><Database size={17} /></Link><span className="ops-avatar" title={`共享账号 · ${currentUser.name}`}>MM</span><button onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).finally(() => window.location.assign("/login")); }} aria-label="退出当前设备" className="ops-tool-button"><LogOut size={17} /></button></div></header><main className="ops-view">{children}</main></div>
+    <dialog ref={drawer} id="ops-mobile-drawer" aria-label="业务导航" className="ops-mobile-drawer" onClose={() => setMobileOpen(false)} onClick={event => { if (event.target === event.currentTarget) setMobileOpen(false); }}><aside className="ops-mobile-drawer-panel"><div className="flex items-center justify-between">{brand}<button onClick={() => setMobileOpen(false)} aria-label="关闭导航" className="ops-tool-button"><X size={20} /></button></div>{navigation("mobile")}</aside></dialog>
+    <nav aria-label="快捷导航" className="ops-mobile-bottom fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 lg:hidden">{primary.map(({ href, label, icon: Icon }) => <Link key={href} href={href} aria-current={active(href, pathname) ? "page" : undefined} className="flex min-h-16 flex-col items-center justify-center gap-1 text-[11px]"><Icon size={20} />{label === "运营总览" ? "总览" : label === "SKU 经营简报" ? "SKU 简报" : label}</Link>)}</nav>
   </div>;
 }
 export function OperationsShellFallback() { return <main className="p-8 text-sm text-slate-500">正在加载经营工作台…</main>; }

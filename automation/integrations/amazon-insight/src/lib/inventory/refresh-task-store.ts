@@ -3,12 +3,13 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { gerpgoReviewRequestSchema } from "@/lib/inventory/gerpgo-preview";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { getGerpgoAutoSyncConfiguration } from "@/lib/inventory/gerpgo";
 
 export type RefreshTaskKind = "rebuild" | "gerpgo" | "gerpgo_publish" | "wps_inventory";
 export const gerpgoCollectionRequestSchema = z.object({ includeSupplemental: z.boolean().default(false), scheduled: z.literal(true).optional() }).strict();
 export const wpsCollectionRequestSchema = z.object({ scheduled: z.literal(true).optional() }).strict();
 export const syncScheduleSchema = z.object({ key: z.enum(["gerpgo", "wps_inventory"]), enabled: z.boolean(), intervalMinutes: z.number().int().min(60).max(10080), autoPublish: z.boolean() }).strict();
-export type SyncSchedule = z.infer<typeof syncScheduleSchema> & { nextRunAt: string; lastTaskId: string | null; lastStatus: string | null; lastUpdatedAt: string | null; workerHeartbeat: string | null; workerActive: boolean };
+export type SyncSchedule = z.infer<typeof syncScheduleSchema> & { environmentManaged?: boolean; nextRunAt: string; lastTaskId: string | null; lastStatus: string | null; lastUpdatedAt: string | null; workerHeartbeat: string | null; workerActive: boolean };
 export type RefreshTask = { id: string; kind: RefreshTaskKind; status: string; progress: string; error: string; createdAt: string; updatedAt: string; includeSupplemental?: boolean; batchId?: string };
 export function openRefreshDatabase() {
   const db = new DatabaseSync(shipmentPlanDbPath());
@@ -28,6 +29,7 @@ export function openRefreshDatabase() {
   try {
     if (!db.prepare("PRAGMA table_info(data_refresh_tasks_v1)").all().some(row => row.name === "request_json")) db.exec("ALTER TABLE data_refresh_tasks_v1 ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'");
     if (!db.prepare("PRAGMA table_info(data_refresh_tasks_v1)").all().some(row => row.name === "artifact_json")) db.exec("ALTER TABLE data_refresh_tasks_v1 ADD COLUMN artifact_json TEXT NOT NULL DEFAULT '{}'");
+    if (!db.prepare("PRAGMA table_info(data_sync_schedules_v1)").all().some(row => row.name === "environment_policy")) db.exec("ALTER TABLE data_sync_schedules_v1 ADD COLUMN environment_policy TEXT NOT NULL DEFAULT ''");
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); db.close(); throw error; }
   return db;
@@ -116,6 +118,7 @@ export function listSyncSchedules(): SyncSchedule[] {
     return db.prepare(`SELECT s.*,t.status AS last_status,t.updated_at AS last_updated_at FROM data_sync_schedules_v1 s
       LEFT JOIN data_refresh_tasks_v1 t ON t.id=s.last_task_id ORDER BY s.key`).all().map(row => ({
       key: row.key as SyncSchedule["key"], enabled: Boolean(row.enabled), intervalMinutes: Number(row.interval_minutes), autoPublish: Boolean(row.auto_publish),
+      environmentManaged: row.key === "gerpgo" && getGerpgoAutoSyncConfiguration().managed,
       nextRunAt: String(row.next_run_at), lastTaskId: row.last_task_id ? String(row.last_task_id) : null,
       lastStatus: row.last_status ? String(row.last_status) : null, lastUpdatedAt: row.last_updated_at ? String(row.last_updated_at) : null,
       workerHeartbeat: row.worker_heartbeat ? String(row.worker_heartbeat) : null,
@@ -125,7 +128,9 @@ export function listSyncSchedules(): SyncSchedule[] {
 }
 
 export function saveSyncSchedule(input: unknown, now = new Date()) {
-  const value = syncScheduleSchema.parse(input), db = openRefreshDatabase();
+  const value = syncScheduleSchema.parse(input);
+  if (value.key === "gerpgo" && getGerpgoAutoSyncConfiguration().managed) throw new Error("积加定时同步由 NAS env 管理，请修改 env 并重新创建容器。");
+  const db = openRefreshDatabase();
   try {
     db.exec("BEGIN IMMEDIATE");
     const old = db.prepare("SELECT enabled,interval_minutes,next_run_at FROM data_sync_schedules_v1 WHERE key=?").get(value.key)!;
@@ -139,6 +144,34 @@ export function saveSyncSchedule(input: unknown, now = new Date()) {
   return listSyncSchedules();
 }
 
+// Apply server configuration once per policy change, retaining durable due dates on restart.
+export function configureGerpgoEnvironmentSchedule(env: Record<string, string | undefined> = process.env, now = new Date()) {
+  const policy = getGerpgoAutoSyncConfiguration(env);
+  const db = openRefreshDatabase(), stamp = now.toISOString();
+  const signature = JSON.stringify({ ...policy, storeName: env.GERPGO_STORE_NAME?.trim() ?? "" });
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const old = db.prepare("SELECT * FROM data_sync_schedules_v1 WHERE key='gerpgo'").get()!;
+    if (!policy.managed) {
+      if (old.environment_policy) {
+        db.prepare("UPDATE data_sync_schedules_v1 SET enabled=0,environment_policy='' WHERE key='gerpgo'").run();
+        db.prepare("INSERT INTO runs(job_name,status,started_at,finished_at,summary_json) VALUES('gerpgo-env-schedule','completed',?,?,?)").run(stamp, stamp, JSON.stringify({ enabled: false, reason: "env-credentials-removed", actor: "environment-policy" }));
+      }
+      db.exec("COMMIT"); return;
+    }
+    if (old.environment_policy !== signature) {
+      // New collection only: never replay an old publish request or alter the old reports.
+      const last = old.last_task_id ? db.prepare("SELECT status FROM data_refresh_tasks_v1 WHERE id=?").get(String(old.last_task_id)) : null;
+      const pending = last && ["queued", "running"].includes(String(last.status));
+      if (last && !pending) db.prepare("UPDATE data_refresh_tasks_v1 SET status='superseded',progress='env 自动同步已接管，原始预览保留',updated_at=? WHERE id=? AND status IN ('awaiting_review','awaiting_mapping','interrupted','failed')").run(stamp, String(old.last_task_id));
+      db.prepare("UPDATE data_sync_schedules_v1 SET enabled=?,interval_minutes=?,auto_publish=1,next_run_at=?,last_task_id=?,environment_policy=? WHERE key='gerpgo'").run(Number(policy.enabled), policy.intervalMinutes, stamp, pending ? String(old.last_task_id) : null, signature);
+      db.prepare("INSERT INTO runs(job_name,status,started_at,finished_at,summary_json) VALUES('gerpgo-env-schedule','completed',?,?,?)").run(stamp, stamp, JSON.stringify({ ...policy, actor: "environment-policy" }));
+    }
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  finally { db.close(); }
+}
+
 // One durable queue and one transaction: multiple worker containers cannot enqueue twice.
 export function enqueueDueSyncTasks(available: { gerpgo: boolean; wps_inventory: boolean }, now = new Date()) {
   const db = openRefreshDatabase(), stamp = now.toISOString();
@@ -150,9 +183,14 @@ export function enqueueDueSyncTasks(available: { gerpgo: boolean; wps_inventory:
       if (!available[key]) continue;
       const previous = row.last_task_id ? db.prepare("SELECT status,updated_at FROM data_refresh_tasks_v1 WHERE id=?").get(String(row.last_task_id)) : null;
       // Do not replace an outstanding review with an ever-growing queue of newer previews.
-      if (previous && ["queued", "running", "awaiting_review", "awaiting_mapping", "interrupted"].includes(String(previous.status))) continue;
+      const environment = getGerpgoAutoSyncConfiguration();
+      if (previous && ["queued", "running"].includes(String(previous.status))) continue;
+      if (previous && ["awaiting_review", "awaiting_mapping", "interrupted"].includes(String(previous.status))) {
+        if (key !== "gerpgo" || !environment.managed || !environment.enabled) continue;
+        db.prepare("UPDATE data_refresh_tasks_v1 SET status='superseded',progress='已安排新的自动采集，旧异常证据保留',updated_at=? WHERE id=?").run(stamp, String(row.last_task_id));
+      }
       if (db.prepare("SELECT id FROM data_refresh_tasks_v1 WHERE kind=? AND status IN ('queued','running')").get(key)) continue;
-      const id = randomUUID(), request = key === "gerpgo" ? { includeSupplemental: false, scheduled: true } : { scheduled: true };
+      const id = randomUUID(), request = key === "gerpgo" ? { includeSupplemental: environment.managed ? environment.includeSupplemental : false, scheduled: true } : { scheduled: true };
       db.prepare("INSERT INTO data_refresh_tasks_v1(id,kind,status,created_at,updated_at,request_json) VALUES(?,?,'queued',?,?,?)").run(id, key, stamp, stamp, JSON.stringify(request));
       const delay = previous?.status === "failed" ? Math.min(60, Number(row.interval_minutes)) : Number(row.interval_minutes);
       db.prepare("UPDATE data_sync_schedules_v1 SET next_run_at=?,last_task_id=? WHERE key=?").run(new Date(now.getTime() + delay * 60000).toISOString(), id, key);

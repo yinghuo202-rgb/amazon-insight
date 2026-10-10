@@ -15,5 +15,5 @@ export default async function BriefPage({ searchParams }: { searchParams: Promis
   const filter = typeof params.filter === "string" && (operatingFilters as readonly string[]).includes(params.filter) ? params.filter : "focus";
   const query = typeof params.query === "string" ? params.query.slice(0, 100) : "";
   const sort = typeof params.sort === "string" && (operatingSorts as readonly string[]).includes(params.sort) ? params.sort : undefined;
-  return <><OpsPageHeader title="SKU 经营简报" description="先看简短建议，再展开证据。默认聚焦少量 SKU，也可搜索 SKU、产品或 ASIN。" /><RevenueOverviewDashboard initial={queryOperatingModel(await loadOperatingModel(), { brief: true, market, period, filter, query, sort })} brief /></>;
+  return <><OpsPageHeader eyebrow="SKU PERFORMANCE" title="SKU 经营简报" description="一张卡片，看清一个产品。" /><RevenueOverviewDashboard initial={queryOperatingModel(await loadOperatingModel(), { brief: true, market, period, filter, query, sort })} brief /></>;
 }

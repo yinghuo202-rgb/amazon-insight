@@ -9,11 +9,12 @@ import os
 import re
 import sqlite3
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from ..db import StateDb
 from ..report_versions import _json_write, current_reports, report_transaction
+from .gerpgo_advertising import aggregate_advertising, attach_advertising
 
 TASK_RE = re.compile(r"[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}")
 MARKETS = {"amazon-us": ("US", "USD"), "amazon-ca": ("CA", "CAD"), "amazon-mx": ("MX", "MXN")}
@@ -137,12 +138,16 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
     for offset in range(2 if manifest.get("collectionScope") == "recent" else 7):
         absolute = captured.year * 12 + captured.month - 1 - offset
         expected_months.add(f"performance-{absolute // 12:04d}-{absolute % 12 + 1:02d}")
-    required = {"shops", "products", "fba", *expected_months}
-    if len(sources) != len(manifest["sources"]) or not required.issubset(sources) or any(not re.fullmatch(r"(?:returns|storage)-\d{4}-\d{2}|ads(?:-\d+-\d{4}-\d{2}-\d{2})?", name) for name in set(sources) - required):
+    mode = manifest.get("collectionMode", "legacy")
+    sales_only = mode in {"sales", "sales_ads"}
+    required = {"shops", "products", *expected_months} | (set() if sales_only else {"fba"})
+    extra_pattern = r"ads-\d+-\d{4}-\d{2}-\d{2}" if mode == "sales_ads" else (r"(?!)" if mode == "sales" else r"(?:returns|storage)-\d{4}-\d{2}|ads(?:-\d+-\d{4}-\d{2}-\d{2})?")
+    if len(sources) != len(manifest["sources"]) or not required.issubset(sources) or any(not re.fullmatch(extra_pattern, name) for name in set(sources) - required):
         raise ValueError("采集来源缺失或重复")
     if any(sources[name].get("status", "completed") != "completed" for name in required):
         raise ValueError("基础数据采集未完成，旧报告未修改")
-    pages(folder, sources["fba"])  # completeness only; unverified FBA fields are withheld
+    if "fba" in sources:
+        pages(folder, sources["fba"])  # legacy completeness only; new jobs do not collect inventory
     sellers = pages(folder, sources["shops"])
     all_shops = []
     for seller in sellers:
@@ -160,6 +165,30 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
     if declared_scope is not None and declared_scope != selected_scope:
         raise ValueError("采集店铺范围与当前配置或原始店铺证据不一致")
     selected_ids = set(selected_scope["marketIds"]) if selected_scope else None
+    if sales_only and not selected_scope:
+        raise ValueError("销售及广告采集必须确认唯一店铺和站点范围")
+    if mode == "sales_ads":
+        expected_ads = set()
+        for source_name in sorted(expected_months):
+            month = source_name.removeprefix("performance-")
+            year, mon = map(int, month.split("-"))
+            date = datetime(year, mon, 1, tzinfo=timezone.utc)
+            end = min(f"{month}-{calendar.monthrange(year, mon)[1]:02d}", captured.date().isoformat())
+            while date.date().isoformat() <= end:
+                day = date.date().isoformat()
+                for market_id in sorted(selected_ids):
+                    name = f"ads-{market_id}-{day}"
+                    expected_ads.add(name)
+                    source = sources.get(name)
+                    if not source or source.get("status", "completed") != "completed":
+                        raise ValueError("广告逐日逐站点分页缺失或采集失败，旧报告未修改")
+                    if source.get("condition") != {"marketId": market_id, "startDateData": day, "endDateData": day}:
+                        raise ValueError("广告采集日期或站点范围不匹配")
+                    if any(row.get("marketId") != market_id for row in pages(folder, source)):
+                        raise ValueError("广告记录包含其他站点，不能发布")
+                date += timedelta(days=1)
+        if {name for name in sources if name.startswith("ads-")} != expected_ads:
+            raise ValueError("广告采集包含期间或店铺范围外的请求")
     markets, excluded_markets, issues, ignored = {}, {}, [], 0
     for seller in sellers:
         shops = seller["marketListVos"]
@@ -274,7 +303,11 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
     successful = {name: source for name, source in sources.items() if source.get("status", "completed") == "completed"}
     # Persist the complete approved source payloads separately from browser-facing facts.
     warehouses = {s.get("warehouseName") for s in all_shops if selected_ids is not None and s["marketId"] in selected_ids and isinstance(s.get("warehouseName"), str)}
-    selected_skus = {row["sku"] for row in normalized} | {r["sku"].strip() for r in pages(folder, sources["fba"]) if r.get("warehouseName") in warehouses and isinstance(r.get("sku"), str)}
+    selected_skus = {row["sku"] for row in normalized} | {r["sku"].strip() for r in (pages(folder, sources["fba"]) if "fba" in sources else []) if r.get("warehouseName") in warehouses and isinstance(r.get("sku"), str)}
+    ad_sources = [{**source, "records": pages(folder, source)} for source in successful.values() if source["name"].startswith("ads-")]
+    advertising = aggregate_advertising(ad_sources, pages(folder, sources["products"]), markets, captured.isoformat()) if ad_sources else None
+    if advertising:
+        selected_skus.update(row["sku"] for row in advertising["rows"])
     def selected_records(source):
         records = pages(folder, source)
         if selected_ids is None:
@@ -302,8 +335,12 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
     evidence_files = [folder / "manifest.json"] + [folder / f"{name}-{page}.json" for name, source in sorted(successful.items()) for page in range(1, source["pages"] + 1)]
     evidence = [{"sourceTaskId": task_id, "file": file.name, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()} for file in evidence_files]
     report = {"schemaVersion": 1, "sourceTaskId": task_id, "generatedAt": captured.isoformat(), "scopes": [{"market": m, "reportMonth": p} for m, p in sorted(scopes)], "rows": normalized, "evidence": evidence}
+    if sales_only:
+        report["collectionMode"] = source_data["collectionMode"] = mode
     if selected_scope:
         source_data["storeScope"] = report["storeScope"] = selected_scope
+    if advertising:
+        attach_advertising(report, advertising)
     report_hash = digest(report)
     preview = {"schemaVersion": 1, "taskId": task_id, "baseline": stamp, "reportHash": report_hash, "capturedAt": captured.isoformat(),
                "recordCount": len(normalized), "blocked": bool(issues) or not normalized, "issueCount": len(issues), "issues": issues[:50],
@@ -314,6 +351,11 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
                    + (["本批为核心采集；逐日广告、退货明细和仓储明细尚未采集，可另行发起全量采集"] if manifest.get("deferredDomains") else [])
                    + [f"页面范围外：{market}，{count} 条经营记录；原始证据保留，不混入当前店铺统计" for market, count in sorted(excluded_counts.items())]
                    + [f"未完成：{s['name']}；{s.get('error', '待核验')}" for s in source_data["incomplete"][:20]]}
+    if sales_only:
+        preview["withheld"][0] = "本轮仅同步销售及广告；不采集 FBA、退货明细、仓储明细或历史发货，不覆盖本地库存和发货记录"
+        if manifest.get("deferredDomains"):
+            preview["withheld"] = [item for item in preview["withheld"] if not item.startswith("本批为核心采集")]
+            preview["withheld"].append("本批为销售预览；逐日广告尚未采集，不能视为销售及广告完整同步")
     preview["previewHash"] = digest(preview)
     _json_write(folder / "candidate.json", report)
     _json_write(folder / "candidate-source-data.json", source_data)
@@ -355,6 +397,8 @@ def publish(runtime: Path, request: dict) -> dict:
             raise ValueError("采集原始证据已变化，请重新拉取")
     root = runtime / "reports"
     automatic = request.get("automatic") is True
+    environment_authorized = bool(os.environ.get("GERPGO_APP_ID", "").strip() and os.environ.get("GERPGO_APP_KEY", "").strip()
+                                  and configured_name and (os.environ.get("GERPGO_AUTO_SYNC", "").strip() or "true") == "true")
     def guard():
         if not request.get("taskId") or not request.get("lease"):
             raise ValueError("发布任务缺少有效 worker 租约")
@@ -390,7 +434,8 @@ def publish(runtime: Path, request: dict) -> dict:
         if not initial_review and prior_publication.get("actor") == "shared-account":
             initial_review = {"storeScope": previous.get("storeScope"), "reviewedAt": prior_publication.get("reviewedAt"), "sourceTaskId": previous.get("sourceTaskId")}
         if automatic:
-            if not candidate.get("storeScope") or not initial_review or initial_review.get("storeScope") != candidate.get("storeScope"):
+            authorized_scope = (previous.get("storeScope") or candidate.get("storeScope")) if environment_authorized else (initial_review or {}).get("storeScope")
+            if not candidate.get("storeScope") or authorized_scope != candidate.get("storeScope"):
                 raise ValueError("首次或店铺范围变化须人工对账，已保留差异预览")
             if any(item.get("protected") for item in preview["differences"]):
                 raise ValueError("修订超过发布保护线，已保留预览，请人工对账")
@@ -403,9 +448,20 @@ def publish(runtime: Path, request: dict) -> dict:
         candidate["rows"] = [r for r in previous["rows"] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
         candidate["scopes"] = [s for s in previous["scopes"] if s["market"] in allowed_markets and (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
         candidate["evidence"] = previous.get("evidence", []) + candidate["evidence"]
+        previous_ads = previous.get("advertising")
+        if previous_ads:
+            new_ads = candidate.get("advertising")
+            if not new_ads:
+                candidate["advertising"] = previous_ads
+            else:
+                ad_scopes = {(s["market"], s["reportMonth"]) for s in new_ads["scopes"]}
+                for key in ("scopes", "rows"):
+                    new_ads[key] = [r for r in previous_ads[key] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in ad_scopes] + new_ads[key]
         reviewed_at = datetime.now(timezone.utc).isoformat()
         candidate["publication"] = {"version": version, "actor": "scheduled-worker" if automatic else "shared-account", "previewHash": request["previewHash"], "baseline": preview["baseline"], "reviewedAt": reviewed_at,
                                     "initialReview": initial_review if automatic else {"storeScope": candidate.get("storeScope"), "reviewedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}}
+        if automatic and environment_authorized:
+            candidate["publication"]["initialAuthorization"] = prior_publication.get("initialAuthorization") or {"actor": "environment-policy", "storeScope": candidate.get("storeScope"), "authorizedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}
         _json_write(file, candidate)
         if source_data is not None:
             source_data["publication"] = candidate["publication"]

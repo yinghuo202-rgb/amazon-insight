@@ -16,5 +16,5 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const sort = typeof p.sort === "string" && (operatingSorts as readonly string[]).includes(p.sort) ? p.sort : undefined;
   const query = typeof p.query === "string" ? p.query.slice(0, 100) : "";
   const model = await loadOperatingModel();
-  return <><OpsPageHeader title="运营总览" description="先看经营变化，再找到需要关注的产品。金额按站点原币种展示。" /><RevenueOverviewDashboard initial={queryOperatingModel(model, { market, period, filter, sort, query })} /></>;
+  return <><OpsPageHeader eyebrow="OPERATIONS OVERVIEW" title="运营总览" description="先看整体变化，再定位具体产品。" /><RevenueOverviewDashboard initial={queryOperatingModel(model, { market, period, filter, sort, query })} /></>;
 }

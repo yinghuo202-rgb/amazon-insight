@@ -76,7 +76,7 @@ test("online source panel separates configured entry points from actual synchron
   await expect(page.getByText("尚未配置积加凭证", { exact: false })).toBeVisible();
   const check = await page.request.post("/api/inventory/data-refresh", { headers: { origin: process.env.E2E_BASE_URL || "http://127.0.0.1:3107" }, data: { action: "test_gerpgo" } });
   expect(check.status()).toBe(422);
-  expect((await check.json()).error).toContain("appId");
+  expect((await check.json()).error).toContain("GERPGO_APP_ID");
   await expect(page.getByRole("link", { name: "打开源文档", exact: true })).toHaveAttribute("href", "https://www.kdocs.cn/l/Example123");
   await expect(page.getByText("请在同步任务中完成 WPS 授权并开启定时同步", { exact: false })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });

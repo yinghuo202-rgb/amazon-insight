@@ -44,7 +44,7 @@ export default async function NewProductProfitCalculatorPage() {
   try { rules = profitFeeRulesSchema.parse(JSON.parse(process.env.STORE_OPS_PROFIT_FEE_RULES || "[]")); }
   catch { configError = "利润费率配置无效，自动匹配已停用。请在部署配置中修正 STORE_OPS_PROFIT_FEE_RULES。"; }
   return <>
-    <OpsPageHeader title="新品利润试算" description="选择站点和类目，带入相似产品；箱规计算头程，费用就绪后查看利润。默认广告 15%、退货 1%、不计税及危险品、电池费用。" />
+    <OpsPageHeader eyebrow="PROFIT SCENARIOS" title="新品利润试算" description="填写产品与箱规，在同一费用假设下对比售价方案。" />
     {sourceWarnings.map(warning => <p key={warning} role="status" className="mb-3 text-sm text-amber-800">{warning}</p>)}
     {configError && <p role="alert" className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{configError}</p>}
     <NewProductProfitCalculator products={products} rules={rules} />
