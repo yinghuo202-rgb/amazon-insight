@@ -54,7 +54,7 @@ globalThis.fetch = async (url, options) => {
     if (process.env.TEST_FAIL_AD === 'true' && request.marketId === 2 && !failedAd) {
       failedAd = true;
       data = {rows:null,total:1}; // A malformed day must fail, not masquerade as no ads.
-    } else data = request.marketId === 3 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A'}],total:1};
+    } else data = request.marketId === 3 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A',currencySymbol:request.marketId===2?'CA$':'$',cost:1,sales:2}],total:1};
   }
   else throw new Error('Unmocked provider request');
   return Response.json({code:200,data});
