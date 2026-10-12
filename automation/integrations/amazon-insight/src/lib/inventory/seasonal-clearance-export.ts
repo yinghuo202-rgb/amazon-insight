@@ -57,7 +57,7 @@ function replenishmentRows(result: SeasonalInventoryPlanResult, market: Seasonal
       candidate.pendingCoverageQty,
       candidate.urgentReplenishmentQty,
       candidate.replenishmentActionQty,
-      candidate.replenishmentRecommendation,
+      domesticSplitRecommendation(candidate, candidate.replenishmentRecommendation),
     ]),
   ];
 }
@@ -109,7 +109,7 @@ function clearanceRows(result: SeasonalInventoryPlanResult, market: SeasonalInve
       candidate.pendingMitigationQty,
       candidate.atRiskSupplyQty,
       `${Math.round(candidate.riskRatio * 100)}%`,
-      candidate.clearanceRecommendation,
+      domesticSplitRecommendation(candidate, candidate.clearanceRecommendation),
     ]),
   ];
 }
@@ -119,6 +119,12 @@ function replenishmentRelevant(candidate: SeasonalInventoryCandidate, market: Se
   const gap = market === "US" ? candidate.usReplenishmentGap : candidate.caReplenishmentGap;
   const projectedDemand = market === "US" ? candidate.usProjectedDemandUnits : candidate.caProjectedDemandUnits;
   return gap > 0 || candidate.upcomingPeak && projectedDemand > 0;
+}
+
+function domesticSplitRecommendation(candidate: SeasonalInventoryCandidate, recommendation: string) {
+  return candidate.domesticSupplyBreakdownVerified === false
+    ? `${recommendation}${recommendation ? "；" : ""}国内/订单列为历史拆分；当前组合供应 ${candidate.domesticSupplyTotal ?? "—"}`
+    : recommendation;
 }
 
 function pricingValues(pricing: SeasonalInventoryCandidate["usPricing"]): ExportCell[] {

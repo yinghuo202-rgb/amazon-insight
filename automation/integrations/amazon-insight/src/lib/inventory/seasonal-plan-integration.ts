@@ -35,8 +35,9 @@ export function buildSeasonalShipmentActions(plan: SeasonalInventoryPlanResult):
   return candidates.flatMap((candidate) => {
     const isClearance = clearanceSkus.has(candidate.sku);
     const isReplenishment = replenishmentSkus.has(candidate.sku);
-    const transfer = { US: candidate.usDomesticTransferQty, CA: candidate.caDomesticTransferQty };
-    const clearance = isClearance ? allocateWeighted(candidate.domesticClearanceQty, candidate.usReserveUnits, candidate.caReserveUnits) : { US: 0, CA: 0 };
+    const domesticVerified = candidate.domesticSupplyBreakdownVerified !== false;
+    const transfer = domesticVerified ? { US: candidate.usDomesticTransferQty, CA: candidate.caDomesticTransferQty } : { US: 0, CA: 0 };
+    const clearance = isClearance && domesticVerified ? allocateWeighted(candidate.domesticClearanceQty, candidate.usReserveUnits, candidate.caReserveUnits) : { US: 0, CA: 0 };
     const shipByDate = shipmentDeadline(candidate, plan);
     return (["US", "CA"] as const).map((market) => {
       const transferQty = market === "US" ? transfer.US : transfer.CA;
@@ -73,13 +74,16 @@ export function buildSeasonalPurchaseActions(plan: SeasonalInventoryPlanResult):
     const replenishment = replenishmentBySku.get(candidate.sku);
     const blockPurchase = Boolean(clearance);
     const urgentPurchaseQty = blockPurchase ? 0 : candidate.urgentReplenishmentQty;
-    const pendingMitigationQty = blockPurchase ? candidate.pendingMitigationQty : 0;
-    const kind = blockPurchase ? "stop_purchase" : urgentPurchaseQty > 0 ? "urgent_purchase" : candidate.domesticTransferQty > 0 ? "transfer_first" : "monitor";
+    const domesticVerified = candidate.domesticSupplyBreakdownVerified !== false;
+    const domesticTransferQty = domesticVerified ? candidate.domesticTransferQty : 0;
+    const pendingMitigationQty = blockPurchase && domesticVerified ? candidate.pendingMitigationQty : 0;
+    const kind = blockPurchase ? "stop_purchase" : urgentPurchaseQty > 0 ? "urgent_purchase" : domesticTransferQty > 0 ? "transfer_first" : "monitor";
     const parts = [];
     if (blockPurchase) parts.push(candidate.currentClearanceQty > 0 ? `季末清货期间停止新增采购，现货 ${candidate.currentClearanceQty} 件优先售罄` : "季末清货期间停止新增采购");
     if (pendingMitigationQty) parts.push(`未完工订单 ${pendingMitigationQty} 件需停单、转款或改用途`);
-    if (!blockPurchase && candidate.domesticTransferQty) parts.push(`先从国内调拨 ${candidate.domesticTransferQty} 件`);
-    if (urgentPurchaseQty) parts.push(`扣减国内现货和未完工订单后仍缺 ${urgentPurchaseQty} 件`);
+    if (!blockPurchase && domesticTransferQty) parts.push(`先从国内调拨 ${domesticTransferQty} 件`);
+    if (urgentPurchaseQty) parts.push(`${domesticVerified ? "扣减国内现货和未完工订单" : "扣减国内组合供应（拆分待核实）"}后仍缺 ${urgentPurchaseQty} 件`);
+    if (!domesticVerified) parts.push("国内组合供应拆分待核实，不建议立即发货或按历史订单停单");
     if (!parts.length && replenishment) parts.push("旺季销量关注，当前无需新增采购");
     return {
       sku: candidate.sku,
@@ -87,7 +91,7 @@ export function buildSeasonalPurchaseActions(plan: SeasonalInventoryPlanResult):
       kind,
       blockPurchase,
       urgentPurchaseQty,
-      domesticTransferQty: candidate.domesticTransferQty,
+      domesticTransferQty,
       pendingMitigationQty,
       deadline: clearance ? plan.seasonEndDate : candidate.replenishmentHorizonEnd,
       reason: parts.join("；"),

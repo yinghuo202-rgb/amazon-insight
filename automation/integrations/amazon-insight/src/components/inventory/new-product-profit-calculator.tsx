@@ -37,7 +37,7 @@ export function NewProductProfitCalculator({ products, rules = [] }: { products:
     { name: "方案 C", label: "提价售价", price: numeric(scenarioPrices.higher) ?? (values[0] === null ? null : values[0] * 1.05) },
   ].map(item => ({ ...item, result: scenario(item.price) }));
   const result = scenarios[selectedScenario].result;
-  const feeColors = ["#315d50", "#a6b7aa", "#739e8b", "#b1c8ba", "#d6c5ac", "#e7dfd2", "#eaf0ec"];
+  const feeColors = ["var(--chart-primary)", "#a6b7aa", "#739e8b", "#b1c8ba", "#d6c5ac", "#e7dfd2", "var(--positive-soft)"];
   const feeParts = result ? [result.cost, result.referral, result.fba, result.freight, result.ad, result.returns, Math.max(0, result.profit)] : [];
   const feeTotal = feeParts.reduce((sum, value) => sum + value, 0);
   let feeOffset = 0;

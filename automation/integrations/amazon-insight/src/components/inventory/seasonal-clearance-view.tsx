@@ -127,6 +127,9 @@ function MarketPlan({ candidate, market, clearance, replenishment }: { candidate
 }
 
 function SharedSupply({ candidate, clearance, replenishment }: { candidate: SeasonalInventoryCandidate; clearance: boolean; replenishment: boolean }) {
+  if (candidate.domesticSupplyBreakdownVerified === false) {
+    return <div className="min-w-40 space-y-1"><p className="font-semibold text-blue-700">国内组合供应 {integer(candidate.domesticSupplyTotal ?? 0)}</p><p className="text-slate-500">拆分待核实，不建议立即发货</p><p className="text-[10px] text-slate-400">历史现货 {integer(candidate.domesticInventory)} · 历史订单 {integer(candidate.pendingOrderQty)}（非当前拆分）</p>{replenishment && candidate.urgentReplenishmentQty ? <p className="font-semibold text-rose-700">需新增采购 {integer(candidate.urgentReplenishmentQty)}</p> : replenishment ? <p className="text-emerald-700">无需新增采购</p> : null}</div>;
+  }
   return <div className="min-w-40 space-y-1"><p className="font-semibold text-blue-700">国内现货 {integer(candidate.domesticInventory)}</p>{replenishment && candidate.domesticTransferQty ? <p className="text-emerald-700">先调拨 {integer(candidate.domesticTransferQty)}</p> : null}{clearance && candidate.domesticClearanceQty ? <p className="text-rose-700">国内清货 {integer(candidate.domesticClearanceQty)}</p> : null}<p className="pt-1 text-slate-500">未完工 {integer(candidate.pendingOrderQty)}</p>{replenishment && candidate.pendingCoverageQty ? <p className="text-amber-700">再加急 {integer(candidate.pendingCoverageQty)}</p> : null}{replenishment && candidate.urgentReplenishmentQty ? <p className="font-semibold text-rose-700">需新增采购 {integer(candidate.urgentReplenishmentQty)}</p> : replenishment ? <p className="text-emerald-700">无需新增采购</p> : null}{clearance && candidate.pendingMitigationQty ? <p className="text-amber-700">停单/转款 {integer(candidate.pendingMitigationQty)}</p> : null}</div>;
 }
 

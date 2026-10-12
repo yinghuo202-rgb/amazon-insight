@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 import test_gerpgo_preview as fixtures
-from store_ops.jobs.gerpgo_preview import build_preview
+from store_ops.jobs.gerpgo_preview import build_preview, publish
 from store_ops.report_versions import current_reports
 
 
@@ -19,17 +19,30 @@ class CompiledWorkerTests(unittest.TestCase):
     def test_env_worker_collects_and_publishes_without_any_webpage_action(self):
         self.run_environment_worker(include_ads=False)
 
+    def test_env_worker_requires_initial_manual_review_despite_configured_credentials(self):
+        self.run_environment_worker(include_ads=False, initial_review=False)
+
     def test_env_worker_collects_all_ad_days_and_empty_markets_before_publication(self):
         self.run_environment_worker(include_ads=True)
 
     def test_failed_ad_day_preserves_reports_and_does_not_skip_other_days_or_markets(self):
         self.run_environment_worker(include_ads=True, fail_ad=True)
 
-    def run_environment_worker(self, *, include_ads, fail_ad=False):
+    def run_environment_worker(self, *, include_ads, fail_ad=False, initial_review=True):
         from urllib.parse import quote
         fixture = fixtures.GerpgoPreviewTests()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
+        if initial_review:
+            fixture.listing_manifest()
+            for source in fixture.sources:
+                if source["name"].startswith("performance-2-"):
+                    file = fixture.folder / f"{source['name']}-1.json"
+                    page = json.loads(file.read_text())
+                    page["rows"][0]["orderProductSalesAmount"]["currencyAmount"] = 100
+                    file.write_text(json.dumps(page))
+            reviewed = build_preview(fixture.runtime, fixtures.TASK, store_name="MEASUREMAN")
+            publish(fixture.runtime, fixture.approval(reviewed))
         state = fixture.runtime / "db" / "operations.sqlite3"
         with sqlite3.connect(state) as db:
             db.execute("UPDATE data_refresh_tasks_v1 SET status='completed'")
@@ -40,7 +53,7 @@ class CompiledWorkerTests(unittest.TestCase):
         # Unexpected requests fail closed: no external provider calls in this acceptance test.
         preload = """// Accelerate the collector's fixed pacing in this isolated, network-free test only.
 const timer = globalThis.setTimeout;
-globalThis.setTimeout = (callback, ms, ...args) => timer(callback, ms === 1200 ? 1 : ms, ...args);
+globalThis.setTimeout = (callback, ms, ...args) => timer(callback, ms === 6000 ? 1 : ms, ...args);
 let failedAd = false;
 globalThis.fetch = async (url, options) => {
   const endpoint = new URL(url).pathname.replace('/api/open', '');
@@ -49,12 +62,16 @@ globalThis.fetch = async (url, options) => {
   if (endpoint === '/api_token') data = {accessToken:'fixture-token', expiresIn:3600};
   else if (endpoint === '/middle/base/market/page') data = {rows:[{marketListVos:[1,2,3].map((marketId,index)=>({marketId,market:['amazon-us','amazon-ca','amazon-mx'][index],serverName:'MEASUREMAN',serverId:1}))}],total:1};
   else if (endpoint === '/purchase/goods/product/page') data = {rows:[{sku:'SKU-A'}],total:1};
-  else if (endpoint === '/operation/sts/productAnalyzeMultiIndex/page') data = {rows:[{marketId:1,sku:'SKU-A',isParent:false,unitsOrdered:40,returns:null,orderProductSalesAmount:{currencyAmount:100,currencyCode:'USD'}}],total:1};
+  else if (endpoint === '/operation/sts/listingAnalyzeMultiIndex/page') {
+    if (JSON.stringify(request.marketList) !== '[1]' && JSON.stringify(request.marketList) !== '[2]' || request.isShowTotal !== false || request.groupByType !== 'seller_sku') throw new Error('Unexpected listing scope');
+    const marketId=request.marketList[0];
+    data = {rows:[{serverId:1,marketId,countryName:marketId===1?'US':'CA',sku:'SKU-A',isParent:false,unitsOrdered:40,returns:null,orderProductSalesAmount:{currencyAmount:100,currencyCode:marketId===1?'USD':'CAD'}}],total:1};
+  }
   else if (endpoint === '/operation/ads/adsAsinAnalytical/page') {
     if (process.env.TEST_FAIL_AD === 'true' && request.marketId === 2 && !failedAd) {
       failedAd = true;
       data = {rows:null,total:1}; // A malformed day must fail, not masquerade as no ads.
-    } else data = request.marketId === 3 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A',currencySymbol:request.marketId===2?'CA$':'$',cost:1,sales:2}],total:1};
+    } else data = request.marketId === 2 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A',currencySymbol:'$',cost:1,sales:2}],total:1};
   }
   else throw new Error('Unmocked provider request');
   return Response.json({code:200,data});
@@ -72,32 +89,38 @@ globalThis.fetch = async (url, options) => {
             while time.monotonic() < deadline and process.poll() is None:
                 with sqlite3.connect(state) as db:
                     exists = db.execute("SELECT name FROM sqlite_master WHERE name='data_sync_schedules_v1'").fetchone()
-                    row = db.execute("SELECT t.status,t.id FROM data_sync_schedules_v1 s JOIN data_refresh_tasks_v1 t ON t.id=s.last_task_id WHERE s.key='gerpgo'").fetchone() if exists else None
+                    row = db.execute("SELECT t.status,t.id,t.error FROM data_sync_schedules_v1 s JOIN data_refresh_tasks_v1 t ON t.id=s.last_task_id WHERE s.key='gerpgo'").fetchone() if exists else None
                 status = row[0] if row else None
                 if status in ("completed", "failed", "awaiting_review", "awaiting_mapping"):
                     break
                 time.sleep(.1)
-            self.assertEqual(status, "failed" if fail_ad else "completed")
+            self.assertEqual(status, "failed" if fail_ad else "completed" if initial_review else "awaiting_review", row[2] if row else "任务未创建")
             manifest = json.loads((fixture.runtime / "incoming" / "gerpgo" / row[1] / "manifest.json").read_text())
             self.assertEqual(manifest["collectionMode"], "sales_ads" if include_ads else "sales")
+            self.assertEqual(manifest["performanceContract"], "listing-market-v1")
+            self.assertEqual(manifest["storeScope"]["marketIds"], [1, 2])
             sources = manifest["sources"]
             self.assertFalse(any(source["name"].startswith(("fba", "returns", "storage")) for source in sources))
             if include_ads:
                 ads = [source for source in sources if source["name"].startswith("ads-")]
-                self.assertGreater(len(ads), 500)
+                self.assertGreater(len(ads), 40)
                 self.assertEqual(sum(source["status"] == "failed" for source in ads), int(fail_ad))
                 self.assertFalse(any(source["status"] == "skipped" for source in ads))
-                self.assertTrue(any(source["condition"]["marketId"] == 3 and source["total"] == 0 for source in ads))
+                self.assertEqual({source["condition"]["marketId"] for source in ads}, {1, 2})
                 self.assertTrue(any(source["condition"]["marketId"] == 2 and source["status"] == "completed" for source in ads))
             if fail_ad:
-                self.assertFalse((current_reports(fixture.reports) / "gerpgo-performance.json").exists())
+                self.assertEqual(json.loads((current_reports(fixture.reports) / "gerpgo-performance.json").read_text())["sourceTaskId"], fixtures.TASK)
                 self.assertEqual(json.loads((current_reports(fixture.reports) / "manual.json").read_text()), {"notes": "preserve"})
                 return
+            if not initial_review:
+                self.assertFalse((current_reports(fixture.reports) / "gerpgo-performance.json").exists())
+                self.assertTrue((fixture.runtime / "incoming" / "gerpgo" / row[1] / "preview.json").exists())
+                return
             report = json.loads((current_reports(fixture.reports) / "gerpgo-performance.json").read_text())
-            self.assertEqual(len(report["rows"]), 7)
+            self.assertEqual(len(report["rows"]), 14)
             self.assertEqual(report["storeScope"]["storeName"], "MEASUREMAN")
-            self.assertEqual(report["publication"]["initialAuthorization"]["actor"], "environment-policy")
-            self.assertIsNone(report["publication"]["initialReview"])
+            self.assertEqual(report["publication"]["initialReview"]["sourceTaskId"], fixtures.TASK)
+            self.assertNotIn("initialAuthorization", report["publication"])
             self.assertNotIn("fixture-key", json.dumps(report))
             self.assertEqual(json.loads((current_reports(fixture.reports) / "manual.json").read_text()), {"notes": "preserve"})
         finally:
@@ -131,11 +154,12 @@ globalThis.fetch = async (url, options) => {
             status = "queued"
             while time.monotonic() < deadline and process.poll() is None:
                 with sqlite3.connect(state) as db:
-                    status = db.execute("SELECT status FROM data_refresh_tasks_v1 WHERE id='queued-publish'").fetchone()[0]
+                    task = db.execute("SELECT status,error FROM data_refresh_tasks_v1 WHERE id='queued-publish'").fetchone()
+                    status = task[0]
                 if status in ("completed", "failed"):
                     break
                 time.sleep(.1)
-            self.assertEqual(status, "completed")
+            self.assertEqual(status, "completed", task[1])
             active = current_reports(fixture.reports)
             report = json.loads((active / "gerpgo-performance.json").read_text())
             self.assertEqual(report["sourceTaskId"], fixtures.TASK)

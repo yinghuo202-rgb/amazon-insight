@@ -41,8 +41,9 @@ export default async function SkuPage({ params, searchParams }: { params: Promis
   const query = typeof search.query === "string" ? search.query.slice(0, 100) : "";
   const origin = search.origin === "overview" ? "overview" : "brief";
   const returnFilter = typeof search.returnFilter === "string" && (operatingFilters as readonly string[]).includes(search.returnFilter) ? search.returnFilter : filter;
-  const context = { filter, sort, query, origin, returnFilter };
-  const returnHref = (origin === "overview" ? "/inventory?" : "/inventory/brief?") + new URLSearchParams({ market, period, filter: returnFilter, sort, query });
+  const returnPeriod = typeof search.returnPeriod === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(search.returnPeriod) ? search.returnPeriod : period;
+  const context = { filter, sort, query, origin, returnFilter, returnPeriod };
+  const returnHref = (origin === "overview" ? "/inventory?" : "/inventory/brief?") + new URLSearchParams({ market, period: returnPeriod, filter: returnFilter, sort, query });
   const product = products?.items.find(item => item.sku === sku) ?? null;
   const dashboard = data && row ? buildSkuDetailViewModel(data, variants, product, sku) : null;
   const canceledOrders = listLatestPurchaseOrderReviews({ sku, action: "cancel" });

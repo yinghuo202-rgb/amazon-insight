@@ -50,9 +50,10 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
         sku, market, listingId: JSON.stringify([performance?.storeScope?.storeName ?? "MEASUREMAN", market, sku]), parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
         currency: history.at(-1)?.currency || inventory?.currency || (market === "MX" ? "MXN" : market === "AU" ? "AUD" : market === "CA" ? "CAD" : "USD"),
         sourceSkus: [...new Set(profits.filter(item => item.market === market && resolveSku(item.sku) === sku).map(item => item.sku))],
-        history, advertisingHistory, unitHistory, seasonality, inventoryDate: inventory?.snapshots.fbaDate ?? null,
-        awdDate: inventory?.snapshots.awdSourceAvailable ? inventory.snapshots.awdDate : null,
+        history, advertisingHistory, unitHistory, seasonality, inventoryDate: stock?.inventorySnapshotDate ?? inventory?.snapshots.fbaDate ?? null,
+        awdDate: inventory?.snapshots.awdSourceAvailable ? stock?.awdSnapshotDate ?? inventory.snapshots.awdDate : null,
         stock: stock ? { fba: stock.fbaSellable, awd: stock.awdAvailable, awdTransfer: stock.awdOutboundToFba, transit: stock.inTransitInventory, domestic: stock.localInventory, orders: stock.pendingOrderQty, dailySales: stock.dailySales,
+          ...({ domesticSupplyTotal: stock.domesticSupplyTotal, domesticSupplyBreakdownVerified: stock.domesticSupplyBreakdownVerified } as { domesticSupplyTotal?: number; domesticSupplyBreakdownVerified?: boolean }),
           supplyConfirmed, cover: supplyConfirmed && stock.dailySales > 0 ? (stock.fbaSellable + stock.awdAvailable + stock.inTransitInventory) / stock.dailySales : null, target: inventory!.parameters.targetCoverDays } : null,
       };
     });
@@ -211,6 +212,8 @@ export function buildCombinedOverviewViewModel(
       id: us.domesticPool.id,
       localInventory: us.summary.localInventory,
       pendingOrderQty: us.summary.pendingOrderQty,
+      domesticSupplyTotal: us.rows.reduce((sum, row) => sum + (row.domesticSupplyBreakdownVerified === false ? row.domesticSupplyTotal : row.localInventory + row.pendingOrderQty), 0),
+      domesticSupplyBreakdownVerified: !us.rows.some(row => row.domesticSupplyBreakdownVerified === false),
       overdueOrderCount: us.summary.overdueOrderCount,
       readyToShipQty: us.summary.readyToShipQty,
     },

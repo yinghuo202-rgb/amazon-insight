@@ -54,6 +54,11 @@ describe("navigation and financial ranking", () => {
     expect(safeSkuReturnHref("https://evil.invalid")).toBeNull(); expect(safeSkuReturnHref("//evil.invalid")).toBeNull();
     expect(safeSkuReturnHref("/inventory/sku/../../login")).toBeNull();
   });
+  it("keeps the originating month separate from the alert evidence month", () => {
+    const url = new URL(skuOperatingHref("SKU-A", "US", "2026-09", { origin: "overview", returnPeriod: "2026-10" }), "https://test.invalid");
+    expect(url.searchParams.get("period")).toBe("2026-09");
+    expect(url.searchParams.get("returnPeriod")).toBe("2026-10");
+  });
   it("does not substitute a later month for missing facts", () => {
     const page = queryOperatingModel(model(), { brief: true, market: "US", period: "2026-07", filter: "all" }, now);
     expect(page.summary.revenue).toBeNull(); expect(page.model.rows[0].history).toEqual([]);

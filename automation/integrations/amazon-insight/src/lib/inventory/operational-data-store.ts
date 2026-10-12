@@ -204,13 +204,15 @@ export function applyInventoryOverrides(
       awdOutboundToFba: inventory?.awdOutboundToFba ?? row.awdOutboundToFba,
       awdInbound: inventory?.awdInbound ?? row.awdInbound,
       localInventory,
-      domesticSupplyTotal: localInventory + row.pendingOrderQty,
+      domesticSupplyTotal: row.domesticSupplyBreakdownVerified === false
+        ? row.domesticSupplyTotal
+        : localInventory + row.pendingOrderQty,
     };
     const decision = calculateInventoryDecision(base, data.parameters);
     return {
       ...base,
       ...decision,
-      readyToShipQty: Math.min(localInventory, decision.suggestedShipmentQty),
+      readyToShipQty: row.domesticSupplyBreakdownVerified === false ? 0 : Math.min(localInventory, decision.suggestedShipmentQty),
       suggestedProductionQty: Math.max(0, decision.suggestedShipmentQty - base.domesticSupplyTotal),
     };
   });
@@ -229,7 +231,12 @@ export function applyPurchasePlanOverrides(data: PurchasePlanData, us: Inventory
     const usNetworkInventory = usRow?.eligibleInventoryPosition ?? row.usNetworkInventory;
     const caNetworkInventory = caRow?.eligibleInventoryPosition ?? row.caNetworkInventory;
     const localInventory = usRow?.localInventory ?? caRow?.localInventory ?? row.localInventory;
-    const inventoryPosition = usNetworkInventory + caNetworkInventory + localInventory + row.pendingOrderQty;
+    const sharedDomestic = usRow ?? caRow;
+    const domesticSupplyBreakdownVerified = sharedDomestic?.domesticSupplyBreakdownVerified;
+    const domesticSupplyTotal = domesticSupplyBreakdownVerified === false
+      ? sharedDomestic!.domesticSupplyTotal
+      : localInventory + row.pendingOrderQty;
+    const inventoryPosition = usNetworkInventory + caNetworkInventory + domesticSupplyTotal;
     const projectedDemand = Math.ceil(row.combinedDailySales * data.parameters.demandHorizonDays);
     const suggestedPurchaseQty = roundUpToPack(Math.max(0, projectedDemand - inventoryPosition), cartonQty);
     const coverageDays = row.combinedDailySales > 0 ? inventoryPosition / row.combinedDailySales : null;
@@ -240,6 +247,8 @@ export function applyPurchasePlanOverrides(data: PurchasePlanData, us: Inventory
       usNetworkInventory,
       caNetworkInventory,
       localInventory,
+      domesticSupplyTotal,
+      domesticSupplyBreakdownVerified,
       inventoryPosition,
       projectedDemand,
       coverageDays,

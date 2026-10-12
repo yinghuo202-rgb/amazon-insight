@@ -1,12 +1,13 @@
 import { mkdir, writeFile, rename, readFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { runFullDataRefresh, runPythonJob } from "@/lib/inventory/data-refresh";
 import { automationRoot, runtimePath } from "@/lib/inventory/paths";
 import { readGerpgoPreview } from "@/lib/inventory/gerpgo-preview";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 import { claimRefreshTask, updateRefreshTask, listRefreshTasks, listSyncSchedules, enqueueDueSyncTasks, completeReviewedSyncTask, configureGerpgoEnvironmentSchedule } from "@/lib/inventory/refresh-task-store";
-import { collectGerpgoPages, createGerpgoClient, gerpgoSupplementalSources, GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironment, resolveGerpgoStoreScope, getGerpgoAutoSyncConfiguration } from "@/lib/inventory/gerpgo";
+import { collectGerpgoPages, createGerpgoClient, gerpgoPerformanceSources, gerpgoSupplementalSources, GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironment, resolveGerpgoStoreScope } from "@/lib/inventory/gerpgo";
 import { publishedReportPath } from "@/lib/inventory/report-version";
 import { getWpsStatus, downloadWpsInventory, WpsError } from "@/lib/inventory/wps";
 import { receiveWpsInventoryDownload, autoPublishWpsInventory, getImportBatch } from "@/lib/inventory/data-import";
@@ -33,19 +34,18 @@ export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof clai
   for (let offset = recent ? 1 : 6; offset >= 0; offset--) {
     const begin = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
     const end = offset === 0 ? now : new Date(Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth() + 1, 0));
-    scopes.push({ name: "performance-" + begin.toISOString().slice(0, 7), endpoint: "/operation/sts/productAnalyzeMultiIndex/page", condition: { beginDate: begin.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10), showCurrencyType: "YUAN" } });
+    scopes.push({ condition: { beginDate: begin.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) } });
   }
   const sources = [
     { name: "shops", endpoint: "/middle/base/market/page", condition: {} },
     { name: "products", endpoint: "/purchase/goods/product/page", condition: {} },
-    ...scopes,
   ];
-  type SourceResult = { name: string; endpoint: string; condition: Record<string, unknown>; status: "completed" | "failed" | "skipped"; pages: number; total: number | null; error?: string; totalUnit?: "markets" };
+  type SourceResult = { name: string; endpoint: string; condition: Record<string, unknown>; status: "completed" | "failed" | "skipped"; pages: number; total: number | null; error?: string; totalUnit?: "markets"; pageHashes?: Array<{ page: number; sha256: string }>; attemptEvidence?: Array<{ filename: string; sha256: string }> };
   const completed: SourceResult[] = [], sellers: Record<string, unknown>[] = [], failedEndpoints = new Map<string, string>();
   let storeScope: ReturnType<typeof resolveGerpgoStoreScope> | undefined;
   async function saveManifest(status = "collecting") {
     const manifest = { schemaVersion: 1, taskId: task.id, source: "gerpgo", capturedAt: now.toISOString(), businessAsOf: null, status, sources: completed, storeScope,
-      collectionMode: task.includeSupplemental ? "sales_ads" : "sales", collectionScope: recent ? "recent" : "initial", deferredDomains: task.includeSupplemental ? [] : ["ads"],
+      performanceContract: "listing-market-v1", collectionMode: task.includeSupplemental ? "sales_ads" : "sales", collectionScope: recent ? "recent" : "initial", deferredDomains: task.includeSupplemental ? [] : ["ads"],
       excludedDomains: ["fba", "returns", "storage", "shipments"],
       reason: "全部原始分页保存在服务端；未完成的数据域和未核验的字段不会伪装成已发布业务数据。" };
     await writeFile(path.join(folder, "manifest.json.tmp"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
@@ -59,21 +59,28 @@ export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof clai
       completed.push({ ...source, status: "skipped", pages: 0, total: null, error: priorFailure });
       return;
     }
+    const pageHashes: NonNullable<SourceResult["pageHashes"]> = [], attemptEvidence: NonNullable<SourceResult["attemptEvidence"]> = [];
     try {
       const result = await collectGerpgoPages(client, source.endpoint, source.condition, async page => {
       if (stopping) throw new Error("worker 正在停止。");
       updateRefreshTask(task.id, task.lease, "running", `${source.name}：第 ${page.page} 页 / ${page.total} 条`);
       // Server-side evidence only; never send entire raw pages or credentials to the browser.
-      await writeFile(path.join(folder, `${source.name}-${page.page}.json`), JSON.stringify(page), { mode: 0o600 });
+      const contents = JSON.stringify(page);
+      await writeFile(path.join(folder, `${source.name}-${page.page}.json`), contents, { mode: 0o600 });
+      pageHashes.push({ page: page.page, sha256: createHash("sha256").update(contents).digest("hex") });
       if (source.name === "shops") sellers.push(...page.rows);
-      });
-      completed.push({ ...source, ...result, status: "completed" });
+      }, { onAttemptPage: async page => {
+        const filename = `${source.name}-attempt-${page.pagesize}-${page.page}.json`, contents = JSON.stringify(page);
+        await writeFile(path.join(folder, filename), contents, { mode: 0o600 });
+        attemptEvidence.push({ filename, sha256: createHash("sha256").update(contents).digest("hex") });
+      } });
+      completed.push({ ...source, ...result, pageHashes, ...(attemptEvidence.length ? { attemptEvidence } : {}), status: "completed" });
     } catch (error) {
       if (stopping) throw error;
       const safe = error instanceof GerpgoConnectionError ? error.message : "该数据域采集未完成，请检查 worker 和数据卷权限。";
       // Only permission/rate/provider failures suppress remaining scopes of the same endpoint.
-      if (!source.name.startsWith("ads-") || error instanceof GerpgoConnectionError && [401, 403, 429].includes(error.httpStatus)) failedEndpoints.set(failureKey, safe);
-      completed.push({ ...source, status: "failed", pages: 0, total: null, error: safe });
+      if (!source.name.startsWith("ads-") || error instanceof GerpgoConnectionError && [401, 403, 429, 509].includes(error.httpStatus)) failedEndpoints.set(failureKey, safe);
+      completed.push({ ...source, pageHashes, ...(attemptEvidence.length ? { attemptEvidence } : {}), status: "failed", pages: 0, total: null, error: safe });
     }
     await saveManifest();
   }
@@ -85,12 +92,14 @@ export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof clai
     }
   }
   const shopComplete = completed.find(source => source.name === "shops")?.status === "completed";
+  const performanceSources = gerpgoPerformanceSources(scopes, shopComplete ? storeScope!.marketIds : []);
+  for (const source of performanceSources) await collectSource(source);
   if (task.includeSupplemental) {
     for (const source of gerpgoSupplementalSources(scopes, shopComplete ? storeScope!.marketIds : [])) await collectSource(source);
     if (!shopComplete || !storeScope?.marketIds.length) completed.push({ name: "ads", endpoint: "/operation/ads/adsAsinAnalytical/page", condition: {}, status: "skipped", pages: 0, total: null, error: "店铺采集未完成或没有已授权站点，无法安排逐站点广告采集。" });
   }
   await saveManifest(completed.some(source => source.status !== "completed") ? "incomplete" : "collected");
-  const missingCore = completed.filter(source => sources.some(core => core.name === source.name) && source.status !== "completed");
+  const missingCore = completed.filter(source => [...sources, ...performanceSources].some(core => core.name === source.name) && source.status !== "completed");
   const missingAds = completed.filter(source => source.name.startsWith("ads") && source.status !== "completed");
   if (missingCore.length || missingAds.length) throw new GerpgoConnectionError(`销售或广告采集未完成：${missingCore.length} 个基础范围、${missingAds.length} 个广告范围。成功分页已保留，请查看采集明细；旧报告未修改。`);
   const requestFile = path.join(folder, "prepare-request.json");
@@ -134,10 +143,9 @@ while (!stopping) {
     if (preview && task.scheduled && !preview.blocked && !preview.differences.some(d => d.protected)) {
       const settings = listSyncSchedules().find(s => s.key === "gerpgo")!, previous = await currentPerformance();
       const candidate = JSON.parse(await readFile(runtimePath("incoming", "gerpgo", task.id, "candidate.json"), "utf8"));
-      const policy = getGerpgoAutoSyncConfiguration();
-      const reviewed = previous?.publication?.initialReview?.storeScope ?? (previous?.publication?.actor === "shared-account" ? previous.storeScope : null);
+      const reviewed = previous?.publication?.initialReview?.storeScope;
       const scope = candidate.storeScope;
-      const authorized = policy.managed && policy.enabled ? previous?.storeScope ?? scope : reviewed;
+      const authorized = reviewed;
       const sameScope = authorized && scope && authorized.storeName === scope.storeName && authorized.serverId === scope.serverId && Array.isArray(authorized.marketIds) && authorized.marketIds.join(",") === scope.marketIds.join(",");
       if (settings.enabled && settings.autoPublish && sameScope) {
         const requestFile = runtimePath("incoming", "gerpgo", task.id, "automatic-publication.json");

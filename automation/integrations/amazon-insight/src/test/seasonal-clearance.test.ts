@@ -135,4 +135,27 @@ describe("combined seasonal inventory planning", () => {
     expect(buildSeasonalInventoryCsv(plan, "clearance", "US").content).toContain('"SUMMER-1"');
     expect(buildSeasonalInventoryCsv(plan, "clearance", "CA").content).toContain('"SUMMER-1"');
   });
+
+  it("annotates historical domestic CSV splits without changing columns or numeric actions", () => {
+    const candidate = analyzeSeasonalInventoryRow(row(), context)!;
+    const plan = {
+      snapshots: { US: context.snapshotDate, CA: context.snapshotDate }, snapshotDate: context.snapshotDate,
+      latestSalesMonth: context.latestSalesMonth, seasonEndDate: "2026-08-31",
+      clearanceCandidates: [candidate], replenishmentCandidates: [candidate], summary: {} as SeasonalInventoryPlanResult["summary"],
+    } satisfies SeasonalInventoryPlanResult;
+    for (const kind of ["replenishment", "clearance"] as const) {
+      const legacy = buildSeasonalInventoryCsv(plan, kind).content;
+      candidate.domesticSupplyBreakdownVerified = false;
+      candidate.domesticSupplyTotal = 30;
+      const annotated = buildSeasonalInventoryCsv(plan, kind).content;
+      expect(annotated).toContain("国内/订单列为历史拆分；当前组合供应 30");
+      expect(annotated.split("\r\n")[0]).toBe(legacy.split("\r\n")[0]);
+      expect(annotated.split("\r\n")[1].split(",").slice(0, -1)).toEqual(legacy.split("\r\n")[1].split(",").slice(0, -1));
+      candidate.domesticSupplyTotal = undefined;
+      expect(buildSeasonalInventoryCsv(plan, kind).content).toContain("当前组合供应 —");
+      candidate.domesticSupplyBreakdownVerified = true;
+      expect(buildSeasonalInventoryCsv(plan, kind).content).toBe(legacy);
+      candidate.domesticSupplyBreakdownVerified = undefined;
+    }
+  });
 });

@@ -72,7 +72,7 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
     const seasonalTransfer = seasonal?.transferQty ?? 0;
     const seasonalClearance = seasonal?.clearanceQty ?? 0;
     const target = Math.max(row.suggestedShipmentQty, seasonalTransfer) + seasonalClearance;
-    const quantity = Math.floor(Math.min(target, row.localInventory) / carton) * carton;
+    const quantity = row.domesticSupplyBreakdownVerified === false ? 0 : Math.floor(Math.min(target, row.localInventory) / carton) * carton;
     return [row.sku, quantity] as const;
   }));
   const replenishmentRows = rows.filter((row) => (readyQuantityBySku.get(row.sku) ?? 0) > 0)

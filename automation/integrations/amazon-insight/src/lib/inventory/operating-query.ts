@@ -14,6 +14,17 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const currency = market === "CA" ? "CAD" : market === "MX" ? "MXN" : market === "AU" ? "AUD" : "USD";
   const rows = model.rows.filter(row => row.market === market);
   const facts = rows.map(row => ({ row, ...operatingFacts(row, period, resolveOperatingRules(market, row.sku, model.ruleOverrides), now, model.rulesAvailable) }));
+  const currentMonth = now.toISOString().slice(0, 7);
+  const completeMonth = (month: string) => {
+    const points = rows.flatMap(row => row.history.filter(point => point.reportMonth === month));
+    return month < currentMonth && points.length > 0 && points.every(point => point.currency === currency && point.quality?.completePeriod !== false);
+  };
+  // Current-month metrics remain MTD; attention uses one explicit, site-aligned complete month.
+  // A deliberately selected historical month is never replaced with later evidence.
+  const focusPeriod = completeMonth(period) ? period : period >= currentMonth
+    ? model.periods.filter(month => month <= period && completeMonth(month)).sort().at(-1) ?? null : null;
+  const attentionPeriod = focusPeriod ?? period;
+  const focusFacts = attentionPeriod === period ? facts : rows.map(row => ({ row, ...operatingFacts(row, attentionPeriod, resolveOperatingRules(market, row.sku, model.ruleOverrides), now, model.rulesAvailable) }));
   const reported = facts.filter(item => item.current && item.current.currency === currency);
   const sum = (key: "productSales" | "actualProfit" | "units" | "returns") => reported.length && reported.every(item => item.current![key] !== null) ? reported.reduce((total, item) => total + item.current![key]!, 0) : null;
   const revenue = sum("productSales"), profit = sum("actualProfit"), units = sum("units"), returns = sum("returns");
@@ -38,7 +49,10 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     || kind === "stock" && item.issues.some(issue => issue === "当前供货风险" || issue === "供应覆盖不足")
     || kind === "missing" && item.dataIssues.length > 0;
   // Searching a specific product is independent of attention thresholds.
-  const matched = facts.filter(item => query ? [item.row.sku, ...item.row.sourceSkus, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
+  const attentionFilter = !["all", "revenue", "missing"].includes(filter);
+  const listFacts = !query && attentionFilter ? focusFacts : facts;
+  const listPeriod = !query && attentionFilter ? attentionPeriod : period;
+  const matched = listFacts.filter(item => query ? [item.row.sku, ...item.row.sourceSkus, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
   const impact = (item: typeof facts[number]) => {
     if (item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency) return Math.abs(item.current.actualProfit - item.previous.actualProfit);
     // Missing prior profit is not zero profit. Use a known revenue fact instead.
@@ -55,10 +69,13 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     return impactRank(a, b);
   };
   matched.sort(rank);
-  const priorities = facts.filter(item => item.issues.length).sort(impactRank).slice(0, 3).map(item => ({
+  const stockIssue = (issue: string) => issue === "当前供货风险" || issue === "供应覆盖不足";
+  const priorities = focusFacts.filter(item => item.issues.length).sort(impactRank).slice(0, 3).map(item => ({
     listingId: item.row.listingId, sku: item.row.sku, market, title: item.issues[0] || "数据核查",
+    period: attentionPeriod, operatingPeriod: item.issues.some(issue => !stockIssue(issue)) ? focusPeriod : null,
+    inventoryDate: item.row.inventoryDate, stockFresh: item.stockFresh,
     filter: item.issues.some(issue => issue === "利润为负" || issue === "利润待核查") ? "loss" : item.issues.includes("当前供货风险") || item.issues.includes("供应覆盖不足") ? "stock" : item.issues.includes("销售额下降") ? "decline" : item.issues.includes("广告待核查") ? "advertising" : item.issues.includes("退货待核查") ? "returns" : "missing",
-    impact: item.current ? impact(item) : null, impactBasis: item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency ? "利润变化" : "销售额",
+    impact: item.current && item.issues.some(issue => !stockIssue(issue)) ? impact(item) : null, impactBasis: item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency ? "利润变化" : "销售额",
     fact: item.issues.join(" · "), suggestion: item.suggestion,
   }));
   const offset = input.offset ?? 0;
@@ -66,9 +83,9 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const limit = input.brief ? 20 : query ? 3 : 0;
   const shown = matched.slice(offset, offset + limit).map(item => {
     const { row, ...analysis } = item;
-    return { ...row, analysis, advertisingHistory: row.advertisingHistory.slice(-6), history: row.history.filter(point => point.reportMonth <= period).slice(-6), unitHistory: row.unitHistory.filter(point => point.month <= period).slice(-6) };
+    return { ...row, analysis, analysisPeriod: listPeriod, advertisingHistory: row.advertisingHistory.slice(-6), history: row.history.filter(point => point.reportMonth <= listPeriod).slice(-6), unitHistory: row.unitHistory.filter(point => point.month <= listPeriod).slice(-6) };
   });
-  const selected = { ...model, rows: shown };
+  const selected = { ...model, markets: model.markets.filter(item => item === "US" || item === "CA"), rows: shown };
   const priorDate = /^\d{4}-\d{2}$/.test(period) ? new Date(`${period}-01T00:00:00Z`) : null;
   priorDate?.setUTCMonth(priorDate.getUTCMonth() - 1);
   const previousMonth = priorDate?.toISOString().slice(0, 7);
@@ -89,9 +106,9 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     const points = rows.flatMap(row => row.history.filter(point => point.reportMonth === month && point.currency === currency));
     return { month, revenue: points.length ? points.reduce((total, point) => total + point.productSales, 0) : null, profit: points.length && points.every(point => point.actualProfit !== null) ? points.reduce((total, point) => total + point.actualProfit!, 0) : null };
   });
-  return { model: selected, market, period, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
+  return { model: selected, market, period, focusPeriod, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
     summary: { revenue, profit, units, returns, adSales, adCost, advertising, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
       coveredCount: covered.length, unknownCoverageCount: facts.length - covered.length }, chart,
-    counts: Object.fromEntries(operatingFilters.map(kind => [kind, facts.filter(item => matches(item, kind)).length])) };
+    counts: Object.fromEntries(operatingFilters.map(kind => [kind, (["all", "revenue", "missing"].includes(kind) ? facts : focusFacts).filter(item => matches(item, kind)).length])) };
 }
 export type OperatingPage = ReturnType<typeof queryOperatingModel>;

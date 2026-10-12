@@ -35,6 +35,8 @@ export type CombinedSeasonalInventoryRowInput = {
   caOverseasInventory: number;
   domesticInventory: number;
   pendingOrderQty: number;
+  domesticSupplyTotal?: number;
+  domesticSupplyBreakdownVerified?: boolean;
   usSalesHistoryByMonth: Array<{ month: string; units: number }>;
   caSalesHistoryByMonth: Array<{ month: string; units: number }>;
   usProfitability?: MarketProfitability;
@@ -87,6 +89,8 @@ export type SeasonalInventoryCandidate = {
   caOverseasInventory: number;
   domesticInventory: number;
   pendingOrderQty: number;
+  domesticSupplyTotal?: number;
+  domesticSupplyBreakdownVerified?: boolean;
   projectedRemainingSummerSales: number;
   projectedDemandUnits: number;
   usProjectedDemandUnits: number;
@@ -172,6 +176,8 @@ export function buildSeasonalInventoryPlan(us: InventoryDashboardData, ca: Inven
       caOverseasInventory: caRow ? caRow.fbaSellable + caRow.awdAvailable + caRow.awdOutboundToFba : 0,
       domesticInventory: Math.max(usRow?.localInventory ?? 0, caRow?.localInventory ?? 0),
       pendingOrderQty: Math.max(usRow?.pendingOrderQty ?? 0, caRow?.pendingOrderQty ?? 0),
+      domesticSupplyTotal: (usRow ?? caRow)?.domesticSupplyTotal,
+      domesticSupplyBreakdownVerified: (usRow ?? caRow)?.domesticSupplyBreakdownVerified,
       usSalesHistoryByMonth: preferredHistory(usRow),
       caSalesHistoryByMonth: preferredHistory(caRow),
       usProfitability: profitabilityByMarketSku.get(`US:${sku}`),
@@ -257,27 +263,29 @@ export function analyzeSeasonalInventoryRow(row: CombinedSeasonalInventoryRowInp
   const usReplenishmentGap = Math.max(0, usProjection.reserveUnits - row.usOverseasInventory);
   const caReplenishmentGap = Math.max(0, caProjection.reserveUnits - row.caOverseasInventory);
   const totalMarketGap = usReplenishmentGap + caReplenishmentGap;
-  const domesticTransferQty = Math.min(row.domesticInventory, totalMarketGap);
+  const domesticVerified = row.domesticSupplyBreakdownVerified !== false;
+  const domesticTransferQty = domesticVerified ? Math.min(row.domesticInventory, totalMarketGap) : 0;
   const domesticAllocation = allocateCapped(domesticTransferQty, usReplenishmentGap, caReplenishmentGap);
   const usGapAfterDomestic = Math.max(0, usReplenishmentGap - domesticAllocation.US);
   const caGapAfterDomestic = Math.max(0, caReplenishmentGap - domesticAllocation.CA);
   const gapAfterDomestic = Math.max(0, totalMarketGap - domesticTransferQty);
-  const pendingCoverageQty = Math.min(row.pendingOrderQty, gapAfterDomestic);
-  const pendingAllocation = allocateCapped(pendingCoverageQty, usGapAfterDomestic, caGapAfterDomestic);
+  const pendingCoverageQty = domesticVerified ? Math.min(row.pendingOrderQty, gapAfterDomestic) : 0;
+  const domesticCoverageQty = domesticVerified ? pendingCoverageQty : Math.min(row.domesticSupplyTotal ?? 0, gapAfterDomestic);
+  const pendingAllocation = allocateCapped(domesticCoverageQty, usGapAfterDomestic, caGapAfterDomestic);
   const usUrgentReplenishmentQty = Math.max(0, usGapAfterDomestic - pendingAllocation.US);
   const caUrgentReplenishmentQty = Math.max(0, caGapAfterDomestic - pendingAllocation.CA);
-  const urgentReplenishmentQty = Math.max(0, gapAfterDomestic - pendingCoverageQty);
+  const urgentReplenishmentQty = Math.max(0, gapAfterDomestic - domesticCoverageQty);
   const replenishmentActionQty = domesticTransferQty + pendingCoverageQty + urgentReplenishmentQty;
 
   const usClearanceQty = isSummerSeasonal ? Math.max(0, row.usOverseasInventory - usProjection.reserveUnits) : 0;
   const caClearanceQty = isSummerSeasonal ? Math.max(0, row.caOverseasInventory - caProjection.reserveUnits) : 0;
   const overseasClearanceQty = usClearanceQty + caClearanceQty;
-  const domesticClearanceQty = isSummerSeasonal ? Math.max(0, row.domesticInventory - domesticTransferQty) : 0;
+  const domesticClearanceQty = isSummerSeasonal && domesticVerified ? Math.max(0, row.domesticInventory - domesticTransferQty) : 0;
   const currentClearanceQty = overseasClearanceQty + domesticClearanceQty;
-  const pendingMitigationQty = isSummerSeasonal ? Math.max(0, row.pendingOrderQty - pendingCoverageQty) : 0;
+  const pendingMitigationQty = isSummerSeasonal && domesticVerified ? Math.max(0, row.pendingOrderQty - pendingCoverageQty) : 0;
   const atRiskSupplyQty = currentClearanceQty + pendingMitigationQty;
-  const totalSupply = row.usOverseasInventory + row.caOverseasInventory + row.domesticInventory + row.pendingOrderQty;
-  const benchmarkTotalInventory = row.usOverseasInventory + row.caOverseasInventory + row.domesticInventory;
+  const totalSupply = row.usOverseasInventory + row.caOverseasInventory + (domesticVerified ? row.domesticInventory + row.pendingOrderQty : row.domesticSupplyTotal ?? 0);
+  const benchmarkTotalInventory = row.usOverseasInventory + row.caOverseasInventory + (domesticVerified ? row.domesticInventory : 0);
   const benchmarkMonthsOfSupply = benchmark.averageMonthlySales > 0 ? benchmarkTotalInventory / benchmark.averageMonthlySales : null;
   const isTwelveMonthSlowMover = benchmarkTotalInventory > 0 && (benchmarkMonthsOfSupply === null || benchmarkMonthsOfSupply >= 12);
   const riskRatio = totalSupply > 0 ? atRiskSupplyQty / totalSupply : 0;
@@ -332,6 +340,8 @@ export function analyzeSeasonalInventoryRow(row: CombinedSeasonalInventoryRowInp
     caOverseasInventory: row.caOverseasInventory,
     domesticInventory: row.domesticInventory,
     pendingOrderQty: row.pendingOrderQty,
+    domesticSupplyTotal: row.domesticSupplyTotal,
+    domesticSupplyBreakdownVerified: row.domesticSupplyBreakdownVerified,
     projectedRemainingSummerSales: round(usProjection.projectedUnits + caProjection.projectedUnits, 1),
     projectedDemandUnits: round(usProjection.projectedUnits + caProjection.projectedUnits, 1),
     usProjectedDemandUnits: round(usProjection.projectedUnits, 1),
@@ -351,8 +361,8 @@ export function analyzeSeasonalInventoryRow(row: CombinedSeasonalInventoryRowInp
     caReplenishmentGap,
     usDomesticTransferQty: domesticAllocation.US,
     caDomesticTransferQty: domesticAllocation.CA,
-    usPendingCoverageQty: pendingAllocation.US,
-    caPendingCoverageQty: pendingAllocation.CA,
+    usPendingCoverageQty: domesticVerified ? pendingAllocation.US : 0,
+    caPendingCoverageQty: domesticVerified ? pendingAllocation.CA : 0,
     usUrgentReplenishmentQty,
     caUrgentReplenishmentQty,
     domesticTransferQty,

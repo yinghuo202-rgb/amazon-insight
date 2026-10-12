@@ -13,11 +13,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from ..db import StateDb
-from ..report_versions import _json_write, current_reports, report_transaction
+from ..report_versions import VERSION_RE, _json_write, current_reports, report_transaction
 from .gerpgo_advertising import aggregate_advertising, attach_advertising
 
 TASK_RE = re.compile(r"[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}")
-MARKETS = {"amazon-us": ("US", "USD"), "amazon-ca": ("CA", "CAD"), "amazon-mx": ("MX", "MXN")}
+MARKETS = {"amazon-us": ("US", "USD"), "amazon-ca": ("CA", "CAD")}
 MONEY = {"productSales": "orderProductSalesAmount", "actualProfit": "salesNetProfitAmount",
          "grossProfit": "salesGrossProfitAmount", "advertisingCost": "adsSpendAmount",
          "advertisingSales": "adsSalesAmount", "storageCost": "storageFeeAmount",
@@ -46,11 +46,17 @@ def task_folder(runtime: Path, task_id: str) -> Path:
 
 def pages(folder: Path, source: dict) -> list[dict]:
     name, count, total = source["name"], source["pages"], source["total"]
-    if not re.fullmatch(r"shops|products|fba|(?:performance|returns|storage)-\d{4}-\d{2}|ads-\d+-\d{4}-\d{2}-\d{2}", name) or type(count) is not int or not 1 <= count <= 10000 or type(total) is not int or total < 0:
+    if not re.fullmatch(r"shops|products|fba|performance-(?:\d+-)?\d{4}-\d{2}|(?:returns|storage)-\d{4}-\d{2}|ads-\d+-\d{4}-\d{2}-\d{2}", name) or type(count) is not int or not 1 <= count <= 10000 or type(total) is not int or total < 0:
         raise ValueError("分页清单无效")
+    hashes = source.get("pageHashes")
+    if hashes is not None and (not isinstance(hashes, list) or len(hashes) != count or [h.get("page") for h in hashes] != list(range(1, count + 1))):
+        raise ValueError("分页 SHA 清单不完整")
     rows, seen = [], set()
     for number in range(1, count + 1):
-        page = json.loads((folder / f"{name}-{number}.json").read_text(encoding="utf-8"))
+        raw = (folder / f"{name}-{number}.json").read_bytes()
+        if hashes is not None and hashes[number - 1].get("sha256") != hashlib.sha256(raw).hexdigest():
+            raise ValueError("分页 SHA 不一致")
+        page = json.loads(raw)
         items = page.get("rows")
         if page.get("page") != number or page.get("total") != total or not isinstance(items, list) or len(items) > 100:
             raise ValueError("暂存分页不完整或总数变化")
@@ -71,6 +77,10 @@ def pages(folder: Path, source: dict) -> list[dict]:
         actual = len(markets)
     if actual != total:
         raise ValueError("暂存记录数与接口总数不符")
+    for item in source.get("attemptEvidence", []):
+        filename = item.get("filename", "")
+        if not re.fullmatch(re.escape(name) + r"-attempt-(?:100|99|97)-\d+\.json", filename) or hashlib.sha256((folder / filename).read_bytes()).hexdigest() != item.get("sha256"):
+            raise ValueError("广告原始分页 SHA 不一致")
     return rows
 
 
@@ -117,7 +127,7 @@ def resolve_store_scope(shops: list[dict], name: str) -> dict:
         raise ValueError("指定店铺站点标识缺失或重复")
     selected_ids = [s["marketId"] for s in matches if s.get("market") in MARKETS]
     if not selected_ids:
-        raise ValueError("指定店铺没有本站纳入的 US、CA、MX 站点")
+        raise ValueError("指定店铺没有本站纳入的 US、CA 站点")
     return {"storeName": matches[0]["serverName"].strip(), "serverId": matches[0]["serverId"], "marketIds": sorted(selected_ids)}
 
 
@@ -140,7 +150,17 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         expected_months.add(f"performance-{absolute // 12:04d}-{absolute % 12 + 1:02d}")
     mode = manifest.get("collectionMode", "legacy")
     sales_only = mode in {"sales", "sales_ads"}
-    required = {"shops", "products", *expected_months} | (set() if sales_only else {"fba"})
+    listing_contract = manifest.get("performanceContract") == "listing-market-v1"
+    if manifest.get("performanceContract") not in (None, "listing-market-v1"):
+        raise ValueError("经营采集契约无效")
+    if listing_contract:
+        market_ids = (manifest.get("storeScope") or {}).get("marketIds")
+        if not sales_only or not isinstance(market_ids, list) or not market_ids or any(type(i) is not int or i <= 0 for i in market_ids):
+            raise ValueError("分站点经营采集缺少店铺范围")
+        expected_performance = {f"performance-{i}-{name.removeprefix('performance-')}" for name in expected_months for i in market_ids}
+    else:
+        expected_performance = expected_months
+    required = {"shops", "products", *expected_performance} | (set() if sales_only else {"fba"})
     extra_pattern = r"ads-\d+-\d{4}-\d{2}-\d{2}" if mode == "sales_ads" else (r"(?!)" if mode == "sales" else r"(?:returns|storage)-\d{4}-\d{2}|ads(?:-\d+-\d{4}-\d{2}-\d{2})?")
     if len(sources) != len(manifest["sources"]) or not required.issubset(sources) or any(not re.fullmatch(extra_pattern, name) for name in set(sources) - required):
         raise ValueError("采集来源缺失或重复")
@@ -208,43 +228,89 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
                 excluded_markets[identity] = shop["market"]
             else:
                 raise ValueError("店铺站点字段结构变化")
-    products = set()
+    products, declared_aliases = set(), defaultdict(set)
     for product in pages(folder, sources["products"]):
         sku = product.get("sku")
         if isinstance(sku, str) and sku.strip():
             products.add(sku.strip())
+            for alias in [sku, *(product.get("mskuList") or [])]:
+                if isinstance(alias, str) and alias.strip():
+                    declared_aliases[alias.strip()].add(sku.strip())
     grouped, scopes, excluded_counts = defaultdict(list), set(), defaultdict(int)
+    skipped_identity_records, resolved_identity_records, scope_dates, financial_links = [], [], {}, {}
     for name, source in sorted(sources.items()):
         if not name.startswith("performance-"):
             continue
-        month = name.removeprefix("performance-")
+        month = name[-7:]
         year, mon = map(int, month.split("-"))
         start = f"{month}-01"
         end = min(f"{month}-{calendar.monthrange(year, mon)[1]:02d}", captured.date().isoformat())
         if source.get("condition", {}).get("beginDate") != start or source["condition"].get("endDate") != end or start > end:
             raise ValueError("经营期间不是整月或当月截至采集日")
-        for market, _ in markets.values():
+        scoped_market_id = None
+        if listing_contract:
+            scoped_market_id = int(name.split("-")[1])
+            required_condition = {"beginDate": start, "endDate": end, "marketList": [scoped_market_id], "showCurrencyType": "YUAN", "isShowTotal": False, "groupByType": "seller_sku"}
+            if source.get("endpoint") != "/operation/sts/listingAnalyzeMultiIndex/page" or source.get("condition") != required_condition or scoped_market_id not in selected_ids:
+                raise ValueError("经营分站点接口或范围不匹配")
+        for market, _ in ([markets[str(scoped_market_id)]] if scoped_market_id else markets.values()):
             scopes.add((market, month))
-        for index, row in enumerate(pages(folder, source), 1):
+            scope_dates[(market, month)] = end
+        source_rows = pages(folder, source)
+        asin_links = defaultdict(lambda: defaultdict(list))
+        msku_links = defaultdict(lambda: defaultdict(list))
+        if listing_contract:
+            for evidence_index, evidence_row in enumerate(source_rows, 1):
+                sku, asin = evidence_row.get("sku"), evidence_row.get("asin")
+                if (evidence_row.get("isParent") not in (True, 1) and isinstance(sku, str) and sku.strip() in products
+                        and evidence_row.get("serverId") == selected_scope["serverId"] and evidence_row.get("marketId") == scoped_market_id
+                        and evidence_row.get("countryName") == markets[str(scoped_market_id)][0]):
+                    if isinstance(asin, str) and asin.strip():
+                        asin_links[(evidence_row["serverId"], evidence_row["marketId"], asin)][sku.strip()].append(evidence_index)
+                    if isinstance(evidence_row.get("msku"), str) and evidence_row["msku"]:
+                        msku_links[evidence_row["msku"]][sku.strip()].append(evidence_index)
+            financial_links[(markets[str(scoped_market_id)][0], month)] = {"source": name, "marketId": scoped_market_id, "msku": msku_links, "asin": asin_links}
+        for index, row in enumerate(source_rows, 1):
             try:
                 if row.get("isParent") in (True, 1):
                     ignored += 1
                     continue
                 identity = str(row.get("marketId", ""))
+                if listing_contract and (row.get("marketId") != scoped_market_id or row.get("serverId") != selected_scope["serverId"] or row.get("countryName") != markets[str(scoped_market_id)][0]):
+                    raise ValueError("经营记录店铺或站点与请求范围不一致")
                 if identity in excluded_markets:
                     excluded_counts[excluded_markets[identity]] += 1
                     continue
                 mapping = markets.get(identity)
                 if mapping is None:
-                    raise ValueError("店铺站点未映射（支持 US、CA、MX）")
+                    raise ValueError("店铺站点未映射（支持 US、CA）")
                 market, currency = mapping
                 original_currency = source["condition"].get("showCurrencyType") == "YUAN"
                 if row.get("currency") not in (None, "", currency) and not (original_currency and row["currency"] == "YUAN"):
                     raise ValueError("记录币种与站点原币种不一致")
                 sku = row.get("sku")
+                if listing_contract and (not isinstance(sku, str) or sku.strip() not in products):
+                    if any(row.get(key) is not None and not isinstance(row[key], str) for key in ["sku", "asin", "msku", "productName"]):
+                        raise ValueError("产品标识字段结构变化")
+                    candidates = asin_links.get((row.get("serverId"), row.get("marketId"), row.get("asin")), {})
+                    if len(candidates) > 1:
+                        raise ValueError("同月同店铺站点 ASIN 对应多个 SKU，不能确认关联")
+                    if len(candidates) == 1:
+                        sku = next(iter(candidates))
+                        resolved_identity_records.append({"source": name, "row": index, "original": {key: row.get(key) for key in ("sku", "msku", "asin")}, "resolvedSku": sku,
+                            "basis": {"rule": "same-source-provider-asin", "serverId": row["serverId"], "marketId": row["marketId"], "asin": row["asin"], "reportMonth": month, "supportingRows": candidates[sku]}})
+                    else:
+                        zero_core = (number(row.get("unitsOrdered"), True) == 0 and number(row.get("orderProductSales")) == 0
+                                     and money(row, "orderProductSalesAmount", currency) == 0 and number(row.get("adsSpend")) == 0
+                                     and money(row, "adsSpendAmount", currency) == 0 and number(row.get("returns"), True) == 0)
+                        if zero_core:
+                            reason = "身份缺失" if not any(row.get(key) not in (None, "") for key in ("sku", "msku", "asin")) else "SKU 未在产品主数据匹配且无同月同店铺站点 ASIN 明确关联"
+                            skipped_identity_records.append({"source": name, "row": index, "reason": reason + "，销售件数/销售额/广告花费/退货均为零；利润未核验，原始记录仅归档，不参与经营统计", "record": row})
+                            continue
+                        raise ValueError("SKU 未在产品主数据匹配且无明确关联，核心事实非零或缺失，不能跳过")
                 if not isinstance(sku, str) or sku.strip() not in products:
                     raise ValueError("SKU 未在积加产品主数据中精确匹配")
-                values = {key: money(row, field, currency, original_currency=original_currency) for key, field in MONEY.items()}
+                values = {key: money(row, field, currency, original_currency=original_currency and not listing_contract) for key, field in MONEY.items()}
                 # Missing primary facts block publication; optional facts remain null.
                 units, returns = number(row.get("unitsOrdered"), True), number(row.get("returns"), True)
                 if units is None or values["productSales"] is None:
@@ -270,16 +336,100 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         item.update(market=market, currency=currency, reportMonth=month, sku=sku, sourceTaskId=task_id,
                     productName=records[0]["productName"], asin=records[0]["asin"] if len({r["asin"] for r in records}) == 1 else "",
                     msku=records[0]["msku"] if len({r["msku"] for r in records}) == 1 else "", currentPrice=None, sourceKind="gerpgo",
-                    quality={"profitVerified": False, "returnsVerified": False, "completePeriod": month < captured.strftime("%Y-%m"), "businessAsOf": sources["performance-" + month]["condition"]["endDate"]})
+                    quality={"profitVerified": False, "returnsVerified": False, "completePeriod": month < captured.strftime("%Y-%m"), "businessAsOf": scope_dates[(market, month)]})
         normalized.append(item)
     active = current_reports(root)
-    previous = []
+    previous, financial_sources = [], []
     for filename in ["profitability.json", "gerpgo-performance.json"]:
         file = active / filename
         if file.exists():
             data = json.loads(file.read_text(encoding="utf-8"))
+            financial_sources.append((filename, hashlib.sha256(file.read_bytes()).hexdigest(), data.get("rows", [])))
+            version = data.get("publication", {}).get("version") if filename.startswith("gerpgo") else None
+            if listing_contract and isinstance(version, str) and VERSION_RE.fullmatch(version):
+                snapshot = Path(os.environ.get("STORE_OPS_SNAPSHOT_ROOT") or runtime / "snapshots") / version / "reports" / filename
+                if snapshot.is_file():
+                    financial_sources.insert(0, (f"snapshot:{version}/{filename}", hashlib.sha256(snapshot.read_bytes()).hexdigest(), json.loads(snapshot.read_text(encoding="utf-8")).get("rows", [])))
             replaced = {(s["market"], s["reportMonth"]) for s in data.get("scopes", [])} if filename.startswith("gerpgo") else set()
             previous = [r for r in previous if (r["market"], r["reportMonth"]) not in replaced] + data.get("rows", [])
+    previous_by_key = {(r["market"], r["reportMonth"], r["sku"], r.get("currency")): r for r in previous}
+    for row in normalized:
+        if listing_contract:
+            # The listing contract resolves and compares every verified source below.
+            continue
+        old = previous_by_key.get((row["market"], row["reportMonth"], row["sku"], row["currency"]))
+        if not old:
+            continue
+        if old.get("quality", {}).get("profitVerified") is True:
+            for field in ("actualProfit", "grossProfit"):
+                row[field] = old.get(field)
+            row["quality"]["profitVerified"] = True
+            row["actualMargin"] = row["actualProfit"] / row["productSales"] if row["actualProfit"] is not None and row["productSales"] > 0 else None
+        if old.get("quality", {}).get("returnsVerified") is True:
+            row["returns"] = old.get("returns")
+            row["quality"]["returnsVerified"] = True
+    inherited_facts, unresolved_facts = [], []
+    if listing_contract:
+        normalized_by_key = {(r["market"], r["reportMonth"], r["sku"], r["currency"]): r for r in normalized}
+        target_facts = defaultdict(list)
+        for source_report, source_sha, historical in reversed(financial_sources):
+            for old in historical:
+                market, month, old_sku, currency = old["market"], old["reportMonth"], old["sku"], old.get("currency")
+                if (market, month) not in scopes or currency != dict(MARKETS.values()).get(market):
+                    continue
+                old_key = (market, month, old_sku, currency)
+                flags = [flag for flag in ("profitVerified", "returnsVerified") if old.get("quality", {}).get(flag) is True]
+                if not flags:
+                    continue
+                target = normalized_by_key.get(old_key)
+                evidence = financial_links[(market, month)]
+                basis = {"rule": "exact-report-key", "source": evidence["source"], "serverId": selected_scope["serverId"], "marketId": evidence["marketId"], "supportingRows": []}
+                if target is None:
+                    alias = old.get("msku") or old_sku
+                    matched = {sku: list(rows) for sku, rows in evidence["msku"].get(alias, {}).items() if sku in declared_aliases.get(alias, set())}
+                    asin = old.get("asin")
+                    for sku, rows in evidence["asin"].get((selected_scope["serverId"], evidence["marketId"], asin), {}).items():
+                        matched.setdefault(sku, []).extend(rows)
+                    if len(matched) > 1:
+                        issues.append({"source": source_report, "row": 0, "reason": "已核验利润/退货的同月同站点明确关联对应多个 SKU，不能迁移"})
+                        continue
+                    if len(matched) == 1:
+                        sku = next(iter(matched))
+                        target = normalized_by_key.get((market, month, sku, currency))
+                        basis.update(rule="declared-alias-and-same-source-provider-identity", alias=alias, asin=asin, supportingRows=sorted(set(matched[sku])))
+                if target is None:
+                    unresolved_facts.append({"market": market, "reportMonth": month, "oldSku": old_sku, "currency": currency, "sourceReport": source_report, "sourceSha256": source_sha,
+                        "verifiedFacts": {field: old.get(field) for field in ("actualProfit", "grossProfit", "returns", "quality")}, "reason": "无同月同站点唯一明确关联；核验事实保留在原报告及标准快照，不创造当前销售或件数"})
+                    continue
+                for flag, fields in [("profitVerified", ("actualProfit", "grossProfit")), ("returnsVerified", ("returns",))]:
+                    if flag not in flags:
+                        continue
+                    target_key = (market, month, target["sku"], currency)
+                    target_facts[(target_key, flag)].append({"oldKey": old_key, "sourceReport": source_report, "sourceSha256": source_sha,
+                        "basis": basis, "values": {field: old.get(field) for field in fields}})
+        audit_by_origin = {}
+        for (target_key, flag), facts in target_facts.items():
+            target = normalized_by_key[target_key]
+            first = facts[0]
+            if any(fact["values"] != first["values"] for fact in facts[1:]):
+                issues.append({"source": first["sourceReport"], "row": 0, "reason": "同月同站点目标 SKU 的已核验事实冲突，不能相加或选择首条",
+                    "target": {"market": target_key[0], "reportMonth": target_key[1], "sku": target_key[2], "currency": target_key[3]}, "flag": flag,
+                    "sourceKeys": [list(key) for key in sorted({fact["oldKey"] for fact in facts})]})
+                continue
+            target.update(first["values"])
+            target["quality"][flag] = True
+            origin = (target_key, first["oldKey"], first["sourceReport"])
+            if origin not in audit_by_origin:
+                audit_by_origin[origin] = {"market": target_key[0], "reportMonth": target_key[1], "oldSku": first["oldKey"][2], "sku": target_key[2], "currency": target_key[3],
+                    "sourceReport": first["sourceReport"], "sourceSha256": first["sourceSha256"], "basis": first["basis"],
+                    "verifiedFacts": {"profitVerified": False, "returnsVerified": False}, "consistentSources": []}
+            audit = audit_by_origin[origin]
+            audit["verifiedFacts"].update(first["values"])
+            audit["verifiedFacts"][flag] = True
+            audit["consistentSources"].append({"flag": flag, "rule": "verified-field-values-identical", "sources": [
+                {"oldKey": list(fact["oldKey"]), "sourceReport": fact["sourceReport"], "sourceSha256": fact["sourceSha256"]} for fact in facts]})
+            target["actualMargin"] = target["actualProfit"] / target["productSales"] if target["actualProfit"] is not None and target["productSales"] > 0 else None
+        inherited_facts.extend(audit_by_origin.values())
     differences, reasons = [], ["首次或手动发布须人工对账；利润、退货口径确认单独进行"]
     for market, month in sorted(scopes):
         old = [r for r in previous if (r["market"], r["reportMonth"]) == (market, month)]
@@ -305,7 +455,8 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
     warehouses = {s.get("warehouseName") for s in all_shops if selected_ids is not None and s["marketId"] in selected_ids and isinstance(s.get("warehouseName"), str)}
     selected_skus = {row["sku"] for row in normalized} | {r["sku"].strip() for r in (pages(folder, sources["fba"]) if "fba" in sources else []) if r.get("warehouseName") in warehouses and isinstance(r.get("sku"), str)}
     ad_sources = [{**source, "records": pages(folder, source)} for source in successful.values() if source["name"].startswith("ads-")]
-    advertising = aggregate_advertising(ad_sources, pages(folder, sources["products"]), markets, captured.isoformat()) if ad_sources else None
+    scoped_products = [r for r in pages(folder, sources["products"]) if isinstance(r.get("sku"), str) and r["sku"].strip() in selected_skus]
+    advertising = aggregate_advertising(ad_sources, scoped_products, markets, captured.isoformat()) if ad_sources else None
     if advertising:
         selected_skus.update(row["sku"] for row in advertising["rows"])
     def selected_records(source):
@@ -331,8 +482,12 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         archived_sources.append({**source, "queryTotal": source["total"], "selectedRecordCount": len(records), "records": records})
     source_data = {"schemaVersion": 1, "sourceTaskId": task_id, "capturedAt": captured.isoformat(),
                    "sources": archived_sources,
+                   "skippedIdentityRecords": skipped_identity_records,
+                   "resolvedIdentityRecords": resolved_identity_records,
+                   "verifiedFactInheritance": inherited_facts, "unresolvedVerifiedFacts": unresolved_facts,
                    "incomplete": [source for source in sources.values() if source.get("status", "completed") != "completed"]}
     evidence_files = [folder / "manifest.json"] + [folder / f"{name}-{page}.json" for name, source in sorted(successful.items()) for page in range(1, source["pages"] + 1)]
+    evidence_files += [folder / item["filename"] for source in successful.values() for item in source.get("attemptEvidence", [])]
     evidence = [{"sourceTaskId": task_id, "file": file.name, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()} for file in evidence_files]
     report = {"schemaVersion": 1, "sourceTaskId": task_id, "generatedAt": captured.isoformat(), "scopes": [{"market": m, "reportMonth": p} for m, p in sorted(scopes)], "rows": normalized, "evidence": evidence}
     if sales_only:
@@ -350,6 +505,10 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
                    + ([f"店铺范围：{selected_scope['storeName']}；站点 {', '.join(sorted({m for m, _ in markets.values()}))}；其他店铺不参与统计"] if selected_scope else [])
                    + (["本批为核心采集；逐日广告、退货明细和仓储明细尚未采集，可另行发起全量采集"] if manifest.get("deferredDomains") else [])
                    + [f"页面范围外：{market}，{count} 条经营记录；原始证据保留，不混入当前店铺统计" for market, count in sorted(excluded_counts.items())]
+                   + ([f"身份缺失或 SKU 未映射的零核心事实记录：{len(skipped_identity_records)} 条已明确跳过并私有归档；利润未核验，不计入已核验利润"] if skipped_identity_records else [])
+                   + ([f"同月同店铺站点 ASIN 明确关联：{len(resolved_identity_records)} 条已归并，原始 SKU/MSKU/ASIN 与关联依据私有归档；利润仍须核验"] if resolved_identity_records else [])
+                   + ([f"已核验利润/退货兼容：{len(inherited_facts)} 条按同月同站点明确身份继承，旧 SKU、核验值、来源 SHA 与支持记录私有归档"] if inherited_facts else [])
+                   + ([f"已核验历史事实未迁移：{len(unresolved_facts)} 条缺少同月同站点唯一关联，保留原报告和标准快照，不补造当前销量或销售额"] if unresolved_facts else [])
                    + [f"未完成：{s['name']}；{s.get('error', '待核验')}" for s in source_data["incomplete"][:20]]}
     if sales_only:
         preview["withheld"][0] = "本轮仅同步销售及广告；不采集 FBA、退货明细、仓储明细或历史发货，不覆盖本地库存和发货记录"
@@ -397,8 +556,6 @@ def publish(runtime: Path, request: dict) -> dict:
             raise ValueError("采集原始证据已变化，请重新拉取")
     root = runtime / "reports"
     automatic = request.get("automatic") is True
-    environment_authorized = bool(os.environ.get("GERPGO_APP_ID", "").strip() and os.environ.get("GERPGO_APP_KEY", "").strip()
-                                  and configured_name and (os.environ.get("GERPGO_AUTO_SYNC", "").strip() or "true") == "true")
     def guard():
         if not request.get("taskId") or not request.get("lease"):
             raise ValueError("发布任务缺少有效 worker 租约")
@@ -431,10 +588,8 @@ def publish(runtime: Path, request: dict) -> dict:
         previous = json.loads(file.read_text(encoding="utf-8")) if file.exists() else {"scopes": [], "rows": []}
         prior_publication = previous.get("publication", {})
         initial_review = prior_publication.get("initialReview")
-        if not initial_review and prior_publication.get("actor") == "shared-account":
-            initial_review = {"storeScope": previous.get("storeScope"), "reviewedAt": prior_publication.get("reviewedAt"), "sourceTaskId": previous.get("sourceTaskId")}
         if automatic:
-            authorized_scope = (previous.get("storeScope") or candidate.get("storeScope")) if environment_authorized else (initial_review or {}).get("storeScope")
+            authorized_scope = (initial_review or {}).get("storeScope")
             if not candidate.get("storeScope") or authorized_scope != candidate.get("storeScope"):
                 raise ValueError("首次或店铺范围变化须人工对账，已保留差异预览")
             if any(item.get("protected") for item in preview["differences"]):
@@ -445,8 +600,8 @@ def publish(runtime: Path, request: dict) -> dict:
             if not narrowing:
                 raise ValueError("已发布积加数据属于不同店铺范围，需先核对和回退，不允许混合历史")
         replaced = {(s["market"], s["reportMonth"]) for s in candidate["scopes"]}
-        candidate["rows"] = [r for r in previous["rows"] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
-        candidate["scopes"] = [s for s in previous["scopes"] if s["market"] in allowed_markets and (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
+        candidate["rows"] = [r for r in previous["rows"] if (r["market"], r["reportMonth"]) not in replaced] + candidate["rows"]
+        candidate["scopes"] = [s for s in previous["scopes"] if (s["market"], s["reportMonth"]) not in replaced] + candidate["scopes"]
         candidate["evidence"] = previous.get("evidence", []) + candidate["evidence"]
         previous_ads = previous.get("advertising")
         if previous_ads:
@@ -455,13 +610,27 @@ def publish(runtime: Path, request: dict) -> dict:
                 candidate["advertising"] = previous_ads
             else:
                 ad_scopes = {(s["market"], s["reportMonth"]) for s in new_ads["scopes"]}
+                retained_rows = [r for r in previous_ads["rows"] if (r["market"], r["reportMonth"]) not in ad_scopes]
+                retained_skus = {r["sku"] for r in retained_rows}
+                identities = list(new_ads["identities"]) + [i for i in previous_ads.get("identities", []) if i["sku"] in retained_skus]
+                alias_owners, merged_aliases = {}, defaultdict(set)
+                for identity in identities:
+                    sku, aliases = identity.get("sku"), identity.get("aliases")
+                    if not isinstance(sku, str) or not sku or not isinstance(aliases, list) or any(not isinstance(a, str) or not a for a in aliases):
+                        raise ValueError("广告历史关联身份格式无效，请重新对账")
+                    for alias in aliases:
+                        if alias in alias_owners and alias_owners[alias] != sku:
+                            raise ValueError("广告历史关联别名冲突，不允许同一别名对应多个 SKU")
+                        alias_owners[alias] = sku
+                        merged_aliases[sku].add(alias)
+                if not retained_skus.issubset(merged_aliases):
+                    raise ValueError("广告历史记录缺少明确关联身份，请重新对账")
+                new_ads["identities"] = [{"sku": sku, "aliases": sorted(aliases)} for sku, aliases in sorted(merged_aliases.items())]
                 for key in ("scopes", "rows"):
-                    new_ads[key] = [r for r in previous_ads[key] if r["market"] in allowed_markets and (r["market"], r["reportMonth"]) not in ad_scopes] + new_ads[key]
+                    new_ads[key] = [r for r in previous_ads[key] if (r["market"], r["reportMonth"]) not in ad_scopes] + new_ads[key]
         reviewed_at = datetime.now(timezone.utc).isoformat()
         candidate["publication"] = {"version": version, "actor": "scheduled-worker" if automatic else "shared-account", "previewHash": request["previewHash"], "baseline": preview["baseline"], "reviewedAt": reviewed_at,
                                     "initialReview": initial_review if automatic else {"storeScope": candidate.get("storeScope"), "reviewedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}}
-        if automatic and environment_authorized:
-            candidate["publication"]["initialAuthorization"] = prior_publication.get("initialAuthorization") or {"actor": "environment-policy", "storeScope": candidate.get("storeScope"), "authorizedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}
         _json_write(file, candidate)
         if source_data is not None:
             source_data["publication"] = candidate["publication"]

@@ -22,6 +22,79 @@ def dashboard(market: str):
 
 
 class UploadedDataTests(unittest.TestCase):
+    def test_confirmed_wps_actual_inventory_adds_skus_without_double_counting_or_history_loss(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = replace(load_config(Path(__file__).parents[1] / "config/project.json"), runtime_root=root)
+            reports = root / "reports"
+            reports.mkdir()
+            old = dashboard("US")
+            old["snapshots"] = {"fbaDate": "2026-07-14", "awdDate": "2026-06-26", "staleAfterDays": 14}
+            old["rows"][0]["pendingOrders"] = [{"poNumber": "manual-kept"}]
+            old["rows"][0]["salesHistoryByMonth"] = [{"month": "2026-09", "units": 17}]
+            old["rows"].append({**old["rows"][0], "sku": "MA003"})
+            (reports / "inventory_dashboard.json").write_text(json.dumps(old))
+            (reports / "inventory_dashboard.ca.json").write_text(json.dumps(dashboard("CA")))
+            history = {"shipmentHistory": [{"manual": True}], "purchaseOrderLots": [{"manual": True}]}
+            (reports / "document_master.json").write_text(json.dumps(history))
+            book = openpyxl.Workbook()
+            us = book.active
+            us.title = "库存规划"
+            us.append(["SKU", "品名", "工厂", "箱规", "工厂库存及已下订单", "FBA库存", "AWD备货", "FBA+在途库存", "最近月销售", "参考月销"])
+            us.append(["MA001", "真实名称", "工厂甲", 12, 30, 20, 8, 50, 60, 50])
+            us.append(["MA002", "新增产品", "工厂乙", 24, 10, 3, 2, 10, 30, 20])
+            ca = book.create_sheet("加拿大库存计划 ")
+            ca.append(["SKU", "品名", "工厂库存及已下订单", "FBA库存", "FBA+在途库存", "最近月销"])
+            ca.append(["MA001", "加拿大", 999, 15, 45, 30])
+            source = root / "wps-inventory-20261012.xlsx"
+            book.save(source)
+            before = source.read_bytes()
+            unconfirmed = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123")
+            publish_batch(root / "uploads" / unconfirmed["batchId"], reports, root / "snapshots")
+            planning = json.loads((current_reports(reports) / "inventory_dashboard.json").read_text())
+            self.assertEqual(planning["rows"][0]["fbaSellable"], 5)
+            self.assertEqual(planning["snapshots"]["fbaDate"], "2026-07-14")
+            self.assertEqual(len(planning["rows"]), 2)
+            self.assertTrue(planning["snapshots"]["businessDateUnknown"])
+            preview = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", confirmed_inventory_date="2026-10-12", inventory_scope="actual")
+            self.assertEqual(preview["source"]["confirmedInventoryDate"], "2026-10-12")
+            published = publish_batch(root / "uploads" / preview["batchId"], reports, root / "snapshots")
+            current = current_reports(reports)
+            us_report = json.loads((current / "inventory_dashboard.json").read_text())
+            rows = {row["sku"]: row for row in us_report["rows"]}
+            self.assertEqual(rows["MA001"]["inTransitInventory"], 22)
+            self.assertEqual(rows["MA001"]["awdAvailable"], 8)
+            self.assertEqual(rows["MA001"]["domesticSupplyTotal"], 30)
+            self.assertEqual(rows["MA001"]["localInventory"], 10)
+            self.assertEqual(rows["MA001"]["pendingOrderQty"], 2)
+            self.assertEqual(rows["MA001"]["readyToShipQty"], 0)
+            self.assertEqual(rows["MA001"]["pendingOrders"], [{"poNumber": "manual-kept"}])
+            self.assertEqual(rows["MA001"]["salesHistoryByMonth"], [{"month": "2026-09", "units": 17}])
+            self.assertEqual(rows["MA001"]["inventorySnapshotDate"], "2026-10-12")
+            self.assertEqual(rows["MA003"]["inventorySnapshotDate"], "2026-07-14")
+            self.assertEqual(rows["MA002"]["salesHistoryByMonth"], [])
+            self.assertEqual(rows["MA002"]["factory"], "工厂乙")
+            self.assertEqual(rows["MA002"]["cartonQty"], 24)
+            self.assertAlmostEqual(rows["MA002"]["dailySales"], 1)
+            self.assertFalse(rows["MA002"]["domesticSupplyBreakdownVerified"])
+            self.assertTrue(us_report["snapshots"]["inTransitConfirmed"])
+            self.assertTrue(us_report["snapshots"]["awdAvailableConfirmed"])
+            self.assertEqual(next(item for item in us_report["sources"] if item["kind"] == "fba_inventory")["sha256"], preview["source"]["sha256"])
+            ca_report = json.loads((current / "inventory_dashboard.ca.json").read_text())
+            self.assertEqual(ca_report["rows"][0]["inTransitInventory"], 30)
+            self.assertEqual(ca_report["rows"][0]["domesticSupplyTotal"], 30)
+            self.assertEqual(json.loads((current / "document_master.json").read_text()), history)
+            self.assertEqual(source.read_bytes(), before)
+            self.assertEqual(set(published["updatedReports"]), {"inventory_dashboard.json", "inventory_dashboard.ca.json"})
+
+    def test_actual_wps_inventory_requires_explicit_valid_date_and_matching_scope(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = replace(load_config(Path(__file__).parents[1] / "config/project.json"), runtime_root=Path(folder))
+            for arguments in ({"inventory_scope": "actual"}, {"inventory_scope": "actual", "confirmed_inventory_date": "2026-02-30"},
+                              {"confirmed_inventory_date": "2026-10-12"}, {"inventory_scope": "unexpected"}):
+                with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                    receive_wps_download(config, Path(folder) / "not-read.xlsx", "https://www.kdocs.cn/l/Example123", **arguments)
+
     def test_authorized_wps_sync_requires_first_review_then_publishes_only_planning_with_valid_lease(self):
         import sqlite3
         with tempfile.TemporaryDirectory() as folder:

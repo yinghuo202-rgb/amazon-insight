@@ -85,16 +85,21 @@ class GerpgoPreviewTests(unittest.TestCase):
             publish(self.runtime, {"sourceTaskId": TASK, "previewHash": after["previewHash"], "automatic": True, "taskId": "publish-task", "lease": "lease"})
         self.assertEqual(current_reports(self.reports).parent.name, result["publishedVersion"])
 
-    def test_env_authorized_first_publish_is_automatic_not_a_fake_manual_review(self):
+    def test_env_credentials_do_not_authorize_first_automatic_publish_without_review(self):
         from unittest.mock import patch
         environment = {"GERPGO_APP_ID": "fixture-id", "GERPGO_APP_KEY": "fixture-key", "GERPGO_STORE_NAME": "MEASUREMAN", "GERPGO_AUTO_SYNC": "true"}
         with patch.dict(os.environ, environment):
             preview = self.scoped_preview()
+            with self.assertRaisesRegex(ValueError, "首次"):
+                publish(self.runtime, self.automatic_request(preview))
+            self.assertFalse((self.reports / "current.json").exists())
+            publish(self.runtime, self.approval(preview))
+            preview = self.scoped_preview()
             result = publish(self.runtime, self.automatic_request(preview))
             report = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
             self.assertEqual(report["publication"]["actor"], "scheduled-worker")
-            self.assertIsNone(report["publication"]["initialReview"])
-            self.assertEqual(report["publication"]["initialAuthorization"]["actor"], "environment-policy")
+            self.assertEqual(report["publication"]["initialReview"]["storeScope"], report["storeScope"])
+            self.assertNotIn("initialAuthorization", report["publication"])
             source = next(s for s in self.sources if s["name"] == "performance-" + self.previous_month)
             source_file = self.folder / f"{source['name']}-1.json"
             original = source_file.read_text()
@@ -103,11 +108,52 @@ class GerpgoPreviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "保护线"):
                 publish(self.runtime, self.automatic_request(protected))
             source_file.write_text(original)
-            next_preview = self.scoped_preview()
-            with patch.dict(os.environ, {"GERPGO_AUTO_SYNC": "false"}):
-                with self.assertRaisesRegex(ValueError, "首次"):
-                    publish(self.runtime, self.automatic_request(next_preview))
             self.assertEqual(current_reports(self.reports).parent.name, result["publishedVersion"])
+
+    def test_actor_or_env_authorization_metadata_cannot_replace_initial_review(self):
+        from unittest.mock import patch
+        preview = self.scoped_preview()
+        publish(self.runtime, self.approval(preview))
+        file = current_reports(self.reports) / "gerpgo-performance.json"
+        report = json.loads(file.read_text())
+        report["publication"]["initialReview"] = None
+        report["publication"]["initialAuthorization"] = {"actor": "environment-policy", "storeScope": report["storeScope"]}
+        file.write_text(json.dumps(report))
+        with patch.dict(os.environ, {"GERPGO_APP_ID": "fixture-id", "GERPGO_APP_KEY": "fixture-key", "GERPGO_STORE_NAME": "MEASUREMAN", "GERPGO_AUTO_SYNC": "true"}):
+            preview = self.scoped_preview()
+            with self.assertRaisesRegex(ValueError, "首次"):
+                publish(self.runtime, self.automatic_request(preview))
+
+    def historical_ads_preview(self, conflicting=False):
+        self.scoped_preview()
+        old_row = {"reportMonth": "2000-01", "currency": "USD", "market": "US", "sku": "SKU-A", "productName": "A", "cost": 1, "sales": 2,
+                   "clicks": 1, "impressions": 10, "orders": 1, "startDate": "2000-01-01", "businessAsOf": "2000-01-31", "recordCount": 1, "asins": ["A"], "mskus": ["US-HISTORY"]}
+        old_advertising = {"schemaVersion": 1, "capturedAt": "2000-02-01T00:00:00Z", "scopes": [
+            {"market": "US", "reportMonth": "2000-01"}, {"market": "MX", "reportMonth": "2000-01"}],
+            "rows": [old_row, {**old_row, "market": "MX", "currency": "MXN", "sku": "OLD-MX", "mskus": ["MX-HISTORY"]}],
+            "identities": [{"sku": "SKU-A", "aliases": ["US-HISTORY"]}, {"sku": "OLD-MX", "aliases": ["SKU-A" if conflicting else "MX-HISTORY"]}], "issues": []}
+        (self.reports / "gerpgo-performance.json").write_text(json.dumps({"schemaVersion": 1, "rows": [], "scopes": [], "advertising": old_advertising}))
+        for day in range(1, self.now.day + 1):
+            date = f"{self.month}-{day:02d}"
+            self.source("ads-1-" + date, [{"marketId": 1, "msku": "SKU-A", "asin": "A", "currencySymbol": "$", "cost": 1, "sales": 2}],
+                        {"marketId": 1, "startDateData": date, "endDateData": date})
+        self.manifest()
+        return build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+
+    def test_retained_historical_ads_rows_keep_their_explicit_identities(self):
+        preview = self.historical_ads_preview()
+        publish(self.runtime, self.approval(preview))
+        ads = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())["advertising"]
+        self.assertEqual(ads["identities"], [{"sku": "OLD-MX", "aliases": ["MX-HISTORY"]}, {"sku": "SKU-A", "aliases": ["SKU-A", "US-HISTORY"]}])
+        self.assertEqual({(r["market"], r["reportMonth"], r["sku"]) for r in ads["rows"]}, {("US", "2000-01", "SKU-A"), ("MX", "2000-01", "OLD-MX"), ("US", self.month, "SKU-A")})
+
+    def test_conflicting_retained_historical_ad_aliases_block_atomic_publication(self):
+        preview = self.historical_ads_preview(conflicting=True)
+        before = (self.reports / "gerpgo-performance.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "别名冲突"):
+            publish(self.runtime, self.approval(preview))
+        self.assertFalse((self.reports / "current.json").exists())
+        self.assertEqual((self.reports / "gerpgo-performance.json").read_bytes(), before)
 
     def test_recent_collection_preserves_older_history_and_protected_changes_stop_automatic_publish(self):
         preview = self.scoped_preview()
@@ -206,7 +252,7 @@ class GerpgoPreviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "指定店铺"):
             build_preview(self.runtime, TASK)
 
-    def test_narrowed_store_scope_removes_au_history_only_from_active_version(self):
+    def test_narrowed_store_scope_preserves_au_history_without_new_au_collection(self):
         shops = [{"marketListVos": [{"marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1}]}]
         (self.folder / "shops-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
         build_preview(self.runtime, TASK, store_name="MEASUREMAN")
@@ -220,12 +266,343 @@ class GerpgoPreviewTests(unittest.TestCase):
         preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
         result = publish(self.runtime, self.approval(preview))
         active = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
-        self.assertTrue(all(r["market"] == "US" for r in active["rows"]))
+        self.assertTrue(any(r["market"] == "AU" for r in active["rows"]))
         self.assertTrue(any(r["reportMonth"] == "2000-01" for r in active["rows"]))
         self.assertEqual(active["storeScope"]["marketIds"], [1])
         restore_reports(result["publishedVersion"], self.reports, self.runtime / "snapshots")
         restored = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
         self.assertTrue(any(r["market"] == "AU" for r in restored["rows"]))
+
+    def listing_manifest(self):
+        self.scoped_preview()
+        self.sales_manifest()
+        shops = [{"marketListVos": [
+            {"marketId": i, "market": market, "serverName": "MEASUREMAN", "serverId": 1}
+            for i, market in [(1, "amazon-us"), (2, "amazon-ca"), (3, "amazon-mx"), (17, "amazon-au")]]}]
+        (self.folder / "shops-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
+        old = [s for s in self.sources if s["name"].startswith("performance-")]
+        self.sources = [s for s in self.sources if not s["name"].startswith("performance-")]
+        for source in old:
+            month = source["name"].removeprefix("performance-")
+            for market_id, country, currency, sales in [(1, "US", "USD", 100), (2, "CA", "CAD", 40)]:
+                self.source(f"performance-{market_id}-{month}", [{**self.row(sales), "serverId": 1, "marketId": market_id, "countryName": country,
+                            "orderProductSalesAmount": {"currencyAmount": sales, "currencyCode": currency}}],
+                            {**source["condition"], "marketList": [market_id], "showCurrencyType": "YUAN", "isShowTotal": False, "groupByType": "seller_sku"})
+                self.sources[-1]["endpoint"] = "/operation/sts/listingAnalyzeMultiIndex/page"
+        self.manifest()
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest.update(collectionMode="sales", performanceContract="listing-market-v1", storeScope={"storeName": "MEASUREMAN", "serverId": 1, "marketIds": [1, 2]})
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+
+    def test_listing_market_contract_keeps_ca_currency_and_sales_separate(self):
+        self.listing_manifest()
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        rows = json.loads((self.folder / "candidate.json").read_text())["rows"]
+        self.assertEqual({(r["market"], r["currency"], r["productSales"]) for r in rows}, {("US", "USD", 100), ("CA", "CAD", 40)})
+
+    def test_listing_market_contract_rejects_wrong_store_country_and_currency(self):
+        self.listing_manifest()
+        name = f"performance-2-{self.month}"
+        original = json.loads((self.folder / f"{name}-1.json").read_text())
+        for patch in [{"serverId": 2}, {"countryName": "US"}, {"marketId": 1}, {"orderProductSalesAmount": {"currencyAmount": 40, "currencyCode": "YUAN"}}]:
+            (self.folder / f"{name}-1.json").write_text(json.dumps({**original, "rows": [{**original["rows"][0], **patch}]}))
+            self.assertTrue(build_preview(self.runtime, TASK, store_name="MEASUREMAN")["blocked"])
+
+    def test_listing_missing_ca_month_is_not_a_complete_sales_collection(self):
+        self.listing_manifest()
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["sources"] = [s for s in manifest["sources"] if s["name"] != f"performance-2-{self.previous_month}"]
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, "来源缺失"):
+            build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+
+    def test_declared_page_sha_is_verified_before_preview(self):
+        import hashlib
+        source = next(s for s in self.sources if s["name"] == "performance-" + self.month)
+        file = self.folder / f"{source['name']}-1.json"
+        source["pageHashes"] = [{"page": 1, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}]
+        self.manifest()
+        self.assertFalse(build_preview(self.runtime, TASK)["blocked"])
+        file.write_text(json.dumps({"page": 1, "total": 1, "rows": [self.row(150)]}))
+        with self.assertRaisesRegex(ValueError, "SHA"):
+            build_preview(self.runtime, TASK)
+
+    def test_listing_zero_core_identityless_record_is_archived_with_reason_not_verified_profit(self):
+        self.listing_manifest()
+        name = f"performance-1-{self.month}"
+        source = next(s for s in self.sources if s["name"] == name)
+        source["total"] = 2
+        original = json.loads((self.folder / f"{name}-1.json").read_text())
+        unknown = {**self.row(0), "serverId": 1, "countryName": "US", "sku": None, "msku": None, "asin": None, "unitsOrdered": 0, "orderProductSales": 0,
+                   "returns": 0, "adsSpend": 0, "adsSpendAmount": {"currencyAmount": 0, "currencyCode": "USD"}, "salesNetProfitAmount": {"currencyAmount": -12, "currencyCode": "USD"}}
+        (self.folder / f"{name}-1.json").write_text(json.dumps({**original, "total": 2, "rows": original["rows"] + [unknown]}))
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["sources"] = self.sources
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        archive = json.loads((self.folder / "candidate-source-data.json").read_text())
+        self.assertEqual(archive["skippedIdentityRecords"][0]["source"], name)
+        self.assertIn("利润未核验", archive["skippedIdentityRecords"][0]["reason"])
+        self.assertEqual(archive["skippedIdentityRecords"][0]["record"]["salesNetProfitAmount"]["currencyAmount"], -12)
+        self.assertTrue(any("身份缺失" in reason for reason in preview["withheld"]))
+        unknown["unitsOrdered"] = 1
+        (self.folder / f"{name}-1.json").write_text(json.dumps({**original, "total": 2, "rows": original["rows"] + [unknown]}))
+        self.assertTrue(build_preview(self.runtime, TASK, store_name="MEASUREMAN")["blocked"])
+
+    def replace_listing_rows(self, name, rows):
+        source = next(s for s in self.sources if s["name"] == name)
+        source["total"] = len(rows)
+        (self.folder / f"{name}-1.json").write_text(json.dumps({"page": 1, "total": len(rows), "rows": rows}))
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["sources"] = self.sources
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+
+    def linked_listing(self, sku="SKU-A", asin="ASIN-A", sales=100):
+        return {**self.row(sales), "serverId": 1, "countryName": "US", "sku": sku, "msku": sku, "asin": asin, "orderProductSales": sales,
+                "adsSpend": 5, "adsSpendAmount": {"currencyAmount": 5, "currencyCode": "USD"}, "adsSalesAmount": {"currencyAmount": 30, "currencyCode": "USD"}, "returns": 0}
+
+    def unknown_listing(self, ads=-2, asin="ASIN-A"):
+        return {**self.linked_listing("Amazon.Found.ASIN-A", asin, 0), "unitsOrdered": 0, "adsSpend": ads,
+                "adsSpendAmount": {"currencyAmount": ads, "currencyCode": "USD"}, "adsSalesAmount": {"currencyAmount": 4 if ads else 0, "currencyCode": "USD"},
+                "adsItemSalesAmount": {"currencyAmount": 3, "currencyCode": None}, "salesNetProfitAmount": {"currencyAmount": -12, "currencyCode": "USD"}}
+
+    def test_same_source_unique_provider_asin_link_preserves_nonzero_ad_adjustments(self):
+        self.listing_manifest()
+        name = f"performance-1-{self.month}"
+        # Evidence may appear after the unknown row; link from the complete source, not a prefix.
+        self.replace_listing_rows(name, [self.unknown_listing(), self.linked_listing()])
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        rows = json.loads((self.folder / "candidate.json").read_text())["rows"]
+        row = next(r for r in rows if r["market"] == "US" and r["reportMonth"] == self.month)
+        self.assertEqual((row["sku"], row["units"], row["productSales"], row["advertisingCost"], row["advertisingSales"]), ("SKU-A", 40, 100, 3, 34))
+        self.assertFalse(row["quality"]["profitVerified"])
+        archive = json.loads((self.folder / "candidate-source-data.json").read_text())
+        resolution = archive["resolvedIdentityRecords"][0]
+        self.assertEqual(resolution["original"], {"sku": "Amazon.Found.ASIN-A", "msku": "Amazon.Found.ASIN-A", "asin": "ASIN-A"})
+        self.assertEqual(resolution["resolvedSku"], "SKU-A")
+        self.assertEqual(resolution["basis"], {"rule": "same-source-provider-asin", "serverId": 1, "marketId": 1, "asin": "ASIN-A", "reportMonth": self.month, "supportingRows": [2]})
+
+    def test_same_source_asin_with_two_known_skus_remains_blocked_even_for_zero_core(self):
+        self.listing_manifest()
+        source = next(s for s in self.sources if s["name"] == "products")
+        source["total"] = 2
+        (self.folder / "products-1.json").write_text(json.dumps({"page": 1, "total": 2, "rows": [{"sku": "SKU-A"}, {"sku": "SKU-B"}]}))
+        self.replace_listing_rows(f"performance-1-{self.month}", [self.unknown_listing(ads=0), self.linked_listing(), self.linked_listing("SKU-B")])
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertIn("多个 SKU", preview["issues"][0]["reason"])
+
+    def test_provider_asin_links_do_not_cross_markets(self):
+        self.listing_manifest()
+        known_ca = {**self.linked_listing(), "marketId": 2, "countryName": "CA", "orderProductSalesAmount": {"currencyAmount": 100, "currencyCode": "CAD"},
+                    "adsSpendAmount": {"currencyAmount": 5, "currencyCode": "CAD"}, "adsSalesAmount": {"currencyAmount": 30, "currencyCode": "CAD"}}
+        self.replace_listing_rows(f"performance-2-{self.month}", [known_ca])
+        self.replace_listing_rows(f"performance-1-{self.month}", [self.unknown_listing(), self.linked_listing(asin="OTHER-ASIN")])
+        self.assertTrue(build_preview(self.runtime, TASK, store_name="MEASUREMAN")["blocked"])
+
+    def test_provider_asin_links_do_not_cross_months(self):
+        self.listing_manifest()
+        self.replace_listing_rows(f"performance-1-{self.previous_month}", [self.linked_listing()])
+        self.replace_listing_rows(f"performance-1-{self.month}", [self.unknown_listing(), self.linked_listing(asin="OTHER-ASIN")])
+        self.assertTrue(build_preview(self.runtime, TASK, store_name="MEASUREMAN")["blocked"])
+
+    def test_unlinked_unknown_sku_skips_only_complete_strict_zero_core_facts(self):
+        self.listing_manifest()
+        name = f"performance-1-{self.month}"
+        unknown = self.unknown_listing(ads=0)
+        self.replace_listing_rows(name, [unknown, self.linked_listing(asin="OTHER-ASIN")])
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        archive = json.loads((self.folder / "candidate-source-data.json").read_text())
+        self.assertIn("SKU 未在产品主数据", archive["skippedIdentityRecords"][0]["reason"])
+        self.assertEqual(archive["skippedIdentityRecords"][0]["record"]["sku"], "Amazon.Found.ASIN-A")
+        for change in [{"unitsOrdered": 1}, {"returns": None}, {"adsSpend": -0.73}, {"adsSpendAmount": None}, {"orderProductSalesAmount": {"currencyAmount": 0, "currencyCode": "CAD"}}]:
+            self.replace_listing_rows(name, [{**unknown, **change}, self.linked_listing(asin="OTHER-ASIN")])
+            self.assertTrue(build_preview(self.runtime, TASK, store_name="MEASUREMAN")["blocked"])
+
+    def test_advertising_aliases_only_use_products_explicitly_selected_for_current_store(self):
+        self.scoped_preview()
+        self.source("ads-1-" + self.month + "-01", [{"marketId": 1, "msku": "SKU-A", "asin": "A", "currencySymbol": "$", "cost": 1, "sales": 2}],
+                    {"marketId": 1, "startDateData": self.month + "-01", "endDateData": self.month + "-01"})
+        # Restrict capture to the first day so this fixture is a complete ad period.
+        for source in self.sources:
+            if source["name"] == "performance-" + self.month:
+                source["condition"]["endDate"] = self.month + "-01"
+            if source["name"] == "products":
+                source["total"] = 2
+        (self.folder / "products-1.json").write_text(json.dumps({"page": 1, "total": 2, "rows": [{"sku": "SKU-A"}, {"sku": "OTHER-STORE", "mskuList": ["SKU-A"]}]}))
+        self.manifest()
+        manifest = json.loads((self.folder / "manifest.json").read_text())
+        manifest["capturedAt"] = self.month + "-01T00:00:00+00:00"
+        (self.folder / "manifest.json").write_text(json.dumps(manifest))
+        preview = build_preview(self.runtime, TASK, now=datetime.fromisoformat(manifest["capturedAt"]), store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        ads = json.loads((self.folder / "candidate.json").read_text())["advertising"]
+        self.assertEqual(ads["issues"], [])
+        self.assertEqual(ads["rows"][0]["sku"], "SKU-A")
+
+    def test_replaced_sales_month_preserves_historically_verified_profit_and_returns(self):
+        preview = self.scoped_preview()
+        publish(self.runtime, self.approval(preview))
+        current = current_reports(self.reports) / "gerpgo-performance.json"
+        report = json.loads(current.read_text())
+        record = next(r for r in report["rows"] if r["reportMonth"] == self.previous_month)
+        record.update(actualProfit=25, grossProfit=30, returns=3, actualMargin=.25)
+        record["quality"].update(profitVerified=True, returnsVerified=True)
+        current.write_text(json.dumps(report))
+        preview = self.scoped_preview()
+        publish(self.runtime, self.approval(preview))
+        report = json.loads((current_reports(self.reports) / "gerpgo-performance.json").read_text())
+        record = next(r for r in report["rows"] if r["reportMonth"] == self.previous_month)
+        self.assertEqual((record["actualProfit"], record["returns"], record["quality"]["profitVerified"], record["quality"]["returnsVerified"]), (25, 3, True, True))
+
+    def legacy_finance_row(self, market="US", month=None):
+        return {"market": market, "reportMonth": month or self.previous_month, "sku": "LEGACY", "currency": "USD" if market == "US" else "CAD",
+                "units": 40, "productSales": 100, "actualProfit": 25, "grossProfit": 30, "returns": 3, "sourceKind": "excel",
+                "quality": {"profitVerified": True, "returnsVerified": True, "completePeriod": True}}
+
+    def prepare_financial_alias(self, *, month=None, ambiguous=False):
+        self.listing_manifest()
+        source = next(s for s in self.sources if s["name"] == "products")
+        products = [{"sku": "SKU-A", "mskuList": ["LEGACY"]}]
+        rows = [{**self.linked_listing(), "msku": "LEGACY"}]
+        if ambiguous:
+            products.append({"sku": "SKU-B", "mskuList": ["LEGACY"]})
+            rows.append({**self.linked_listing("SKU-B", "ASIN-B"), "msku": "LEGACY"})
+        source["total"] = len(products)
+        (self.folder / "products-1.json").write_text(json.dumps({"page": 1, "total": len(products), "rows": products}))
+        self.replace_listing_rows(f"performance-1-{month or self.previous_month}", rows)
+
+    def test_declared_alias_and_same_month_listing_msku_inherit_verified_financial_facts(self):
+        self.prepare_financial_alias()
+        old = self.legacy_finance_row()
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [old]}))
+        # A prior provider generation must not hide the unchanged verified Excel baseline.
+        provider = {**old, "sku": "SKU-A", "actualProfit": None, "grossProfit": None, "returns": None, "quality": {"profitVerified": False, "returnsVerified": False}}
+        (self.reports / "gerpgo-performance.json").write_text(json.dumps({"scopes": [{"market": "US", "reportMonth": self.previous_month}], "rows": [provider]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        candidate = json.loads((self.folder / "candidate.json").read_text())
+        row = next(r for r in candidate["rows"] if r["market"] == "US" and r["reportMonth"] == self.previous_month)
+        self.assertEqual((row["sku"], row["productSales"], row["actualProfit"], row["grossProfit"], row["returns"]), ("SKU-A", 100, 25, 30, 3))
+        self.assertTrue(row["quality"]["profitVerified"])
+        self.assertTrue(row["quality"]["returnsVerified"])
+        audit = json.loads((self.folder / "candidate-source-data.json").read_text())["verifiedFactInheritance"]
+        self.assertEqual(audit[0]["oldSku"], "LEGACY")
+        self.assertEqual(audit[0]["sku"], "SKU-A")
+        self.assertEqual(audit[0]["basis"]["source"], f"performance-1-{self.previous_month}")
+        self.assertEqual(audit[0]["basis"]["supportingRows"], [1])
+        self.assertEqual(audit[0]["verifiedFacts"], {"actualProfit": 25, "grossProfit": 30, "returns": 3, "profitVerified": True, "returnsVerified": True})
+
+    def test_linked_standard_snapshot_restores_verified_returns_not_in_profitability(self):
+        self.prepare_financial_alias()
+        version = "data-20261012-000000-test"
+        legacy = self.legacy_finance_row()
+        legacy["actualProfit"] = None
+        legacy["grossProfit"] = None
+        legacy["quality"]["profitVerified"] = False
+        snapshot = self.runtime / "snapshots" / version / "reports"
+        snapshot.mkdir(parents=True)
+        (snapshot / "gerpgo-performance.json").write_text(json.dumps({"rows": [legacy]}))
+        (self.reports / "gerpgo-performance.json").write_text(json.dumps({"scopes": [], "rows": [], "publication": {"version": version}}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        row = next(r for r in json.loads((self.folder / "candidate.json").read_text())["rows"] if r["market"] == "US" and r["reportMonth"] == self.previous_month)
+        self.assertEqual(row["returns"], 3)
+        self.assertTrue(row["quality"]["returnsVerified"])
+        self.assertFalse(row["quality"]["profitVerified"])
+        audit = json.loads((self.folder / "candidate-source-data.json").read_text())["verifiedFactInheritance"]
+        self.assertEqual(audit[0]["sourceReport"], f"snapshot:{version}/gerpgo-performance.json")
+
+    def test_declared_same_month_msku_link_does_not_require_an_asin(self):
+        self.prepare_financial_alias()
+        self.replace_listing_rows(f"performance-1-{self.previous_month}", [{**self.linked_listing(), "msku": "LEGACY", "asin": None}])
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row()]}))
+        build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        row = next(r for r in json.loads((self.folder / "candidate.json").read_text())["rows"] if r["market"] == "US" and r["reportMonth"] == self.previous_month)
+        self.assertEqual((row["actualProfit"], row["returns"]), (25, 3))
+
+    def test_verified_financial_aliases_do_not_cross_month_or_market(self):
+        self.prepare_financial_alias(month=self.month)
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row(), self.legacy_finance_row(market="CA", month=self.month)]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        rows = json.loads((self.folder / "candidate.json").read_text())["rows"]
+        self.assertTrue(all(not r["quality"]["profitVerified"] and not r["quality"]["returnsVerified"] for r in rows))
+        archive = json.loads((self.folder / "candidate-source-data.json").read_text())
+        self.assertEqual(len(archive["unresolvedVerifiedFacts"]), 2)
+
+    def test_ambiguous_verified_financial_aliases_block_without_migrating_fields(self):
+        self.prepare_financial_alias(ambiguous=True)
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row()]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertTrue(any("已核验" in issue["reason"] and "多个 SKU" in issue["reason"] for issue in preview["issues"]))
+
+    def test_two_legacy_keys_resolving_to_one_sku_with_different_verified_facts_block_publication(self):
+        self.prepare_financial_alias()
+        products = [{"sku": "SKU-A", "mskuList": ["LEGACY", "LEGACY-2"]}]
+        (self.folder / "products-1.json").write_text(json.dumps({"page": 1, "total": 1, "rows": products}))
+        self.replace_listing_rows(f"performance-1-{self.previous_month}", [{**self.linked_listing(), "msku": alias} for alias in ["LEGACY", "LEGACY-2"]])
+        file = self.reports / "profitability.json"
+        file.write_text(json.dumps({"rows": [self.legacy_finance_row(), {**self.legacy_finance_row(), "sku": "LEGACY-2", "actualProfit": 19, "returns": 7}]}))
+        original = file.read_bytes()
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertTrue(any("核验事实冲突" in issue["reason"] for issue in preview["issues"]))
+        with self.assertRaises(ValueError):
+            publish(self.runtime, self.approval(preview))
+        self.assertEqual(file.read_bytes(), original)
+        self.assertFalse((self.reports / "current.json").exists())
+
+    def test_exact_target_key_does_not_hide_conflicting_verified_alias_facts(self):
+        self.prepare_financial_alias()
+        exact = {**self.legacy_finance_row(), "sku": "SKU-A", "actualProfit": 19, "returns": 7}
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row()]}))
+        provider = self.reports / "gerpgo-performance.json"
+        provider.write_text(json.dumps({"scopes": [{"market": "US", "reportMonth": self.previous_month}], "rows": [exact]}))
+        original = provider.read_bytes()
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertTrue(any("核验事实冲突" in issue["reason"] for issue in preview["issues"]))
+        with self.assertRaises(ValueError):
+            publish(self.runtime, self.approval(preview))
+        self.assertEqual(provider.read_bytes(), original)
+
+    def test_duplicate_same_legacy_key_with_different_verified_values_is_not_first_wins(self):
+        self.prepare_financial_alias()
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row(), {**self.legacy_finance_row(), "actualProfit": 19}]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertTrue(any("核验事实冲突" in issue["reason"] for issue in preview["issues"]))
+
+    def test_same_verified_key_conflicting_between_reports_blocks_instead_of_using_priority(self):
+        self.prepare_financial_alias()
+        (self.reports / "profitability.json").write_text(json.dumps({"rows": [self.legacy_finance_row()]}))
+        (self.reports / "gerpgo-performance.json").write_text(json.dumps({"scopes": [], "rows": [{**self.legacy_finance_row(), "actualProfit": 19}]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertTrue(preview["blocked"])
+        self.assertTrue(any("核验事实冲突" in issue["reason"] for issue in preview["issues"]))
+
+    def test_consistent_exact_and_alias_facts_deduplicate_with_all_source_keys_and_hashes(self):
+        import hashlib
+        self.prepare_financial_alias()
+        alias = self.reports / "profitability.json"
+        exact = self.reports / "gerpgo-performance.json"
+        alias.write_text(json.dumps({"rows": [self.legacy_finance_row()]}))
+        exact.write_text(json.dumps({"scopes": [], "rows": [{**self.legacy_finance_row(), "sku": "SKU-A"}]}))
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertFalse(preview["blocked"])
+        row = next(r for r in json.loads((self.folder / "candidate.json").read_text())["rows"] if r["market"] == "US" and r["reportMonth"] == self.previous_month)
+        self.assertEqual((row["actualProfit"], row["grossProfit"], row["returns"]), (25, 30, 3))
+        audit = json.loads((self.folder / "candidate-source-data.json").read_text())["verifiedFactInheritance"]
+        for flag in ["profitVerified", "returnsVerified"]:
+            sources = next(group["sources"] for item in audit for group in item["consistentSources"] if group["flag"] == flag)
+            self.assertEqual({tuple(s["oldKey"]) for s in sources}, {("US", self.previous_month, "LEGACY", "USD"), ("US", self.previous_month, "SKU-A", "USD")})
+            self.assertEqual({s["sourceSha256"] for s in sources}, {hashlib.sha256(alias.read_bytes()).hexdigest(), hashlib.sha256(exact.read_bytes()).hexdigest()})
 
     def test_old_au_preview_cannot_be_published(self):
         preview = build_preview(self.runtime, TASK)

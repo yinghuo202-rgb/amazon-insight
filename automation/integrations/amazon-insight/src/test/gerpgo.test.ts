@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { checkGerpgoConnection, createGerpgoClient, getGerpgoConfigurationStatus } from "@/lib/inventory/gerpgo";
+import { checkGerpgoConnection, collectGerpgoPages, createGerpgoClient, getGerpgoConfigurationStatus } from "@/lib/inventory/gerpgo";
 
 const env = { GERPGO_APP_ID: "test-app-id", GERPGO_APP_KEY: "test-private-key" };
 const token = { code: 200, data: { accessToken: "test-private-token", expiresIn: 86400 } };
@@ -8,6 +8,20 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 const mockFetch = (...responses: Response[]) => vi.fn<typeof fetch>().mockImplementation(async () => responses.shift()!);
 
 describe("GERPgo read-only connection check", () => {
+  it("retries business code 509 through the real client without exposing provider messages", async () => {
+    const fetcher = mockFetch(json(token), json({ code: 509, messages: ["private-provider-details"] }), json({ code: 200, data: { rows: [], total: 0 } }));
+    const client = await createGerpgoClient(env, fetcher);
+    const pauses: number[] = [];
+    expect(await collectGerpgoPages(client, "/operation/sts/listingAnalyzeMultiIndex/page", { marketList: [1] }, async () => {}, { pause: async ms => { pauses.push(ms); } })).toEqual({ pages: 1, total: 0 });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(pauses).toEqual([6000, 6000]);
+    const bounded = mockFetch(json(token), ...Array.from({ length: 3 }, () => json({ code: 509, messages: ["private-provider-details"] })));
+    const failing = await createGerpgoClient(env, bounded);
+    const error = await collectGerpgoPages(failing, "/operation/sts/listingAnalyzeMultiIndex/page", { marketList: [1] }, async () => {}, { pause: async () => {} }).catch(value => value);
+    expect(error).toMatchObject({ httpStatus: 509 });
+    expect(String(error)).not.toContain("private-provider-details");
+    expect(bounded).toHaveBeenCalledTimes(4);
+  });
   it("renews an expiring token once, keeping it inside the server client", async () => {
     vi.useFakeTimers();
     try {

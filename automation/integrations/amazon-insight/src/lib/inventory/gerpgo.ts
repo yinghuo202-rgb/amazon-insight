@@ -2,7 +2,6 @@
 import { createHash, createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
-import { operatingMarkets } from "@/lib/inventory/operating-performance";
 
 type Environment = Record<string, string | undefined>;
 export type GerpgoSettingsStatus = {
@@ -152,8 +151,8 @@ export function resolveGerpgoStoreScope(sellers: Record<string, unknown>[], stor
   if (!shops.length || serverIds.size !== 1 || !Number.isSafeInteger([...serverIds][0]) || [...serverIds][0] <= 0) throw new GerpgoConnectionError("指定店铺未找到或店铺名称对应多个身份，请核对积加店铺配置。", 422);
   const marketIds = shops.map(shop => shop.marketId);
   if (marketIds.some(id => !Number.isSafeInteger(id) || id <= 0) || new Set(marketIds).size !== marketIds.length) throw new GerpgoConnectionError("指定店铺的站点标识缺失或重复，不能确认范围。", 422);
-  const included = shops.filter(shop => operatingMarkets.some(market => shop.market === `amazon-${market.toLowerCase()}`)).map(shop => shop.marketId);
-  if (!included.length) throw new GerpgoConnectionError("指定店铺没有本站纳入的 US、CA、MX 站点。", 422);
+  const included = shops.filter(shop => ["amazon-us", "amazon-ca"].includes(shop.market)).map(shop => shop.marketId);
+  if (!included.length) throw new GerpgoConnectionError("指定店铺没有本站纳入的 US、CA 站点。", 422);
   return { storeName: shops[0].serverName.trim() as string, serverId: shops[0].serverId as number, marketIds: included.sort((a, b) => a - b) as number[] };
 }
 
@@ -182,7 +181,7 @@ export async function createGerpgoClient(env: Environment = process.env, fetcher
     try { value = await response.json(); }
     catch { throw new GerpgoConnectionError("积加返回了无效响应，请检查接口服务状态。"); }
     const result = object(value);
-    if (!result || result.code !== 200) throw new GerpgoConnectionError(`积加${stage}未通过；请核对 appId/appKey、NAS 公网出口 IP 白名单和开放平台权限。`, result?.code === 401 || result?.code === 403 || result?.code === 429 ? result.code : 502);
+    if (!result || result.code !== 200) throw new GerpgoConnectionError(`积加${stage}未通过；请核对 appId/appKey、NAS 公网出口 IP 白名单和开放平台权限。`, result?.code === 401 || result?.code === 403 || result?.code === 429 || result?.code === 509 ? result.code : 502);
     const data = object(result.data);
     if (!data) throw new GerpgoConnectionError("积加响应缺少有效数据，请检查接口服务状态。");
     const extra = object(result.extObj);
@@ -217,9 +216,75 @@ export async function createGerpgoClient(env: Environment = process.env, fetcher
 
 export const gerpgoPageEndpoints = new Set([
   "/middle/base/market/page", "/purchase/goods/product/page",
-  "/operation/sts/productAnalyzeMultiIndex/page", "/purchase/store/fbaInventory/page/V2",
+  "/operation/sts/productAnalyzeMultiIndex/page", "/operation/sts/listingAnalyzeMultiIndex/page", "/purchase/store/fbaInventory/page/V2",
   "/operation/ads/adsAsinAnalytical/page", "/operation/sale/returnOrder/page", "/finance/asset/storageFee/page",
 ]);
+
+/** Listing statistics support marketList; the older product endpoint does not. */
+export function gerpgoPerformanceSources(scopes: Array<{ condition: Record<string, unknown> }>, marketIds: number[]) {
+  if (marketIds.some(id => ![1, 2].includes(id))) throw new GerpgoConnectionError("本轮经营采集仅支持 MEASUREMAN 的 US、CA 站点。", 422);
+  return scopes.flatMap(scope => [...new Set(marketIds)].map(marketId => ({
+    name: `performance-${marketId}-${String(scope.condition.beginDate).slice(0, 7)}`,
+    endpoint: "/operation/sts/listingAnalyzeMultiIndex/page",
+    condition: { beginDate: scope.condition.beginDate, endDate: scope.condition.endDate, marketList: [marketId], showCurrencyType: "YUAN", isShowTotal: false, groupByType: "seller_sku" },
+  })));
+}
+
+type GerpgoPage = { rows: Record<string, unknown>[]; page: number; total: number; totalUnit?: "markets" };
+type CollectionOptions = { pause?: (ms: number) => Promise<void>; intervalMs?: number; maxPages?: number;
+  onAttemptPage?: (page: GerpgoPage & { pagesize: number; sha256: string }) => Promise<void> };
+
+async function pacedGerpgoPost(client: Awaited<ReturnType<typeof createGerpgoClient>>, endpoint: string, payload: unknown, options: CollectionOptions) {
+  const pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try { return await client.post(endpoint, payload); }
+    catch (error) {
+      if (!(error instanceof GerpgoConnectionError) || ![429, 509].includes(error.httpStatus) || attempt === 2) throw error;
+    } finally {
+      // Provider limits are response-to-next-request, not request-start pacing.
+      await pause(Math.max(6000, options.intervalMs ?? 6000));
+    }
+  }
+}
+
+/** Ads can have unstable page boundaries. Only an exact, consistent key union is complete. */
+async function collectAdvertisingPages(client: Awaited<ReturnType<typeof createGerpgoClient>>, endpoint: string, condition: Record<string, unknown>, onPage: (page: GerpgoPage) => Promise<void>, options: CollectionOptions) {
+  const records = new Map<string, { row: Record<string, unknown>; hash: string }>();
+  const pageSizes: number[] = [], attempts: Array<{ page: number; pagesize: number; total: number; rowCount: number; sha256: string }> = [];
+  let expected: number | undefined, duplicateRecords = 0;
+  for (const pagesize of [100, 99, 97]) {
+    pageSizes.push(pagesize);
+    for (let page = 1; page <= (options.maxPages ?? 10000); page++) {
+      const data = await pacedGerpgoPost(client, endpoint, { ...condition, page, pagesize }, options);
+      const total = data.total;
+      const raw = page === 1 && total === 0 && data.rows === null ? [] : data.rows;
+      if (!Number.isSafeInteger(total) || (total as number) < 0 || !Array.isArray(raw) || raw.length > pagesize || raw.some(row => !object(row)) || data.page !== undefined && Number(data.page) !== page) throw new GerpgoConnectionError("积加广告分页格式变化，已停止采集。");
+      if (expected !== undefined && expected !== total) throw new GerpgoConnectionError("积加分页总数发生变化，请重新拉取完整批次。");
+      expected = total as number;
+      if (page < Math.ceil(expected / pagesize) && raw.length !== pagesize) throw new GerpgoConnectionError("积加广告分页缺失，不能确认完整性。");
+      const sha256 = createHash("sha256").update(JSON.stringify(raw)).digest("hex");
+      attempts.push({ page, pagesize, total: expected, rowCount: raw.length, sha256 });
+      await options.onAttemptPage?.({ page, pagesize, total: expected, rows: raw, sha256 });
+      for (const row of raw) {
+        if (row.marketId !== condition.marketId || typeof row.msku !== "string" || !row.msku.trim() || row.asin !== undefined && row.asin !== null && typeof row.asin !== "string") throw new GerpgoConnectionError("积加广告业务键缺失或站点不匹配。");
+        const key = JSON.stringify([row.marketId, row.msku, row.asin ?? ""]), hash = createHash("sha256").update(JSON.stringify(row)).digest("hex");
+        const previous = records.get(key);
+        if (previous && previous.hash !== hash) throw new GerpgoConnectionError("积加广告重复业务键内容不一致，不能发布。");
+        if (previous) duplicateRecords++; else records.set(key, { row, hash });
+      }
+      if (records.size > expected) throw new GerpgoConnectionError("积加广告业务键总数超过接口总数，不能发布。");
+      if (page >= Math.max(1, Math.ceil(expected / pagesize))) break;
+      if (page === (options.maxPages ?? 10000)) throw new GerpgoConnectionError("积加分页超过采集上限，批次未完成。");
+    }
+    if (records.size === expected) {
+      const all = [...records.values()].map(value => value.row), pages = Math.max(1, Math.ceil(all.length / 100));
+      for (let page = 1; page <= pages; page++) await onPage({ page, total: expected!, rows: all.slice((page - 1) * 100, page * 100) });
+      // Preserve the familiar result for non-recovery batches; raw attempts are always private evidence.
+      return { pages, total: expected!, ...(duplicateRecords ? { paginationAudit: { complete: true, pageSizes, duplicateRecords, attempts } } : {}) };
+    }
+  }
+  throw new GerpgoConnectionError("积加广告在 100/99/97 分页后业务键总数仍不完整，旧报告未修改。");
+}
 
 /** Supplemental now means advertising only; local supply-chain history is independent. */
 export function gerpgoSupplementalSources(scopes: Array<{ condition: Record<string, unknown> }>, marketIds: number[]) {
@@ -238,28 +303,17 @@ export function gerpgoSupplementalSources(scopes: Array<{ condition: Record<stri
 /** Full collection fails closed on drift, duplicate pages, missing rows or invalid totals. */
 export async function collectGerpgoPages(
   client: Awaited<ReturnType<typeof createGerpgoClient>>, endpoint: string,
-  condition: Record<string, unknown>, onPage: (page: { rows: Record<string, unknown>[]; page: number; total: number; totalUnit?: "markets" }) => Promise<void>,
-  options: { pause?: (ms: number) => Promise<void>; intervalMs?: number; maxPages?: number } = {},
+  condition: Record<string, unknown>, onPage: (page: GerpgoPage) => Promise<void>,
+  options: CollectionOptions = {},
 ) {
-  const pause = options.pause ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  if (endpoint === "/operation/ads/adsAsinAnalytical/page") return collectAdvertisingPages(client, endpoint, condition, onPage, options);
   const maxPages = options.maxPages ?? 10000, pagesize = 100;
   let expected: number | undefined, collected = 0;
   let expectedUnit: "rows" | "markets" | undefined;
   const hashes = new Set<string>(), recordHashes = new Set<string>();
   for (let page = 1; page <= maxPages; page++) {
-    // Conservative sequential rate, below the documented shop/product/FBA limits.
-    await pause(options.intervalMs ?? 1200);
-    let data: Record<string, unknown> | undefined;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const payload = endpoint === "/middle/base/market/page" ? { page, pagesize, condition } : { ...condition, page, pagesize };
-        data = await client.post(endpoint, payload); break;
-      }
-      catch (error) {
-        if (!(error instanceof GerpgoConnectionError) || error.httpStatus !== 429 || attempt === 2) throw error;
-        await pause(2000 * 2 ** attempt);
-      }
-    }
+    const payload = endpoint === "/middle/base/market/page" ? { page, pagesize, condition } : { ...condition, page, pagesize };
+    const data = await pacedGerpgoPost(client, endpoint, payload, options);
     const total = data?.total;
     // Observed official ASIN response for a zero-record market: total=0, rows=null.
     // Never normalize missing rows, nonzero totals or later pages to an empty success.

@@ -41,6 +41,8 @@ export function buildInventoryPlanningViewModel(data: InventoryDashboardData) {
       inTransitInventory: row.inTransitInventory,
       localInventory: row.localInventory,
       pendingOrderQty: row.pendingOrderQty,
+      domesticSupplyTotal: row.domesticSupplyTotal,
+      domesticSupplyBreakdownVerified: row.domesticSupplyBreakdownVerified,
       salesByMonth: row.salesByMonth,
       salesHistoryByMonth: row.salesHistoryByMonth,
     })),
@@ -59,8 +61,8 @@ export function calculatePlanningRows(
       ...row,
       dailySales,
       ...decision,
-      readyToShipQty: Math.min(row.localInventory, decision.suggestedShipmentQty),
-      suggestedProductionQty: Math.max(0, decision.suggestedShipmentQty - row.localInventory - row.pendingOrderQty),
+      readyToShipQty: row.domesticSupplyBreakdownVerified === false ? 0 : Math.min(row.localInventory, decision.suggestedShipmentQty),
+      suggestedProductionQty: Math.max(0, decision.suggestedShipmentQty - (row.domesticSupplyBreakdownVerified === false ? row.domesticSupplyTotal : row.localInventory + row.pendingOrderQty)),
     };
   });
 }

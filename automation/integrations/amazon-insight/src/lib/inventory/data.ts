@@ -98,7 +98,10 @@ export function applyPurchaseOrderReviews(data: InventoryDashboardData, reviews:
       poDate: order.poDate,
     })));
     const pendingOrderQty = pendingOrders.reduce((sum, order) => sum + order.remainingQuantity, 0);
-    const domesticSupplyTotal = row.localInventory + pendingOrderQty;
+    // Canceling a historical PO changes the history, not a confirmed WPS supply snapshot.
+    const domesticSupplyTotal = row.domesticSupplyBreakdownVerified === false
+      ? row.domesticSupplyTotal
+      : row.localInventory + pendingOrderQty;
     return {
       ...row,
       pendingOrders,

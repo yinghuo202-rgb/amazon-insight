@@ -28,7 +28,8 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
   const model = page.model, currency = page.currency, snapshot = model.snapshots.find(item => item.market === market);
   const { revenue, profit, units, returns, adSales, adCost, advertising, coverage, delta } = page.summary;
   const search = query.trim(), shown = model.rows, loading = market !== page.market || period !== page.period || query.trim().toLowerCase() !== page.query || filter !== page.filter || sort !== page.sort;
-  const context = { filter, query, sort, origin: brief ? "brief" : "overview" };
+  const context = { filter, query, sort, origin: brief ? "brief" : "overview", returnPeriod: period };
+  const focusPeriod = page.focusPeriod || period;
   function remember() {
     if (loading) return;
     returnPages.set(pageKey(page, brief), { page, scroll: window.scrollY });
@@ -107,10 +108,10 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       <div className="ops-overview-grid">
         <OperatingTrend page={page} />
         <aside aria-label="重点关注" className="ops-focus-panel ops-surface">
-          <div className="flex items-start justify-between gap-3"><div><h2 className="ops-section-title">本月重点关注</h2><p className="ops-subtext mt-2">按经营金额影响排序</p></div><span className="ops-status">{page.priorities.length} 项重点</span></div>
-          <ul className="mt-4">{page.priorities.map((item, index) => <li key={item.listingId}><Link onClick={remember} href={skuOperatingHref(item.sku, market, period, { ...context, filter: item.filter, returnFilter: filter })} className="ops-focus-row"><span className="ops-focus-index">{String(index + 1).padStart(2, "0")}</span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold">{issueLabel(item.title)} · {item.sku}</span><span className="ops-subtext mt-1 block">{item.impactBasis} {money(item.impact, currency)}</span></span><ArrowRight size={15} /></Link></li>)}</ul>
-          {page.priorities.length === 0 && <p className="ops-subtext py-10 text-center">本期暂无触发提醒的 SKU</p>}
-          <div className="ops-focus-footer"><span className="ops-subtext">在简报中查看经营依据</span><Link className="ops-text-link" href={`/inventory/brief?market=${market}&period=${period}`}>查看简报 <ArrowRight size={14} /></Link></div>
+          <div className="flex items-start justify-between gap-3"><div><h2 className="ops-section-title">重点关注</h2><p className="ops-subtext mt-2">{page.focusPeriod ? `${page.focusPeriod} 经营 · 当前库存风险` : "当前库存风险 · 暂无完整经营月"}</p></div><span className="ops-status">{page.priorities.length} 项重点</span></div>
+          <ul className="mt-4">{page.priorities.map((item, index) => <li key={item.listingId}><Link onClick={remember} href={skuOperatingHref(item.sku, market, item.period, { ...context, filter: item.filter, returnFilter: filter })} className="ops-focus-row"><span className="ops-focus-index">{String(index + 1).padStart(2, "0")}</span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold">{item.fact.split(" · ").map(issueLabel).join(" · ")} · {item.sku}</span><span className="ops-subtext mt-1 block">{`经营 ${item.operatingPeriod || "—"} · 库存 ${item.inventoryDate || "—"}${item.inventoryDate && !item.stockFresh ? "（过期或日期待核验）" : ""}`}</span><span className="ops-subtext mt-1 block">{item.suggestion}</span>{item.impact !== null && <span className="ops-subtext mt-1 block">{item.impactBasis} {money(item.impact, currency)}</span>}</span><ArrowRight size={15} /></Link></li>)}</ul>
+          {page.priorities.length === 0 && <p className="ops-subtext py-10 text-center">暂无触发提醒的 SKU</p>}
+          <div className="ops-focus-footer"><span className="ops-subtext">查看完整关注清单与依据</span><Link className="ops-text-link" href={`/inventory/brief?market=${market}&period=${focusPeriod}&filter=focus`}>查看简报 <ArrowRight size={14} /></Link></div>
         </aside>
       </div>
       {advertising && <section aria-label="广告表现" className="ops-ad-strip ops-surface">
@@ -121,7 +122,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       {!advertising && <section aria-label="辅助经营指标" className="ops-surface grid grid-cols-2 gap-4 p-5"><Metric label="退货率" value={percent(units !== null && units > 0 && returns !== null ? returns / units : null)} /><Metric label="供应达标占比" value={percent(coverage)} /></section>}
 
     </>}
-    {!brief && !loading && <nav aria-label="经营变化入口" className="flex flex-wrap gap-2">{([["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).filter(([kind]) => page.counts[kind] > 0).map(([kind, label]) => <Link key={kind} href={`/inventory/brief?market=${market}&period=${period}&filter=${kind}`} className="inline-flex min-h-11 items-center rounded-full bg-white px-4 text-sm text-[#0071e3]">{label} · {page.counts[kind]}</Link>)}</nav>}
+    {!brief && !loading && <nav aria-label="经营变化入口" className="flex flex-wrap gap-2">{([["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).filter(([kind]) => page.counts[kind] > 0).map(([kind, label]) => <Link key={kind} href={`/inventory/brief?market=${market}&period=${focusPeriod}&filter=${kind}`} className="inline-flex min-h-11 items-center rounded-full bg-white px-4 text-sm text-[#0071e3]">{label} · {page.counts[kind]}</Link>)}</nav>}
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold tracking-tight">{brief ? "SKU 经营卡片" : "查看一个 SKU"}</h2>{!brief && <Link href={`/inventory/brief?market=${market}&period=${period}&query=${encodeURIComponent(query)}`} className="text-sm text-[#0071e3]">浏览经营简报</Link>}</div>
       <div className="ops-search-toolbar grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_170px_170px]">
@@ -130,8 +131,8 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
         <select aria-label="经营排序" value={sort} onChange={event => { setSort(event.target.value); reset(); }} className={fieldClass + " w-full"}><option value="impact">按经营影响</option><option value="revenue">按销售额</option><option value="margin">按利润率升序</option></select>
       </div>
       {brief && <div className="ops-filter-chips" aria-label="快速筛选">{([["focus", "重点关注"], ["all", "全部"], ["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).map(([kind, label]) => <button key={kind} aria-pressed={filter === kind} onClick={() => { setFilter(kind); reset(); }} className={filter === kind ? "active" : ""}>{label}{kind in page.counts && <span>{page.counts[kind as keyof typeof page.counts]}</span>}</button>)}</div>}
-      {(brief || search) && <p className="text-xs text-slate-500">{page.total} 个 SKU · 已显示 {shown.length} 个</p>}
-      {brief ? <div className="ops-sku-grid grid items-start gap-4">{!loading && shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={period} analysis={item.analysis} context={context} onNavigate={remember} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div> : <div className="ops-mini-grid">{!loading && shown.slice(0, 3).map(item => <Link key={item.market + item.sku} onClick={remember} href={skuOperatingHref(item.sku, market, period, context)} className="ops-mini-sku"><span className="ops-product-art" aria-hidden="true"><Package size={27} strokeWidth={1.3} /></span><span className="min-w-0 flex-1"><strong className="block truncate text-xs">{item.productName || item.sku}</strong><span className="ops-subtext mt-1 block">{item.sku} · {item.market}</span></span><span className="text-xs font-semibold">{money(item.analysis.current?.productSales, item.currency)}</span></Link>)}</div>}
+      {(brief || search) && <p className="text-xs text-slate-500">{page.total} 个 SKU · 已显示 {shown.length} 个{brief && !search && !["all", "revenue", "missing"].includes(filter) ? ` · 经营 ${page.focusPeriod || "—"} · 当前库存` : ""}</p>}
+      {brief ? <div className="ops-sku-grid grid items-start gap-4">{!loading && shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={item.analysisPeriod} analysis={item.analysis} context={context} onNavigate={remember} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div> : <div className="ops-mini-grid">{!loading && shown.slice(0, 3).map(item => <Link key={item.market + item.sku} onClick={remember} href={skuOperatingHref(item.sku, market, period, context)} className="ops-mini-sku"><span className="ops-product-art" aria-hidden="true"><Package size={27} strokeWidth={1.3} /></span><span className="min-w-0 flex-1"><strong className="block truncate text-xs">{item.productName || item.sku}</strong><span className="ops-subtext mt-1 block">{item.sku} · {item.market}</span></span><span className="text-xs font-semibold">{money(item.analysis.current?.productSales, item.currency)}</span></Link>)}</div>}
       {!loading && (brief || search) && !shown.length && <div className="rounded-xl bg-white p-8 text-center text-sm text-slate-500">{brief && !search && filter === "focus" ? "本期暂无触发提醒的 SKU" : "没有匹配的 SKU"}<Link href={`/inventory/brief?market=${market}&period=${period}&filter=all`} className="mt-3 block text-[#0071e3]">查看全部 SKU</Link></div>}
       {loading && <p role="status" className="text-sm text-slate-500">正在加载经营数据…</p>}
       {error && <div role="alert" className="text-sm text-rose-700"><p>{error}</p><button onClick={() => window.location.reload()} className="mt-2 min-h-11 rounded-lg border px-4">重新加载当前筛选</button></div>}
@@ -148,22 +149,23 @@ function OperatingTrend({ page }: { page: OperatingPage }) {
   const [metric, setMetric] = useState<"revenue" | "profit">("revenue");
   const points = page.chart.filter(point => point.month <= page.period).slice(-6);
   const value = page.summary[metric === "revenue" ? "revenue" : "profit"];
+  const color = metric === "revenue" ? "var(--chart-primary)" : "var(--positive)";
   return <section className="ops-trend-panel ops-surface">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="ops-section-title">销售与利润趋势</h2><p className="ops-subtext mt-2">{page.market} · 最近六个经营月 · {page.currency}</p></div><div className="ops-chart-control" aria-label="趋势指标">{(["revenue", "profit"] as const).map(key => <button key={key} aria-pressed={metric === key} className={metric === key ? "active" : ""} onClick={() => setMetric(key)}>{key === "revenue" ? "销售额" : "利润"}</button>)}</div></div>
     <p className="ops-trend-value">{money(value, page.currency)}<span className="ops-status ml-3">{page.period}</span></p>
     {points.filter(point => point[metric] !== null).length > 1 ? <div className="mt-4 h-64">
       <ResponsiveContainer width="100%" height="100%"><AreaChart data={points} margin={{ top: 12, right: 8, bottom: 4, left: 0 }}>
-        <defs><linearGradient id={`ops-trend-${metric}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#357866" stopOpacity={0.22} /><stop offset="100%" stopColor="#357866" stopOpacity={0.015} /></linearGradient></defs>
-        <CartesianGrid vertical={false} stroke="#edf1ed" /><XAxis dataKey="month" tick={{ fontSize: 11, fill: "#77867e" }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 10, fill: "#77867e" }} tickFormatter={value => new Intl.NumberFormat("en", { notation: "compact" }).format(value)} axisLine={false} tickLine={false} width={48} />
-        <Tooltip formatter={value => money(value == null ? null : Number(value), page.currency)} contentStyle={{ borderRadius: 10, borderColor: "#e7ece7", fontSize: 12 }} />
-        <Area dataKey={metric} name={metric === "revenue" ? "销售额" : "报告利润"} stroke="#2d7161" fill={`url(#ops-trend-${metric})`} strokeWidth={2.5} connectNulls={false} dot={{ r: 3, fill: "#2d7161", stroke: "white", strokeWidth: 2 }} />
+        <defs><linearGradient id={`ops-trend-${metric}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={0.22} /><stop offset="100%" stopColor={color} stopOpacity={0.015} /></linearGradient></defs>
+        <CartesianGrid vertical={false} stroke="var(--border)" /><XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--foreground-soft)" }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 10, fill: "var(--foreground-soft)" }} tickFormatter={value => new Intl.NumberFormat("en", { notation: "compact" }).format(value)} axisLine={false} tickLine={false} width={48} />
+        <Tooltip formatter={value => money(value == null ? null : Number(value), page.currency)} contentStyle={{ borderRadius: 10, borderColor: "var(--border)", background: "var(--surface)", color: "var(--foreground)", fontSize: 12 }} />
+        <Area dataKey={metric} name={metric === "revenue" ? "销售额" : "报告利润"} stroke={color} fill={`url(#ops-trend-${metric})`} strokeWidth={2.5} connectNulls={false} dot={{ r: 3, fill: color, stroke: "var(--surface)", strokeWidth: 2 }} />
       </AreaChart></ResponsiveContainer>
     </div> : <p className="py-8 text-center text-sm text-slate-500">暂无连续月份数据</p>}
     <p className="ops-subtext mt-3">切换指标查看趋势 · 月内累计与完整月份分开标识</p>
   </section>;
 }
 
-export function SkuOperatingCard({ row, period, analysis, rules, rulesAvailable = true, initialEvidenceOpen, context, onNavigate }: { row: OperatingSku; period: string; analysis?: ReturnType<typeof operatingFacts>; rules?: OperatingRules; rulesAvailable?: boolean; initialEvidenceOpen?: boolean; context?: { filter?: string; query?: string; sort?: string; origin?: string }; onNavigate?: () => void }) {
+export function SkuOperatingCard({ row, period, analysis, rules, rulesAvailable = true, initialEvidenceOpen, context, onNavigate }: { row: OperatingSku; period: string; analysis?: ReturnType<typeof operatingFacts>; rules?: OperatingRules; rulesAvailable?: boolean; initialEvidenceOpen?: boolean; context?: { filter?: string; query?: string; sort?: string; origin?: string; returnPeriod?: string }; onNavigate?: () => void }) {
   const facts = analysis ?? operatingFacts(row, period, rules, new Date(), rulesAvailable);
   const current = facts.current, displayCurrency = current?.currency || row.currency;
   const history = row.unitHistory.filter(point => point.month <= period).slice(-6);
@@ -171,7 +173,7 @@ export function SkuOperatingCard({ row, period, analysis, rules, rulesAvailable 
   const priceHistory = row.history.filter(point => point.reportMonth <= period).slice(-6);
   const source = !current ? "" : current.sourceKind === "gerpgo" ? "积加" : "Excel";
   return <article className="ops-product-card overflow-hidden rounded-2xl border border-black/5 bg-white">
-    <header className="flex items-start gap-3 p-5 pb-3"><span className="ops-product-art" aria-hidden="true"><Package size={34} strokeWidth={1.25} /></span><div className="min-w-0 flex-1"><p className="ops-product-code"><Link onClick={onNavigate} href={skuOperatingHref(row.sku, row.market, period, context)}>{row.sku}</Link> · {row.market}</p><h3 className="mt-1 break-words text-sm font-semibold">{row.productName || row.sku}</h3><p className="mt-2 text-[11px] text-slate-400">{period || "无报告"}{source ? ` · ${source}` : " · 无当期数据"}</p></div>{facts.issues[0] && <span className={`ops-status ${facts.issues.includes("利润待核查") ? "ops-status-danger" : ""}`}>{issueLabel(facts.issues[0])}</span>}</header>
+    <header className="flex items-start gap-3 p-5 pb-3"><span className="ops-product-art" aria-hidden="true"><Package size={34} strokeWidth={1.25} /></span><div className="min-w-0 flex-1"><p className="ops-product-code"><Link onClick={onNavigate} href={skuOperatingHref(row.sku, row.market, period, context)}>{row.sku}</Link> · {row.market}</p><h3 className="mt-1 break-words text-sm font-semibold">{row.productName || row.sku}</h3><p className="mt-2 text-[11px] text-slate-400">{`经营 ${period || "—"}${source ? ` · ${source}` : " · 无当期数据"}`}</p><p className="mt-1 text-[11px] text-slate-400">{`当前库存 ${row.inventoryDate || "—"}${row.inventoryDate && !facts.stockFresh ? " · 过期或日期待核验" : ""}`}</p></div>{facts.issues[0] && <span className={`ops-status ${facts.issues.includes("利润待核查") ? "ops-status-danger" : ""}`}>{issueLabel(facts.issues[0])}</span>}</header>
     <div className="ops-product-primary grid grid-cols-3 gap-x-3 px-5 py-4">
       <Metric label="销售额" value={money(current?.productSales, displayCurrency)} />
       <Metric label={current?.quality?.profitVerified ? "实际利润" : "报告利润"} value={money(current?.actualProfit, displayCurrency)} negative={current?.quality?.profitVerified && current.actualProfit != null && current.actualProfit < 0} />
@@ -214,5 +216,5 @@ function RevenueSparkline({ row, period }: { row: OperatingSku; period: string }
   if (values.length < 2) return null;
   const min = Math.min(...values), range = Math.max(...values) - min || 1;
   const points = values.map((value, i) => `${3 + i * 98 / (values.length - 1)},${29 - (value - min) / range * 24}`).join(" ");
-  return <svg width="104" height="34" viewBox="0 0 104 34" role="img" aria-label={`${row.sku} 最近${values.length}个经营月销售额趋势`}><path d="M2 32H102" stroke="#edf1ed" /><polyline points={points} fill="none" stroke="#357866" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>;
+  return <svg width="104" height="34" viewBox="0 0 104 34" role="img" aria-label={`${row.sku} 最近${values.length}个经营月销售额趋势`}><path d="M2 32H102" stroke="var(--border)" /><polyline points={points} fill="none" stroke="var(--chart-primary)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>;
 }

@@ -68,4 +68,4 @@ export function OperationsShell({ children, currentUser }: { children: ReactNode
   </div>;
 }
 export function OperationsShellFallback() { return <main className="p-8 text-sm text-slate-500">正在加载经营工作台…</main>; }
-export function InventoryContentSkeleton() { return <div role="status" className="space-y-4"><p className="text-sm text-slate-500">正在读取经营数据…</p><div className="h-24 rounded-xl bg-slate-200/60" /><div className="h-60 rounded-xl bg-slate-200/60" /></div>; }
+export function InventoryContentSkeleton() { return <div role="status" aria-busy="true" className="space-y-4"><p className="text-sm text-slate-500">正在读取经营数据…</p><div aria-hidden="true" className="ops-skeleton h-24 rounded-xl" /><div aria-hidden="true" className="ops-skeleton h-60 rounded-xl" /></div>; }

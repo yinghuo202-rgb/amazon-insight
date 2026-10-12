@@ -64,7 +64,7 @@ export function calculateInventoryRows(
       ...row,
       dailySales,
       ...decision,
-      readyToShipQty: Math.min(row.localInventory, decision.suggestedShipmentQty),
+      readyToShipQty: row.domesticSupplyBreakdownVerified === false ? 0 : Math.min(row.localInventory, decision.suggestedShipmentQty),
       suggestedProductionQty: Math.max(0, decision.suggestedShipmentQty - row.domesticSupplyTotal),
     };
   });

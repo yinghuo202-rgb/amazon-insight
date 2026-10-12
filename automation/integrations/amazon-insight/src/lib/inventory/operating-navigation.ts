@@ -1,6 +1,7 @@
-export function skuOperatingHref(sku: string, market: string, period: string, context: { filter?: string; query?: string; sort?: string; origin?: string; returnFilter?: string } = {}) {
+export function skuOperatingHref(sku: string, market: string, period: string, context: { filter?: string; query?: string; sort?: string; origin?: string; returnFilter?: string; returnPeriod?: string } = {}) {
   const params = new URLSearchParams({ market, period, filter: context.filter || "focus", query: context.query || "", sort: context.sort || "impact", origin: context.origin === "overview" ? "overview" : "brief" });
   if (context.returnFilter) params.set("returnFilter", context.returnFilter);
+  if (context.returnPeriod) params.set("returnPeriod", context.returnPeriod);
   return `/inventory/sku/${encodeURIComponent(sku)}?` + params;
 }
 

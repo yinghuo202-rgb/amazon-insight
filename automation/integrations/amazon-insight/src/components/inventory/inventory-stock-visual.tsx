@@ -37,6 +37,8 @@ export function InventoryStockVisual({
   rows,
   actionLabel,
   referenceLabel,
+  domesticLabel = "共享国内现货",
+  pendingLabel = "未完工订单",
 }: {
   title: string;
   description: string;
@@ -44,19 +46,21 @@ export function InventoryStockVisual({
   rows: InventoryStockVisualRow[];
   actionLabel: string;
   referenceLabel: string;
+  domesticLabel?: string;
+  pendingLabel?: string;
 }) {
   const stockSeries: StockSeries[] = mode === "combined"
     ? [
       { key: "usOverseas", label: "US 海外库存", color: "#2563eb" },
       { key: "caOverseas", label: "CA 海外库存", color: "#d97706" },
-      { key: "domestic", label: "共享国内现货", color: "#0f766e" },
-      { key: "pending", label: "未完工订单", color: "#94a3b8" },
+      { key: "domestic", label: domesticLabel, color: "#0f766e" },
+      { key: "pending", label: pendingLabel, color: "#94a3b8" },
     ]
     : [
       { key: "fba", label: "FBA 可售", color: "#2563eb" },
       { key: "awd", label: "AWD 可用/转出", color: "#38bdf8" },
-      { key: "domestic", label: "共享国内现货", color: "#0f766e" },
-      { key: "pending", label: "未完工订单", color: "#94a3b8" },
+      { key: "domestic", label: domesticLabel, color: "#0f766e" },
+      { key: "pending", label: pendingLabel, color: "#94a3b8" },
     ];
   const totals = Object.fromEntries(stockSeries.map((series) => [series.key, rows.reduce((sum, row) => sum + (row[series.key] ?? 0), 0)]));
   const totalStock = Object.values(totals).reduce((sum, value) => sum + value, 0);

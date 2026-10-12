@@ -294,12 +294,28 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
     return manifest
 
 
-def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *, file_token: str | None = None) -> dict[str, Any]:
+def _confirmed_inventory_date(value: str | None, scope: str | None) -> str | None:
+    if scope not in {None, "planning", "actual"}:
+        raise ValueError("库存范围必须为 planning 或 actual")
+    if scope == "actual":
+        if not value or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("实际库存发布须明确确认业务日期 YYYY-MM-DD")
+        return date.fromisoformat(value).isoformat()
+    if value is not None:
+        raise ValueError("确认库存日期仅适用于 actual 库存范围")
+    return None
+
+
+def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *, file_token: str | None = None,
+                         confirmed_inventory_date: str | None = None, inventory_scope: str | None = None) -> dict[str, Any]:
     """Receive a browser download, without reading or moving browser credentials."""
     database = StateDb(Path(os.environ.get("STORE_OPS_STATE_DB") or config.runtime_root / "db" / "operations.sqlite3"))
     database.init()
     run_id = database.start_run("receive-wps-download")
     try:
+        confirmed_date = _confirmed_inventory_date(confirmed_inventory_date, inventory_scope)
+        if confirmed_date and file_token:
+            raise ValueError("实际库存确认仅支持人工确认的 WPS 下载批次")
         url = urlsplit(share_url)
         if url.scheme != "https" or url.netloc not in {"www.kdocs.cn", "kdocs.cn"} or not re.fullmatch(r"/l/[a-zA-Z0-9]+/?", url.path) or url.query or url.fragment:
             raise ValueError("需要有效的金山文档 HTTPS 分享地址")
@@ -320,6 +336,11 @@ def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *,
             raise ValueError("WPS 下载内容未识别为库存或新品表，请检查工作表结构")
         result["source"] = {"kind": "wps-browser-download", "shareUrl": share_url, "capturedAt": datetime.now(timezone.utc).isoformat(), "businessAsOf": None,
                             "sha256": original_hash, "authentication": "existing-browser-session"}
+        if confirmed_date:
+            if result["files"][0]["type"] != "inventory":
+                raise ValueError("实际库存确认只适用于库存表")
+            result["source"].update(confirmedInventoryDate=confirmed_date, businessAsOf=confirmed_date,
+                                     inventoryScope="actual", confirmation="explicit-user-confirmation")
         if file_token is not None:
             if not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", file_token) or result["files"][0]["type"] != "inventory":
                 raise ValueError("自动下载文件必须是指定的 WPS 库存表")
@@ -359,14 +380,14 @@ def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *,
                     supplied = {_text(row[sku_i]).upper() for row in rows if sku_i is not None and re.fullmatch(r"[A-Z]{2}\d{3}", _text(row[sku_i]).upper())}
                     unmatched = sorted(supplied - existing)
                     preview.update(matchedSkuCount=len(supplied & existing), unmappedSkuCount=len(unmatched), unmappedSkuPreview=unmatched[:20])
-                    if unmatched:
+                    if unmatched and not confirmed_date:
                         result["status"] = "needs_review"
                         result["warnings"].append(f"{market} 有 {len(unmatched)} 个 SKU 不在现有库存模型；完整源表已保存，但这些 SKU 仍需资料映射，不会悄悄忽略为已更新。")
                 if file_token:
                     result["source"]["headers"] = header_signatures
             finally:
                 book.close()
-        result["warnings"].append("下载时间不是业务截止日期；请核验表内日期后确认发布。浏览器登录态未复制到 NAS。")
+        result["warnings"].append("已按人工确认业务日期接收实际库存；国内组合供应不拆分为核实现货。" if confirmed_date else "下载时间不是业务截止日期；请核验表内日期后确认发布。浏览器登录态未复制到 NAS。")
         _atomic_json(batch / "manifest.json", result)
         database.finish_run(run_id, "completed", summary={"batchId": batch.name, "sha256": original_hash, "fileCount": 1})
         return result
@@ -397,10 +418,21 @@ def _research_report(path: Path) -> dict[str, Any]:
     return {"schemaVersion": 1, "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "source": {"path": path.name, "modifiedAt": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"), "sha256": _sha256(path), "sheet": "多工作表"}, "summary": {"candidateCount": len(candidates), "viableCandidateCount": sum(1 for value in margins if value >= 0.3), "averageGrossMargin": sum(margins) / len(margins) if margins else 0, "latestOrderMonth": max((item["month"] for item in ordered), default=None), "orderedSkuCount": len({item["sku"] for item in ordered}), "plannedUnits": int(sum(item["orderQuantity"] or 0 for item in ordered)), "monthCount": len({item["month"] for item in monthly})}, "candidates": candidates, "monthlyOrders": monthly}
 
 
-def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = False) -> list[str]:
+def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = False, confirmed_date: str | None = None) -> list[str]:
     workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
     updated: list[str] = []
     try:
+        domestic_by_sku: dict[str, int] = {}
+        if confirmed_date and "库存规划" in workbook.sheetnames:
+            source_rows = workbook["库存规划"].iter_rows(values_only=True)
+            source_indexes = _header_map(next(source_rows))
+            source_sku_i, source_local_i = _field(source_indexes, "SKU"), _field(source_indexes, "工厂库存及已下订单")
+            if source_sku_i is not None and source_local_i is not None:
+                for source_row in source_rows:
+                    quantity = _number(source_row[source_local_i])
+                    sku = _text(source_row[source_sku_i]).upper()
+                    if re.fullmatch(r"[A-Z]{2}\d{3}", sku) and quantity is not None:
+                        domestic_by_sku[sku] = max(0, int(quantity))
         snapshot_date = _inventory_snapshot_date(path)
         for market, sheet_name, report_name in (("US", "库存规划", "inventory_dashboard.json"), ("CA", "加拿大库存计划 ", "inventory_dashboard.ca.json")):
             report_path = reports_dir / report_name
@@ -408,7 +440,7 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                 continue
             report = json.loads(report_path.read_text(encoding="utf-8"))
             previous_fba_date = report.get("snapshots", {}).get("fbaDate", str(report.get("generatedAt", ""))[:10])
-            snapshot_date = _inventory_snapshot_date(path) if re.search(r"20\d{6}", path.name) else date.fromisoformat(previous_fba_date)
+            snapshot_date = date.fromisoformat(confirmed_date) if confirmed_date else (_inventory_snapshot_date(path) if re.search(r"20\d{6}", path.name) else date.fromisoformat(previous_fba_date))
             rows = workbook[sheet_name].iter_rows(values_only=True)
             indexes = _header_map(next(rows))
             sku_i = _field(indexes, "SKU")
@@ -418,6 +450,9 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
             local_i = _field(indexes, "工厂库存及已下订单")
             sales_i = _field(indexes, "最近月销售", "最近月销")
             reference_i = _field(indexes, "参考月销")
+            awd_i = _field(indexes, "AWD备货")
+            factory_i = _field(indexes, "工厂", "厂家")
+            carton_i = _field(indexes, "箱规", "箱装数", "装箱数")
             incoming: dict[str, tuple[Any, ...]] = {}
             for row in rows:
                 sku = _text(row[sku_i] if sku_i is not None and len(row) > sku_i else None).upper()
@@ -425,6 +460,35 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                     if sku in incoming:
                         raise ValueError(f"{sheet_name} 存在重复 SKU：{sku}")
                     incoming[sku] = row
+            original_skus = {_text(item.get("sku")).upper() for item in report.get("rows", [])}
+            if confirmed_date:
+                if fba_i is None or network_i is None:
+                    raise ValueError(f"{sheet_name} 缺少实际 FBA 或网络库存列")
+                for sku, row in incoming.items():
+                    for column in (fba_i, network_i, *([awd_i] if awd_i is not None else [])):
+                        quantity = _number(row[column])
+                        if quantity is None or not math.isfinite(quantity) or quantity < 0 or int(quantity) != quantity:
+                            raise ValueError(f"{sheet_name} {sku} 实际库存为空或不是非负整数")
+                    awd_quantity = int(_number(row[awd_i])) if awd_i is not None else 0
+                    if int(_number(row[network_i])) < int(_number(row[fba_i])) + awd_quantity:
+                        raise ValueError(f"{sheet_name} {sku} 网络库存小于 FBA 与 AWD 合计")
+                for item in report.get("rows", []):
+                    item.setdefault("inventorySnapshotDate", previous_fba_date)
+                    item.setdefault("awdSnapshotDate", report.get("snapshots", {}).get("awdDate", previous_fba_date))
+                for sku in sorted(incoming.keys() - original_skus):
+                    row = incoming[sku]
+                    recent = _number(row[sales_i]) if sales_i is not None else None
+                    report["rows"].append({
+                        "sku": sku, "productName": _text(row[name_i]) if name_i is not None else sku,
+                        "factory": "", "cartonQty": None, "fbaSellable": 0,
+                        "fbaReservedTransfer": 0, "fbaReservedProcessing": 0,
+                        "awdOnHand": 0, "awdAvailable": 0, "awdPendingShipment": 0,
+                        "awdOutboundToFba": 0, "awdInbound": 0, "awdFbaReconciliation": 0,
+                        "localInventory": 0, "pendingOrderQty": 0, "pendingOrders": [],
+                        "salesByMonth": [], "salesHistoryByMonth": [],
+                        "dailySales": max(0, recent or 0) / 30,
+                        "dataQuality": ["历史经营数据未知；需求日销仅为库存表最近月销计划值", "国内供应为现货与订单混合值，拆分未经核实", "预留库存及 AWD 状态细分未知"],
+                    })
             raw_parameters = report.setdefault("parameters", {})
             raw_parameters["targetCoverDays"] = 90
             parameters = ReplenishmentParameters(
@@ -441,19 +505,32 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                     continue
                 if name_i is not None and _text(row[name_i]):
                     item["productName"] = _text(row[name_i])
+                if confirmed_date:
+                    item["inventorySnapshotDate"] = confirmed_date
+                    if factory_i is not None:
+                        item["factory"] = _text(row[factory_i])
+                    if carton_i is not None:
+                        carton = _number(row[carton_i])
+                        item["cartonQty"] = int(carton) if carton is not None and carton > 0 and int(carton) == carton else None
+                    if awd_i is not None:
+                        item["awdAvailable"] = int(_number(row[awd_i]))
+                        item["awdOnHand"] = item["awdAvailable"]
+                        item["awdSnapshotDate"] = confirmed_date
+                        # The source network total already includes this AWD pool.
+                        item["awdOutboundToFba"] = 0
                 fba_value = _number(row[fba_i]) if fba_i is not None else None
                 if fba_value is not None and not planning_only:
                     item["fbaSellable"] = max(0, int(fba_value))
                 network_value = _number(row[network_i]) if network_i is not None else None
                 if network_value is not None and not planning_only:
-                    item["inTransitInventory"] = max(0, int(network_value) - int(item.get("fbaSellable", 0) or 0))
+                    item["inTransitInventory"] = max(0, int(network_value) - int(item.get("fbaSellable", 0) or 0) - (int(item.get("awdAvailable", 0)) if confirmed_date and awd_i is not None else 0))
                 else:
                     item["inTransitInventory"] = max(0, int(item.get("inTransitInventory", item.get("awdInbound", 0)) or 0))
                 if local_i is not None and _number(row[local_i]) is not None:
-                    if planning_only:
+                    if planning_only or confirmed_date:
                         # This WPS column already includes orders; do not count them twice
                         # or pretend that its combined supply is verified on-hand stock.
-                        item["domesticSupplyTotal"] = max(0, int(_number(row[local_i])))
+                        item["domesticSupplyTotal"] = domestic_by_sku.get(item["sku"], max(0, int(_number(row[local_i])))) if confirmed_date else max(0, int(_number(row[local_i])))
                         item["wpsDomesticSupplyTotal"] = item["domesticSupplyTotal"]
                         item["domesticSupplyBreakdownVerified"] = False
                     else:
@@ -475,7 +552,7 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                     in_transit_inventory=int(item.get("inTransitInventory", 0) or 0),
                 )
                 item.update(decision)
-                item["readyToShipQty"] = min(int(item.get("localInventory", 0) or 0), int(item["suggestedShipmentQty"]))
+                item["readyToShipQty"] = 0 if item.get("domesticSupplyBreakdownVerified") is False else min(int(item.get("localInventory", 0) or 0), int(item["suggestedShipmentQty"]))
                 item["suggestedProductionQty"] = max(0, int(item["suggestedShipmentQty"]) - int(item.get("domesticSupplyTotal", 0) or 0))
             report["generatedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             snapshots = report.setdefault("snapshots", {})
@@ -512,6 +589,25 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
             report["localRefresh"]["sourceSkuCount"] = len(incoming)
             report["localRefresh"]["matchedSkuCount"] = len(existing & incoming.keys())
             report["localRefresh"]["unmappedSkus"] = sorted(incoming.keys() - existing)
+            if confirmed_date:
+                snapshots["fbaDate"] = confirmed_date
+                snapshots["inTransitConfirmed"] = True
+                snapshots["businessDateUnknown"] = False
+                if awd_i is not None:
+                    snapshots["awdDate"] = confirmed_date
+                    snapshots["awdSourceAvailable"] = True
+                    snapshots["awdAvailableConfirmed"] = True
+                elif market == "CA":
+                    snapshots["awdSourceAvailable"] = False
+                    snapshots["awdAvailableConfirmed"] = False
+                snapshots["alignmentGapDays"] = abs((date.fromisoformat(snapshots["awdDate"]) - snapshot_date).days) if snapshots["awdSourceAvailable"] else 0
+                snapshots["aligned"] = snapshots["alignmentGapDays"] <= 2
+                snapshots["ageDays"] = max(0, (date.today() - snapshot_date).days)
+                snapshots["isStale"] = snapshots["ageDays"] > int(snapshots["staleAfterDays"])
+                summary["skuCount"] = len(report["rows"])
+                summary["awdAvailable"] = sum(int(item.get("awdAvailable", 0)) for item in report["rows"])
+                summary["domesticSupplyTotal"] = sum(int(item.get("domesticSupplyTotal", 0)) for item in report["rows"])
+                report["localRefresh"].update(addedSkuCount=len(incoming.keys() - original_skus), publicationScope="user-confirmed-actual-inventory", overseasStockUnchanged=False)
             _atomic_json(report_path, report)
             updated.append(report_name)
     finally:
@@ -780,7 +876,28 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
             _atomic_json(reports_dir / "new_product_research.json", _research_report(source))
             updated.append("new_product_research.json")
         elif item["type"] == "inventory":
-            updated.extend(_patch_inventory(source, reports_dir, planning_only=manifest.get("source", {}).get("kind") == "wps-api-download"))
+            provenance = manifest.get("source", {})
+            confirmed_date = _confirmed_inventory_date(provenance.get("confirmedInventoryDate"), provenance.get("inventoryScope"))
+            if confirmed_date and provenance.get("kind") != "wps-browser-download":
+                raise ValueError("实际库存范围需要人工确认的 WPS 下载来源")
+            names = _patch_inventory(source, reports_dir, planning_only=not confirmed_date and provenance.get("kind") in {"wps-api-download", "wps-browser-download"}, confirmed_date=confirmed_date)
+            for name in names:
+                report_path = reports_dir / name
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report.setdefault("localRefresh", {})["wpsSource"] = provenance
+                if confirmed_date:
+                    kinds = {"fba_inventory"}
+                    if report["snapshots"].get("awdAvailableConfirmed") and report["snapshots"].get("awdDate") == confirmed_date:
+                        kinds.add("awd_inventory")
+                    previous = report.get("sources", [])
+                    report["localRefresh"]["previousInventorySources"] = [entry for entry in previous if entry.get("kind") in kinds]
+                    report["sources"] = [entry for entry in previous if entry.get("kind") not in kinds]
+                    report["sources"].extend({"kind": kind, "path": f"uploads/{batch_dir.name}/source/{source.name}",
+                                              "modifiedAt": datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).isoformat(),
+                                              "sha256": item["sha256"], "businessAsOf": confirmed_date,
+                                              "confirmation": "explicit-user-confirmation"} for kind in sorted(kinds))
+                _atomic_json(report_path, report)
+            updated.extend(names)
         elif item["type"] == "advertising":
             updated.extend(_patch_advertising(source, reports_dir))
         elif item["type"] == "product_details":
@@ -869,6 +986,8 @@ def main() -> int:
     parser.add_argument("--version")
     parser.add_argument("--source-file")
     parser.add_argument("--file-token")
+    parser.add_argument("--confirmed-inventory-date")
+    parser.add_argument("--inventory-scope", choices=["planning", "actual"])
     parser.add_argument("--task-id")
     parser.add_argument("--lease")
     parser.add_argument("--share-url")
@@ -885,7 +1004,8 @@ def main() -> int:
     elif args.command == "receive-wps":
         if not args.source_file or not args.share_url:
             parser.error("receive-wps requires --source-file and --share-url")
-        payload = receive_wps_download(load_config(args.config), Path(args.source_file), args.share_url, file_token=args.file_token)
+        payload = receive_wps_download(load_config(args.config), Path(args.source_file), args.share_url, file_token=args.file_token,
+                                       confirmed_inventory_date=args.confirmed_inventory_date, inventory_scope=args.inventory_scope)
     elif args.command == "auto-publish-wps":
         if not args.batch_dir or not args.reports_dir or not args.snapshots_dir or not args.task_id or not args.lease:
             parser.error("auto-publish-wps requires a batch, report paths and active worker lease")
