@@ -8,7 +8,9 @@
 
 rc.10 包含认证字段脱敏补丁：清理新生成的积加证据和来源报告副本，不自动清理历史文件或吊销凭证。云端 50 个文件、333 条网页测试和 123 条 Python 测试通过；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。按用户要求备份并仅更新 NAS env 至 rc.10，不自动操作容器。
 
-rc.11 已按[核心闭环计划](docs/superpowers/plans/2026-10-13-prd-core-closure.md)实现复核重新触发、证据历史、连续查询、登录限流以及发布/回退二次验证。云端57个文件/403条网页测试、130条Python测试及双架构fresh/worker/resume检查通过，新生产instrumentation自动协调也实际通过。镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。NAS仍配置rc.10，不自动部署。下一候选rc.12正在补齐[成本版本](docs/superpowers/plans/2026-10-13-cost-version-closure.md)，不属于rc.11能力。
+rc.11 已按[核心闭环计划](docs/superpowers/plans/2026-10-13-prd-core-closure.md)实现复核重新触发、证据历史、连续查询、登录限流以及发布/回退二次验证。云端57个文件/403条网页测试、130条Python测试及双架构fresh/worker/resume检查通过，新生产instrumentation自动协调也实际通过。镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。NAS原env已按用户要求仅更新为rc.11，备份为`_archive/env.before-rc11-20261013`，其余字节不变；容器仍由用户重建，不表示已上线。
+
+下一候选rc.12已补齐[成本版本](docs/superpowers/plans/2026-10-13-cost-version-closure.md)：明确生效/截止日、不可变历史、恢复留痕、批量版本冲突保护和连续历史；同价续期可单独保存，不重算已发布历史利润。45条聚焦测试、相关ESLint、生产构建及桌面/手机合成组件检查通过，云端镜像尚待构建验收。这不是rc.11能力，不自动升级NAS。旧镜像不理解新成本日期，回退时保留新表且停止成本编辑/决策，详见NAS说明。
 
 - 前台仅保留运营总览、SKU 简报、利润试算；后台分组折叠。所有使用者沿用既有共用账号，仍校验登录会话与敏感写操作。
 - 新采集和经营展示仅纳入一店 MEASUREMAN 的 US/CA。MX/AU 历史保留但不恢复采集，不跨币种合计，不按父体展示。

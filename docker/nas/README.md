@@ -2,9 +2,15 @@
 
 ## 当前交付状态（2026-10-13）
 
-最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 全部成功，对应提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`；镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。包含此前费率来源/认证字段脱敏，以及复核闭环和登录/发布安全保护。NAS原env已备份，仅 `IMAGE_TAG` 从rc.9改为rc.10，其他字节不变；本轮没有自动更新为rc.11或操作容器，实际运行版本仍待用户重建后验收。
+最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 全部成功，对应提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`；镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。包含此前费率来源/认证字段脱敏，以及复核闭环和登录/发布安全保护。按最新用户要求，NAS原env仅将 `IMAGE_TAG` 从rc.10改为rc.11，其他字节不变，备份为`_archive/env.before-rc11-20261013`。没有操作容器，实际运行版本仍待用户重建后验收；env备份不是数据库备份。
 
-rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本仍在下一候选实施，不能称整份PRD完成。当前NAS env保持rc.10。已有项目沿用原Compose、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
+rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本已在rc.12候选代码实施，镜像未通过云端构建前不用于部署，不能称整份PRD完成。当前NAS env保持rc.11。已有项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
+
+### rc.12候选成本版本：迁移与回退限制
+
+候选代码在既有运营库追加`product_cost_versions_v1`，保留原覆盖值，旧数据标记业务生效日未知。新版本按明确UTC日历日选择当前成本，保存/恢复均留历史；截止包含当天，未来不提前应用，失效后不复活前版。恢复从指定日期跟随已发布目录，保存来源成本及报告版本；不会暗中取消更晚的计划。成本编辑不改报告指针或历史实际利润，无需新数据卷、账号库、密钥或worker配置。
+
+升级前备份既有运营库及WAL、账号库、报告版本和原env，沿用下方安全增量流程。原`product_cost_overrides_v1`只是当前值兼容投影，不代表旧镜像理解新的日期/历史语义。回退至rc.11或更旧镜像期间，不进行成本编辑或依赖它作成本决策；不得删除新版本表。跨日不能宣称旧镜像的当前成本仍正确，需重新使用日期语义兼容镜像。真实NAS规模、升级与恢复尚未验收。
 
 最近只读公网检查返回 Cloudflare 1033，完整经营数据发布也未验收成功。下方旧版本号及命令为历史记录，不是当前上线证明。
 

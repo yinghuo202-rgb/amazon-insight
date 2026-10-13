@@ -1,6 +1,12 @@
 import type { ProductCatalogData, VariantCatalogData } from "@/lib/inventory/contracts";
 import { PRODUCT_COST_VAT_RATE, taxExcludedFromIncluded } from "@/lib/inventory/product-cost-policy";
-import type { ProductCostOverride, ProductCostValues } from "@/lib/inventory/product-cost-store";
+import type { ProductCostEditState, ProductCostOverride, ProductCostValues, ProductCostVersion } from "@/lib/inventory/product-cost-store";
+
+export type ProductCostPageVersion = Omit<ProductCostVersion, "accountId" | "sessionHash">;
+export type ProductCostPageEditState = Omit<ProductCostEditState, "current" | "latest"> & {
+  current: ProductCostPageVersion | null;
+  latest: ProductCostPageVersion | null;
+};
 
 export type ProductCostSeries = {
   id: string;
@@ -27,6 +33,7 @@ export function buildProductCostView(
   products: ProductCatalogData,
   variants: VariantCatalogData,
   overrides: ProductCostOverride[],
+  editStates: ProductCostEditState[] = [],
 ) {
   const variantBySku = new Map<string, VariantCatalogData["items"][number]>();
   for (const item of variants.items) {
@@ -82,7 +89,19 @@ export function buildProductCostView(
     Number(right.kind === "variant") - Number(left.kind === "variant")
     || left.name.localeCompare(right.name, "zh-CN"),
   );
-  return { rows, series, parameters: inferCostParameters(rows) };
+  // The browser needs version checks and dates, not account/session identifiers.
+  const safeVersion = (version: ProductCostVersion | null): ProductCostPageVersion | null => version ? {
+    sku: version.sku, versionId: version.versionId, action: version.action,
+    purchaseCostRmbTaxIncluded: version.purchaseCostRmbTaxIncluded,
+    purchaseCostRmbTaxExcluded: version.purchaseCostRmbTaxExcluded,
+    purchaseCostUsd: version.purchaseCostUsd,
+    effectiveFrom: version.effectiveFrom, effectiveTo: version.effectiveTo,
+    source: version.source, recordedAt: version.recordedAt,
+    sourceReportVersion: version.sourceReportVersion, status: version.status,
+  } : null;
+  return { rows, series, parameters: inferCostParameters(rows), editStates: editStates.map((state): ProductCostPageEditState => ({
+    sku: state.sku, editVersion: state.editVersion, current: safeVersion(state.current), latest: safeVersion(state.latest),
+  })) };
 }
 
 export function inferCostParameters(rows: ProductCostRow[]) {
