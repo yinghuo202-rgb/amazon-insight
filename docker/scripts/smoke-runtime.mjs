@@ -9,6 +9,9 @@ const base = process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:3000";
 const credentialFile = path.join(process.env.SMOKE_DATA_ROOT || "/data", "app", "smoke-credentials.json");
 const state = new DatabaseSync(process.env.STORE_OPS_STATE_DB);
 state.exec("PRAGMA busy_timeout=5000");
+const readiness = await fetch(base + "/health/readiness");
+assert.equal(readiness.status, 200, "account/operational databases and reports must be ready");
+assert.deepEqual(await readiness.json(), { status: "ready" }, "public readiness must not expose internal diagnostics");
 assert.equal(state.prepare("SELECT value FROM smoke_preserved").get().value, "keep", "startup must preserve the existing operational database");
 assert.ok(state.prepare("SELECT name FROM sqlite_master WHERE name='runs'").get(), "startup must initialize missing job tables");
 assert.ok(state.prepare("SELECT name FROM sqlite_master WHERE name='exceptions'").get());
@@ -29,6 +32,7 @@ if (phase === "worker") {
   const jsonHeaders = { "Content-Type": "application/json", Origin: base };
   const unauthenticated = await fetch(base + "/api/team");
   assert.equal(unauthenticated.status, 401);
+  assert.equal((await fetch(base + "/api/system/readiness")).status, 401, "runtime diagnostics require the shared login");
   const bootstrap = await fetch(base + "/api/auth/bootstrap", { method: "POST", headers: jsonHeaders, body: JSON.stringify(credentials) });
   assert.equal(bootstrap.status, phase === "fresh" ? 201 : 409, "database initialization must be non-destructive across restarts");
   const login = await fetch(base + "/api/auth/login", { method: "POST", headers: jsonHeaders, body: JSON.stringify(credentials) });
@@ -59,6 +63,11 @@ if (phase === "worker") {
   assert.equal(config.wps.authorized, false);
   assert.equal(config.schedules.length, 2);
   assert.ok(config.schedules.every(row => row.enabled === false));
+  const diagnostic = await fetch(base + "/api/system/readiness", { headers });
+  assert.equal(diagnostic.status, 200);
+  const runtime = await diagnostic.json();
+  assert.equal(runtime.ready, true);
+  assert.equal(runtime.checks.worker.status, "disabled", "paused synchronization is not a worker failure");
   for (const page of ["/inventory", "/inventory/brief", "/inventory/calculator", "/inventory/data"]) {
     const response = await fetch(base + page, { headers });
     assert.equal(response.status, 200, `page startup failed: ${page}`);

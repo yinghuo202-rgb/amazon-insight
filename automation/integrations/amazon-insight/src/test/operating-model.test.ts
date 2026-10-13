@@ -35,4 +35,15 @@ describe("period-aligned operating cards", () => {
     expect(snapshotAgeDays("2026-08-29", new Date("2026-10-07T00:00:00Z"))).toBe(39);
     expect(snapshotAgeDays("invalid")).toBeNull();
   });
+  it("allows attribution ratios above one without treating them as sales composition or ad dependence", () => {
+    const previous = { ...row("MA1", "2026-08"), units: 100, productSales: 1000, advertisingSales: 100,
+      quality: { profitVerified: true, returnsVerified: true, completePeriod: true } };
+    const current = { ...previous, reportMonth: "2026-09", productSales: 500, advertisingSales: 1000 };
+    const now = new Date("2026-10-12");
+    const sku = buildOperatingModel([], report([previous, current]), undefined, [], now).rows[0];
+    const facts = operatingFacts(sku, "2026-09", undefined, now);
+    expect(facts.advertisingShare).toBe(2);
+    expect(facts.issues).toContain("销售额下降");
+    expect(facts.hypotheses.join(" ")).not.toMatch(/依赖广告|自然销售|广告获客/);
+  });
 });

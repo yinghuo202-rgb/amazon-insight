@@ -16,8 +16,8 @@ import { listOperatingRuleOverrides } from "@/lib/inventory/operating-rules-stor
 
 export async function loadOperatingModel() {
   return withReportVersion(async () => {
-  const [us, ca, profit, variants, performance] = await Promise.allSettled([
-    loadInventoryDashboardData("US"), loadInventoryDashboardData("CA"), loadProfitabilityData(), loadVariantCatalogData(), loadOperatingPerformanceData(),
+  const [us, ca, profit, variants, performance, catalog] = await Promise.allSettled([
+    loadInventoryDashboardData("US"), loadInventoryDashboardData("CA"), loadProfitabilityData(), loadVariantCatalogData(), loadOperatingPerformanceData(), loadProductCatalogData(),
   ]);
   const warnings: string[] = [];
   if (us.status === "rejected") warnings.push("US 库存读取失败，请在业务后台检查报告文件。");
@@ -26,6 +26,8 @@ export async function loadOperatingModel() {
   if (variants.status === "rejected") warnings.push("父子体映射读取失败，暂按 SKU 展示。");
   if (performance.status === "rejected") warnings.push("积加已发布经营报告读取失败；当前回显旧 Excel 来源，不能作为最新数据，请检查发布版本。");
   const model = buildOperatingModel([...(us.status === "fulfilled" ? [us.value] : []), ...(ca.status === "fulfilled" ? [ca.value] : [])], profit.status === "fulfilled" ? profit.value : undefined, variants.status === "fulfilled" ? variants.value : undefined, warnings, new Date(), performance.status === "fulfilled" ? performance.value ?? undefined : undefined);
+  const photos = new Set(catalog.status === "fulfilled" ? catalog.value.items.filter(item => item.imageFile).map(item => item.sku) : []);
+  for (const row of model.rows) row.imageAvailable = photos.has(row.sku);
   const publishedPath = await publishedReportPath(runtimePath("reports", "gerpgo-performance.json"));
   const versionId = path.basename(path.dirname(path.dirname(publishedPath)));
   model.publishedVersion = /^data-/.test(versionId) ? versionId : null;

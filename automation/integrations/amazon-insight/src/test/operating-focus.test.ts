@@ -77,3 +77,40 @@ it("limits visible site choices to US and CA without removing Mexico history", (
   expect(page.model.markets).toEqual(["US"]);
   expect(data.rows.find(row => row.market === "MX")?.history).toHaveLength(1);
 });
+
+it("marks complete-month and MTD chart points with the source cutoff without expanding the chart payload", () => {
+  const data = focusModel();
+  data.rows[0].history[0].quality!.businessAsOf = "2026-09-30";
+  data.rows[0].history[1].quality!.businessAsOf = "2026-10-12";
+  const chart = queryOperatingModel(data, { period: "2026-10" }, now).chart;
+  expect(chart[0]).toMatchObject({ month: "2026-09", complete: true, mtd: false, asOf: "2026-09-30" });
+  expect(chart[1]).toMatchObject({ month: "2026-10", complete: false, mtd: true, asOf: "2026-10-12" });
+  expect(Object.keys(chart[1]).sort()).toEqual(["asOf", "complete", "month", "mtd", "profit", "revenue"]);
+});
+
+it("honors selected margin and impact sorting inside the revenue-contribution filter", () => {
+  const data = focusModel(3);
+  [[1000, 200], [500, 25], [1500, 900]].forEach(([sales, profit], index) => {
+    Object.assign(data.rows[index].history[0], { productSales: sales, actualProfit: profit, actualMargin: profit / sales });
+  });
+  const query = (sort: string) => queryOperatingModel(data, { period: "2026-09", brief: true, filter: "revenue", sort }, now).model.rows.map(row => row.sku);
+  expect(query("revenue")).toEqual(["SKU-2", "SKU-0", "SKU-1"]);
+  expect(query("margin")).toEqual(["SKU-1", "SKU-0", "SKU-2"]);
+  expect(query("impact")[0]).toBe("SKU-1");
+});
+
+it("keeps only same-period positive same-currency sales in contribution while all retains missing, zero and negative records", () => {
+  const data = focusModel(6);
+  data.rows[0].history = data.rows[0].history.filter(point => point.reportMonth !== "2026-09");
+  data.rows[1].history[0].productSales = 0;
+  data.rows[2].history[0].productSales = -20;
+  data.rows[3].history[0].currency = "CAD";
+  data.rows[5].history[0].productSales = 2000;
+  const contribution = queryOperatingModel(data, { period: "2026-09", brief: true, filter: "revenue", sort: "revenue" }, now);
+  expect(contribution.model.rows.map(row => row.sku)).toEqual(["SKU-5", "SKU-4"]);
+  expect(contribution.total).toBe(2);
+  expect(contribution.counts.revenue).toBe(2);
+  expect(queryOperatingModel(data, { period: "2026-09", brief: true, filter: "all" }, now).total).toBe(6);
+  expect(queryOperatingModel(data, { period: "2026-09", brief: true, filter: "revenue", query: "SKU-0" }, now).total).toBe(0);
+  expect(queryOperatingModel(data, { period: "2026-09", brief: true, filter: "all", query: "SKU-0" }, now).total).toBe(1);
+});

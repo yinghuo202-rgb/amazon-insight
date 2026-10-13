@@ -2,13 +2,13 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Amazon Selection Workbench",
-    short_name: "ASW",
-    description: "Amazon US 选品研究工作台，支持搜索、人工选品、市场分析和 HTML 报告导出。",
-    start_url: "/",
+    name: "Measureman 经营工作台",
+    short_name: "Measureman",
+    description: "运营总览、SKU 经营简报与新品利润试算。",
+    start_url: "/inventory",
     display: "standalone",
-    background_color: "#f5eee5",
-    theme_color: "#f5eee5",
+    background_color: "#f0f6fc",
+    theme_color: "#175bd8",
     icons: [
       {
         src: "/favicon.ico",

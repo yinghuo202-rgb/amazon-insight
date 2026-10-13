@@ -38,7 +38,13 @@ it("uses the shared income color for overview and mini trends while profit remai
   expect(screen.getByRole("img", { name: "报告利润" })).toHaveAttribute("stroke", "var(--positive)");
   cleanup();
   render(createElement(SkuOperatingCard, { row: model.rows[0], period: "2026-09" }));
-  expect(screen.getByRole("img", { name: "SKU-COLOR 最近2个经营月销售额趋势" }).querySelector("polyline")).toHaveAttribute("stroke", "var(--chart-primary)");
+  expect(screen.getByRole("img", { name: "SKU-COLOR 最近2个完整月销售额趋势" }).querySelector("polyline")).toHaveAttribute("stroke", "var(--chart-primary)");
+});
+it("does not draw a compact trend across an absent month", () => {
+  const row = operatingModel().rows[0];
+  row.history[0] = { ...row.history[0], reportMonth: "2026-07" };
+  render(createElement(SkuOperatingCard, { row, period: "2026-09" }));
+  expect(screen.queryByRole("img", { name: /完整月销售额趋势/ })).not.toBeInTheDocument();
 });
 it("uses the same income and profit colors in the SKU operating chart", () => {
   const row = operatingModel().rows[0];
@@ -49,11 +55,15 @@ it("uses the same income and profit colors in the SKU operating chart", () => {
 });
 it("uses the workspace primary for detailed sales and stock bars without changing supply facts", () => {
   const stock = inventoryRowSchema.parse({ sku: "SKU-COLOR", productName: "库存产品", factory: "工厂", cartonQty: 12, fbaSellable: 20, fbaReservedTransfer: 0, fbaReservedProcessing: 0, awdOnHand: 8, awdAvailable: 8, awdPendingShipment: 0, awdOutboundToFba: 0, awdInbound: 0, awdFbaReconciliation: 0, inTransitInventory: 22, dailySales: 1, salesByMonth: [{ month: "2026-09", units: 100 }], dataQuality: [], eligibleInventoryPosition: 50, daysCoverFba: 20, daysCoverNetwork: 50, suggestedShipmentQty: 0, suggestedAwdTransferQty: 0, action: "NO_ACTION", riskLevel: "healthy", reason: "", domesticSupplyTotal: 30, domesticSupplyBreakdownVerified: false });
-  const data = { market: "US", sales: { historyMonths: [], windowMonths: [] }, domesticPool: { id: "CN-SHARED" }, summary: { localInventory: 0 }, parameters: { leadTimeDays: 75, reviewCycleDays: 7, targetCoverDays: 90, safetyStockDays: 21, excessCoverDays: 240, fbaTransferTriggerDays: 30, purchaseOrderOverdueDays: 45 }, rows: [stock] } as unknown as InventoryDashboardData;
+  const data = { market: "US", snapshots: { fbaDate: "2026-10-12", awdDate: "2026-10-12", inTransitConfirmed: true, awdSourceAvailable: true, awdAvailableConfirmed: true }, sales: { historyMonths: [], windowMonths: [] }, domesticPool: { id: "CN-SHARED" }, summary: { localInventory: 0 }, parameters: { leadTimeDays: 75, reviewCycleDays: 7, targetCoverDays: 90, safetyStockDays: 21, excessCoverDays: 240, fbaTransferTriggerDays: 30, purchaseOrderOverdueDays: 45 }, rows: [stock] } as unknown as InventoryDashboardData;
   render(createElement(SkuDetailDashboard, { dashboard: { market: "US", currency: "USD", domesticPoolId: "CN-SHARED", targetAcosPercent: 30, row: calculateInventoryRows(data)[0], variant: null, engineeringSpecifications: [], campaigns: [] }, sku: stock.sku, profitability: null, product: null, canceledOrders: [], purchaseOrders: [], shipmentHistory: [] }));
   expect(screen.getByRole("img", { name: "销量" })).toHaveAttribute("fill", "var(--chart-primary)");
   expect(screen.getByRole("img", { name: "数量" })).toHaveAttribute("fill", "var(--chart-primary)");
   expect(screen.getAllByText("国内组合供应").length).toBeGreaterThan(0);
+  expect(screen.queryByText("系统分析")).not.toBeInTheDocument();
+  expect(screen.queryByText("建议发货")).not.toBeInTheDocument();
+  expect(screen.queryByText("实际利润")).not.toBeInTheDocument();
+  expect(screen.queryByText("所属系列")).not.toBeInTheDocument();
 });
 it("uses the workspace primary for the calculator cost segment while keeping the calculated result", () => {
   render(createElement(NewProductProfitCalculator, { products: [] }));

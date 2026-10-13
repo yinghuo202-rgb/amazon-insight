@@ -52,6 +52,7 @@ export const inventoryRowSchema = z.object({
   fbaSellable: z.number().int().nonnegative(),
   planningMonthlySales: z.number().int().nonnegative().optional(),
   referenceMonthlySales: z.number().int().nonnegative().optional(),
+  referenceMonthlySalesDate: z.string().nullable().optional(),
   fbaReservedTransfer: z.number().int().nonnegative(),
   fbaReservedProcessing: z.number().int().nonnegative(),
   awdOnHand: z.number().int().nonnegative(),

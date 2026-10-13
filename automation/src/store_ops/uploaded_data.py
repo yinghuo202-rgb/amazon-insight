@@ -542,6 +542,9 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                     item["planningMonthlySales"] = units
                 if reference_i is not None and _number(row[reference_i]) is not None:
                     item["referenceMonthlySales"] = max(0, int(_number(row[reference_i])))
+                    # The manual reference is a planning baseline, not dated
+                    # historical sales. An unconfirmed download has no business date.
+                    item["referenceMonthlySalesDate"] = confirmed_date
                 decision = calculate_replenishment(
                     daily_sales=float(item.get("dailySales", 0) or 0),
                     fba_sellable=int(item.get("fbaSellable", 0) or 0),

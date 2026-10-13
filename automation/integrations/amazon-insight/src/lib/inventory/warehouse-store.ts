@@ -55,23 +55,38 @@ export async function warehouseSnapshot(workspaceId: string) {
   };
 }
 
-export async function supplyChainSnapshot(workspaceId: string) {
+export type SupplyChainView = "outbound" | "stock" | "timeline";
+export async function supplyChainSnapshot(workspaceId: string, input: { query?: string; view?: SupplyChainView; cursor?: string } = {}) {
+  const query = (input.query || "").trim().slice(0, 100), view = input.view || "outbound";
+  const contains = { contains: query };
+  const where: Prisma.StockDocumentWhereInput = {
+    workspaceId, status: "APPROVED",
+    ...(view === "outbound" ? { type: { in: ["OUTBOUND", "TRANSFER"] } } : {}),
+    ...(query ? { OR: [{ documentNo: contains }, { reference: contains }, { lines: { some: { OR: [
+      { sku: contains }, { poNumber: contains }, { lotCode: contains },
+      { allocations: { some: { lot: { OR: [{ lotCode: contains }, { poNumber: contains }] } } } },
+    ] } } }] } : {}),
+  };
+  if (input.cursor && !await prisma.stockDocument.findFirst({ where: { AND: [where, { id: input.cursor }] }, select: { id: true } })) throw new Error("SUPPLY_CURSOR_CHANGED");
   const [warehouses, documents, lots] = await Promise.all([
     prisma.warehouse.findMany({ where: { workspaceId, active: true }, select: { id: true, code: true, name: true } }),
     prisma.stockDocument.findMany({
-      where: { workspaceId, status: "APPROVED" },
+      where,
       include: {
         warehouse: { select: { code: true, name: true } },
         targetWarehouse: { select: { code: true, name: true } },
         lines: { include: { allocations: { include: { lot: { select: { lotCode: true, poNumber: true, receivedAt: true } } } } } },
       },
-      orderBy: { approvedAt: "desc" }, take: 200,
+      orderBy: [{ approvedAt: "desc" }, { id: "desc" }], take: 201,
+      ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
     }),
-    prisma.inventoryLot.findMany({ where: { warehouse: { workspaceId, active: true }, remainingQty: { gt: 0 } }, include: { warehouse: { select: { code: true, name: true } }, location: { select: { code: true, name: true } } }, orderBy: [{ receivedAt: "asc" }, { sku: "asc" }] }),
+    prisma.inventoryLot.findMany({ where: { warehouse: { workspaceId, active: true }, remainingQty: { gt: 0 }, ...(query ? { OR: [{ sku: contains }, { poNumber: contains }, { lotCode: contains }, { warehouse: { name: contains } }] } : {}) }, include: { warehouse: { select: { code: true, name: true } }, location: { select: { code: true, name: true } } }, orderBy: [{ receivedAt: "asc" }, { sku: "asc" }] }),
   ]);
+  const shown = documents.slice(0, 200);
   return {
+    query, view, nextCursor: documents.length > 200 ? shown.at(-1)!.id : null,
     warehouses,
-    documents: documents.map((document) => ({
+    documents: shown.map((document) => ({
       id: document.id,
       documentNo: document.documentNo,
       type: document.type,

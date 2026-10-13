@@ -114,6 +114,15 @@
 .ops-mini-sku { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); background: var(--surface); border: 1px solid var(--ops-line); border-radius: var(--radius-panel); }
 .ops-mini-sku:hover { border-color: var(--accent-soft-strong); box-shadow: var(--shadow-soft); }
 .ops-product-art { display: grid; place-items: center; height: 72px; width: 72px; flex: none; background: var(--surface-muted); border: 1px solid var(--ops-line); border-radius: 14px; color: var(--ops-muted); }
+.ops-product-art { overflow: hidden; }
+.ops-product-monogram { font-size: 22px; font-weight: 650; letter-spacing: -.04em; color: var(--ops-primary); }
+.ops-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; margin: 18px 0 10px; font-size: 12px; line-height: 1.6; color: var(--ops-muted); }
+.ops-chart-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.ops-chart-legend i { width: 20px; height: 0; border-top: 2px solid var(--chart-primary); }
+.ops-chart-legend i.partial { border-top-style: dashed; }
+.ops-chart-tooltip { max-width: 260px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); box-shadow: var(--shadow-soft); font-size: 13px; color: var(--foreground); line-height: 1.7; }
+.ops-chart-tooltip small { font-size: 12px; color: var(--ops-muted); }
+.ops-detail-heading .ops-page-heading { margin-bottom: 0; }
 .ops-mini-sku .ops-product-art { height: 48px; width: 48px; border-radius: var(--radius-control); }
 .ops-product-code { color: var(--ops-primary); font-size: var(--text-meta); font-weight: 600; overflow-wrap: anywhere; }
 .ops-product-primary .ops-metric-value { font-size: 21px; letter-spacing: -.4px; }
@@ -171,6 +180,7 @@
   .ops-view { padding: var(--space-6) var(--space-5) calc(96px + env(safe-area-inset-bottom)); }
   .ops-topbar { min-height: 68px; padding: var(--space-3) var(--space-4); }
   .ops-overview-grid, .ops-calc-grid, .ops-detail-analysis-grid { grid-template-columns: minmax(0,1fr); }
+  .ops-overview-grid .ops-focus-panel { order: -1; }
   .ops-focus-panel, .ops-trend-panel { min-height: auto; }
   .ops-calc-result { position: static; }
   .ops-mini-grid, .ops-sku-grid { grid-template-columns: minmax(0,1fr); }
@@ -199,7 +209,7 @@
   .ops-root .ops-detail-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .ops-root .ops-detail-kpis .ops-kpi { padding: var(--space-3); }
   .ops-detail-kpis .ops-kpi-value { font-size: 20px; }
-  .ops-root .ops-kpi { min-height: 120px; padding: var(--space-4); }
+  .ops-root .ops-kpi { min-height: 104px; padding: var(--space-4); }
   .ops-kpi-value { font-size: 24px; overflow-wrap: anywhere; }
   .ops-trend-panel, .ops-focus-panel { padding: var(--space-5) var(--space-4); }
   .ops-trend-value { font-size: 28px; }

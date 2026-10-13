@@ -1,6 +1,6 @@
 import { defaultOperatingRules, type OperatingRules, type OperatingRuleOverride } from "@/lib/inventory/operating-rules";
 import type { InventoryDashboardData, ProfitabilityData, VariantCatalogData } from "@/lib/inventory/contracts";
-import { calculateCampaignRows, calculateInventoryRows } from "@/lib/inventory/presentation";
+import { calculateCampaignRows, calculateInventoryRows, inventoryDemandUsable, inventorySupplyStatus, type InventoryDemandBasis, type InventorySupplyBasis } from "@/lib/inventory/presentation";
 import { buildSeasonalityProfile } from "@/lib/inventory/seasonality";
 import { operatingMarkets, selectAdvertisingPeriod, type OperatingPerformance, type OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
 
@@ -31,11 +31,12 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
   const inventoryMap = new Map(inventories.map((item) => [item.market, item]));
   const rows = markets.flatMap((market) => {
     const inventory = inventoryMap.get(market);
+    const calculatedStock = inventory ? calculateInventoryRows(inventory, inventory.parameters, 100, now) : [];
     const ads = advertising?.rows.filter(row => row.market === market) ?? [];
     const skus = new Set([...normalizedProfits.filter((item) => item.market === market).map((item) => item.sku), ...(inventory?.rows ?? []).map((item) => item.sku), ...ads.map(row => resolveSku(row.sku))]);
     return [...skus].map((sku) => {
-      const stock = inventory?.rows.find((item) => item.sku === sku);
-      const supplyConfirmed = Boolean(stock && (stock.inTransitInventory === 0 || inventory?.snapshots.inTransitConfirmed === true) && (stock.awdAvailable === 0 || inventory?.snapshots.awdAvailableConfirmed === true));
+      const stock = calculatedStock.find((item) => item.sku === sku);
+      const supplyConfirmed = stock?.supplyBasis.confirmed ?? false;
       const variant = variants?.items.find((item) => item.market === market && item.sku === sku);
       const history = normalizedProfits.filter((item) => item.market === market && item.sku === sku).sort((a, b) => a.reportMonth.localeCompare(b.reportMonth));
       const advertisingHistory = ads.filter(row => resolveSku(row.sku) === sku || aliases.get(sku) === row.sku).sort((a, b) => a.reportMonth.localeCompare(b.reportMonth));
@@ -47,14 +48,17 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
       // Seasonality is anchored to today, not to an old import month.
       const seasonality = buildSeasonalityProfile(unitHistory, now.getUTCMonth() + 1);
       return {
-        sku, market, listingId: JSON.stringify([performance?.storeScope?.storeName ?? "MEASUREMAN", market, sku]), parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
+        sku, market, imageAvailable: false, listingId: JSON.stringify([performance?.storeScope?.storeName ?? "MEASUREMAN", market, sku]), parentSku: variant?.parentSku || "未匹配父体", productName: history.at(-1)?.productName || variant?.productName || stock?.productName || sku,
         currency: history.at(-1)?.currency || inventory?.currency || (market === "MX" ? "MXN" : market === "AU" ? "AUD" : market === "CA" ? "CAD" : "USD"),
         sourceSkus: [...new Set(profits.filter(item => item.market === market && resolveSku(item.sku) === sku).map(item => item.sku))],
         history, advertisingHistory, unitHistory, seasonality, inventoryDate: stock?.inventorySnapshotDate ?? inventory?.snapshots.fbaDate ?? null,
         awdDate: inventory?.snapshots.awdSourceAvailable ? stock?.awdSnapshotDate ?? inventory.snapshots.awdDate : null,
         stock: stock ? { fba: stock.fbaSellable, awd: stock.awdAvailable, awdTransfer: stock.awdOutboundToFba, transit: stock.inTransitInventory, domestic: stock.localInventory, orders: stock.pendingOrderQty, dailySales: stock.dailySales,
+          // Optional in serialized legacy models; every freshly built model carries its basis.
+          ...({ demandBasis: stock.demandBasis } as { demandBasis?: InventoryDemandBasis }),
+          ...({ supplyBasis: stock.supplyBasis } as { supplyBasis?: InventorySupplyBasis }),
           ...({ domesticSupplyTotal: stock.domesticSupplyTotal, domesticSupplyBreakdownVerified: stock.domesticSupplyBreakdownVerified } as { domesticSupplyTotal?: number; domesticSupplyBreakdownVerified?: boolean }),
-          supplyConfirmed, cover: supplyConfirmed && stock.dailySales > 0 ? (stock.fbaSellable + stock.awdAvailable + stock.inTransitInventory) / stock.dailySales : null, target: inventory!.parameters.targetCoverDays } : null,
+          supplyConfirmed, cover: stock.daysCoverNetwork, target: inventory!.parameters.targetCoverDays } : null,
       };
     });
   });
@@ -85,6 +89,8 @@ export function operatingFacts(row: OperatingSku, period: string, rules: Operati
   const advertisingCost = ads ? ads.cost : current?.advertisingCost ?? null;
   const advertisingSales = ads ? ads.sales : current?.advertisingSales ?? null;
   const adsAligned = advertisingPeriod === period && (!ads || !current?.quality?.businessAsOf || ads.businessAsOf === current.quality.businessAsOf);
+  // Compatibility field name: this is attribution sales / same-period sales,
+  // not a sales-composition share or evidence of organic/ad dependence; it may exceed 100%.
   const advertisingShare = adsAligned && current && current.productSales > 0 && advertisingSales !== null ? advertisingSales / current.productSales : null;
   const advertisingSpendShare = adsAligned && current && current.productSales > 0 && advertisingCost !== null ? advertisingCost / current.productSales : null;
   const acos = advertisingSales !== null && advertisingSales > 0 && advertisingCost !== null ? advertisingCost / advertisingSales : null;
@@ -126,10 +132,6 @@ export function operatingFacts(row: OperatingSku, period: string, rules: Operati
     if (priceChange !== null && priceChange < -.05) drivers.push(`成交均价下降 ${ratio(-priceChange)}`);
     if (drivers.length) hypotheses.push(`${drivers.join("、")}，${drivers.length > 1 ? "共同" : ""}拉低了销售额。`);
     if (priceChange !== null && priceChange < -.05 && current?.quality?.profitVerified && current.actualProfit !== null) suggestions.push("检查降价或促销后的单件利润。");
-    const previousAdShare = previous.advertisingSales != null && previous.productSales > 0 ? previous.advertisingSales / previous.productSales : null;
-    if (advertisingShare !== null && previousAdShare !== null && advertisingShare - previousAdShare > .05) {
-      hypotheses.push(`广告销售占比上升 ${((advertisingShare - previousAdShare) * 100).toFixed(1)} 个百分点，可能更依赖广告获客。`);
-    }
     // Evaluate seasonality at the selected month using only preceding months.
     const seasonalHistory = row.unitHistory.filter(point => point.month < period);
     const seasonality = buildSeasonalityProfile(seasonalHistory, Number(period.slice(5)));
@@ -137,13 +139,17 @@ export function operatingFacts(row: OperatingSku, period: string, rules: Operati
   }
   const inventoryAge = row.inventoryDate ? snapshotAgeDays(row.inventoryDate, now) : null;
   const awdAge = row.awdDate ? snapshotAgeDays(row.awdDate, now) : null;
-  const stockFresh = inventoryAge !== null && inventoryAge <= rules.inventoryStaleDays;
+  const supply = row.stock?.supplyBasis ? inventorySupplyStatus(row.stock.supplyBasis, now) : null;
+  const stockFresh = inventoryAge !== null && inventoryAge <= rules.inventoryStaleDays && (!supply || supply.fbaFresh);
   if (row.stock && !stockFresh) dataIssues.push("库存快照过期或日期缺失");
-  const fbaCover = row.stock && row.stock.dailySales > 0 ? row.stock.fba / row.stock.dailySales : null;
+  const demandUsable = !row.stock?.demandBasis || inventoryDemandUsable(row.stock.demandBasis, now);
+  if (row.stock && !demandUsable) dataIssues.push("需求基线过期或口径待核验，补货建议暂停");
+  const fbaCover = row.stock && stockFresh && demandUsable && row.stock.dailySales > 0 ? row.stock.fba / row.stock.dailySales : null;
   if (row.stock && !row.stock.supplyConfirmed) dataIssues.push("在途或 AWD 可用口径待确认，供应覆盖暂不可判定");
-  const awdFresh = !row.stock?.awd || awdAge !== null && awdAge <= rules.inventoryStaleDays;
-  const supplyFresh = stockFresh && Boolean(row.stock?.supplyConfirmed) && awdFresh;
-  if (row.stock?.awd && !awdFresh) dataIssues.push("AWD 日期待核验或过期");
+  const hasAwd = Boolean(row.stock && (row.stock.awd > 0 || row.stock.awdTransfer > 0));
+  const awdFresh = (!hasAwd || awdAge !== null && awdAge <= rules.inventoryStaleDays) && (!supply || supply.awdFresh);
+  const supplyFresh = stockFresh && demandUsable && Boolean(row.stock?.supplyConfirmed) && awdFresh && (!supply || supply.usable);
+  if (hasAwd && !awdFresh) dataIssues.push("AWD 日期待核验或过期");
   if (rulesAvailable && stockFresh && fbaCover !== null && fbaCover < rules.fbaCoverDays) {
     issues.push("当前供货风险"); suggestions.push(`FBA 可售约 ${Math.floor(fbaCover)} 天；优先确认下一批到货时间。`);
   }

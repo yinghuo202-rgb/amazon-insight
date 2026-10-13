@@ -7,8 +7,7 @@ import type {
   PurchasePlanData,
   VariantCatalogData,
 } from "@/lib/inventory/contracts";
-import { calculateInventoryDecision } from "@/lib/inventory/calculator";
-import { calculateCampaignRows, calculateInventoryRows } from "@/lib/inventory/presentation";
+import { calculateCampaignRows, calculateInventoryDemandDecision, calculateInventoryRows } from "@/lib/inventory/presentation";
 import type { SeasonalInventoryPlanResult } from "@/lib/inventory/seasonal-clearance";
 
 export type InventoryPlanningViewModel = ReturnType<typeof buildInventoryPlanningViewModel>;
@@ -18,7 +17,7 @@ export type StockPurchasePlanViewModel = ReturnType<typeof buildStockPurchasePla
 export type AdvertisingViewModel = ReturnType<typeof buildAdvertisingViewModel>;
 export type ContentListViewModel = ReturnType<typeof buildContentListViewModel>;
 
-export function buildInventoryPlanningViewModel(data: InventoryDashboardData) {
+export function buildInventoryPlanningViewModel(data: InventoryDashboardData, now = new Date()) {
   return {
     market: data.market === "CA" ? "CA" as const : "US" as const,
     generatedAt: data.generatedAt,
@@ -30,11 +29,13 @@ export function buildInventoryPlanningViewModel(data: InventoryDashboardData) {
       historyMonths: data.sales.historyMonths,
       windowMonths: data.sales.windowMonths,
     },
-    rows: data.rows.map((row) => ({
+    rows: calculateInventoryRows(data, data.parameters, 100, now).map((row) => ({
       sku: row.sku,
       productName: row.productName,
       cartonQty: row.cartonQty,
       dailySales: row.dailySales,
+      demandBasis: row.demandBasis,
+      supplyBasis: row.supplyBasis,
       fbaSellable: row.fbaSellable,
       awdAvailable: row.awdAvailable,
       awdOutboundToFba: row.awdOutboundToFba,
@@ -53,13 +54,12 @@ export function calculatePlanningRows(
   data: InventoryPlanningViewModel,
   parameters: InventoryParameters = data.parameters,
   demandPercent = 100,
+  now = new Date(),
 ) {
   return data.rows.map((row) => {
-    const dailySales = row.dailySales * demandPercent / 100;
-    const decision = calculateInventoryDecision({ ...row, dailySales }, parameters);
+    const decision = calculateInventoryDemandDecision(row, parameters, row.demandBasis, demandPercent, now, row.supplyBasis);
     return {
       ...row,
-      dailySales,
       ...decision,
       readyToShipQty: row.domesticSupplyBreakdownVerified === false ? 0 : Math.min(row.localInventory, decision.suggestedShipmentQty),
       suggestedProductionQty: Math.max(0, decision.suggestedShipmentQty - (row.domesticSupplyBreakdownVerified === false ? row.domesticSupplyTotal : row.localInventory + row.pendingOrderQty)),

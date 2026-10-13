@@ -1,5 +1,74 @@
 # NAS 在线部署文件
 
+## v1.5.0-rc.7 发布候选（本地验证通过、待云端构建）
+
+检查日期：2026-10-13。计划候选标签为 `v1.5.0-rc.7`，核对时该标签尚不存在；本节不表示它已创建或镜像已发布。用户已授权本轮提交、推送和云端构建，但不自动部署 NAS。已有 `v1.5.0-rc.6` 对应提交 `399eb8cc69552833ba1745f3bb0e37ab8e6c2254` 的 [Actions 38232017352](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38232017352) 已完成构建、双架构发布和隔离启动检查，未提升 `latest`。rc.7 必须在本轮代码最终验证并经同一流程通过后才可使用，不能以旧 rc.6 的成功替代本轮验收。
+
+本轮发布边界保持原共用账号、MEASUREMAN 的 US/CA、WPS 真实库存口径与 90 天库存目标，以及主前台三个入口。MX/AU 不恢复采集或前台展示，历史证据不删除；镜像升级不重新导入账号、覆盖报告或修改密钥。本机没有 Docker，NAS 挂载当前不可访问，公网域名当前返回 Cloudflare 1033，因此这里只完成发布准备，**没有完成 NAS 升级或线上验收**。
+
+本轮已实现供应口径确认与时效保护、广告归因比标签、完整月与当月累计分离、缺月趋势断线、真实图片失败回退、协作备注草稿及冲突保留、供应链服务端分页，以及下方的运行健康分层。未确认或过期供应不会生成确定性的网络覆盖和补货结论；不将广告归因比描述为总销售占比，不将当月累计当作完整月。完整审查与验收边界见[公开审查报告](../../docs/网站审查与优化-20261013.md)。
+
+本地隔离环境最终 CI 范围回归 49 个文件、319 条测试通过，生产构建含类型检查和 ESLint 通过；主要桌面/手机操作已检查，抽样范围见审查报告。新增健康检查专项和 smoke 脚本语法检查通过；rc.7 的云端验证、双架构构建、镜像启动和 NAS 真实业务验收仍未完成。Docker workflow 只在推送 `main`、`v*` 标签或显式手动触发时运行；仅推送候选开发分支不会构建镜像。本轮采用固定 RC 标签触发，不推送 `main`，不提升 `latest`。
+
+### 运行健康分层
+
+- `/health`：公共进程存活检查，仍用于 Docker healthcheck；不查询业务数据，worker 停止不会令网页陷入重启。
+- `/health/readiness`：公共只读就绪检查，只返回 `ready` / `not_ready`。账号库、运营库或报告目录缺失、不可读、权限不允许写入时返回 503；不自动初始化数据库、不迁移、不试写文件。
+- `/api/system/readiness`：须使用现有共用账号登录，返回经过裁剪的数据库、报告权限和 worker 状态，不输出文件路径、业务行、凭证或原始异常。worker 心跳超过 120 秒时显示 `stale`，网页仍保持就绪；同步停用且无待执行任务时显示 `disabled`，不当作故障。最近任务失败或中断另给警告。
+
+权限检查只能证明当前进程具有文件系统读写权限，不能代替磁盘剩余空间、NAS ACL 实写、真实积加/WPS 权限及首次对账。app 显示 `healthy` 也不能单独证明 worker 已运行、自动同步已完成或新报告已发布。
+
+### 已有项目安全增量升级
+
+不要对已有 worker/命名卷部署执行根目录 `update.sh`：它只停止、拉取和重建 app，只备份绑定目录中的 `selection.db`，会漏掉 worker、运营库、WAL、报告版本与命名卷。使用原项目的 Compose 文件和 env，先确认 app/worker 使用同一账户与运营数据挂载、没有其他容器写同一数据库；不得切换原项目名、卷名、runtime 目录或容器用户。以下命令仅供 NAS 操作者在镜像验证通过后执行，本轮未执行。
+
+示例沿用原 `docker-compose.yml` 与已合并的 `measureman-data-worker.override.yml`；实际文件名不同则明确替换，纯绑定目录项目使用原绑定配置，不能为了套用例子导入新命名卷。执行 `config --quiet`，不要将会展开凭证的完整 `config` 输出粘贴到聊天或日志。
+
+先在旧镜像仍运行时核对与准备；备份目录必须是新的项目内目录：
+
+```sh
+set -eu
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml config --quiet
+app_container="$(docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml ps -q app)"
+test -n "$app_container"
+old_image="$(docker inspect --format '{{.Config.Image}}' "$app_container")"
+backup_dir="./backups/pre-rc7-20261013"
+test ! -e "$backup_dir"
+mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
+cp .env "$backup_dir/env.before"
+cp docker-compose.yml "$backup_dir/compose.before.yml"
+cp measureman-data-worker.override.yml "$backup_dir/worker.before.yml"
+chmod 600 "$backup_dir/env.before"
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml stop app data-worker
+docker run --rm --user 0:0 --volumes-from "$app_container:ro" --entrypoint /bin/sh "$old_image" \
+  -c 'tar -C /data -cf - app runtime uploads snapshots' > "$backup_dir/persistent-data.tar"
+tar -tf "$backup_dir/persistent-data.tar" >/dev/null
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml start app data-worker
+```
+
+只读备份 helper 复用旧 app 的现有挂载，可同时覆盖绑定目录与命名卷，不创建替代业务卷；它临时以 root 读取备份，并不改变 app/worker 的原用户。示例要求原账号库、运营库与报告位于标准 `/data/app`、`/data/runtime` 挂载；自定义数据库/上传/快照路径须先补齐归档范围。停掉全部写入者后归档整个目录，不能只复制在线 SQLite 主文件或遗漏 `-wal` / `-shm`。若备份失败，先恢复旧 app/worker 运行并查明原因，不继续升级。
+
+备份确认后仅在原 env 中修改 `IMAGE_TAG=v1.5.0-rc.7`，保持原 `SECRET_KEY`、账号、调度、Cloudflare、目录和全部连接凭证。不要用示例 env 覆盖原文件。拉取成功后再重建两个服务：
+
+```sh
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml config --quiet
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml pull app data-worker
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml stop app data-worker
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml up -d app data-worker
+docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml ps
+```
+
+只重启不会更新镜像；只更新 app 会造成 worker 与网页代码不一致。原 cloudflared 与其 Token 无需更换；原服务 URL 保持 `http://app:3000`，不自动重新创建 Tunnel。根 `compose.yaml` 的 `latest`/Watchtower 是历史通用模板，本轮固定 RC 升级不使用自动更新。
+
+### NAS 验收与回退
+
+升级后先访问 NAS 本地端口的 `/health` 与 `/health/readiness`，再用原共用账号查看 `/api/system/readiness` 和“业务后台 → 数据更新”。确认原记录、报告版本指针、业务截止日期以及 US/CA 范围保留；启用同步时确认 worker `online`，任务采集覆盖、异常状态和报告发布时间真实变化。业务验收不能以凭证“已配置”或 HTTP 200 替代。公网仍为 1033 时应单独修复/核对原 Tunnel 连接，不能据此假定应用健康或镜像有问题。
+
+失败时先停止新 app/worker，备份升级后的数据和异常证据；不删旧卷，不运行 `down -v`。仅回退镜像时将原 `IMAGE_TAG` 恢复为已验证旧固定标签，设置 `DATABASE_MIGRATE_ON_START=false`，同时重建 app/worker，避免旧 Prisma schema 对新增字段执行破坏性回退。报告回退仍是独立操作，在数据更新页选择已有报告版本。需恢复全部状态时，必须停止所有写入者后，将同一时点的账号库、运营库、reports 版本及指针恢复到**原挂载**；恢复会丢失备份后的变更，不能自动执行。恢复后重新核对登录、readiness、worker 和报告版本；NAS 实机升级与回退仍待验收。
+
+以下章节为历史版本记录；涉及 MX、首次 env 自动发布、root 权限绕过和旧 UI 的描述不能覆盖本节与 rc.6 的当前规则。旧 `DEPLOYMENT_HANDOVER.md` 中“无提交记录”、`v1.0.0` 和 `latest` 自动发布步骤也不适用于当前已有 NAS 项目。
+
 ## v1.5.0-rc.6：US/CA 最新数据与统一工作空间
 
 固定构建标签：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.6`。以该标签对应 Actions、双架构镜像和启动检查全部成功为发布依据，不提升 `latest`。app 与 data-worker 同步更新，保留原项目、数据卷、账号库、运营库和全部密钥；cloudflared 不需要更换。

@@ -56,6 +56,7 @@ class UploadedDataTests(unittest.TestCase):
             self.assertEqual(planning["snapshots"]["fbaDate"], "2026-07-14")
             self.assertEqual(len(planning["rows"]), 2)
             self.assertTrue(planning["snapshots"]["businessDateUnknown"])
+            self.assertIsNone(planning["rows"][0]["referenceMonthlySalesDate"])
             preview = receive_wps_download(config, source, "https://www.kdocs.cn/l/Example123", confirmed_inventory_date="2026-10-12", inventory_scope="actual")
             self.assertEqual(preview["source"]["confirmedInventoryDate"], "2026-10-12")
             published = publish_batch(root / "uploads" / preview["batchId"], reports, root / "snapshots")
@@ -63,6 +64,7 @@ class UploadedDataTests(unittest.TestCase):
             us_report = json.loads((current / "inventory_dashboard.json").read_text())
             rows = {row["sku"]: row for row in us_report["rows"]}
             self.assertEqual(rows["MA001"]["inTransitInventory"], 22)
+            self.assertEqual(rows["MA001"]["referenceMonthlySalesDate"], "2026-10-12")
             self.assertEqual(rows["MA001"]["awdAvailable"], 8)
             self.assertEqual(rows["MA001"]["domesticSupplyTotal"], 30)
             self.assertEqual(rows["MA001"]["localInventory"], 10)

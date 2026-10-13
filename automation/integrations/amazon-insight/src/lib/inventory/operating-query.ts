@@ -35,12 +35,14 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const adsAligned = adScope?.reportMonth === period && reported.every(item => !item.current?.quality?.businessAsOf || item.current.quality.businessAsOf === adScope.businessAsOf);
   const advertising = adScope ? { ...adScope,
     acos: adScope.cost !== null && adScope.sales !== null && adScope.sales > 0 ? adScope.cost / adScope.sales : null,
+    // Attribution ratio, not a mutually exclusive share of total sales.
     share: adsAligned && adScope.sales !== null && revenue !== null && revenue > 0 ? adScope.sales / revenue : null,
     spendShare: adsAligned && adScope.cost !== null && revenue !== null && revenue > 0 ? adScope.cost / revenue : null,
   } : null;
   const covered = facts.filter(item => item.supplyFresh && item.row.stock?.cover != null);
   const coverage = covered.length ? covered.filter(item => item.row.stock!.cover! >= resolveOperatingRules(market, item.row.sku, model.ruleOverrides).supplyCoverDays).length / covered.length : null;
-  const matches = (item: typeof facts[number], kind: string) => kind === "all" || kind === "revenue"
+  const contributes = (item: typeof facts[number]) => item.current !== null && item.current.currency === currency && item.current.productSales > 0;
+  const matches = (item: typeof facts[number], kind: string) => kind === "all" || kind === "revenue" && contributes(item)
     || kind === "focus" && item.issues.length > 0
     || kind === "loss" && item.issues.some(issue => issue === "利润为负" || issue === "利润待核查")
     || kind === "advertising" && item.issues.includes("广告待核查")
@@ -52,7 +54,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const attentionFilter = !["all", "revenue", "missing"].includes(filter);
   const listFacts = !query && attentionFilter ? focusFacts : facts;
   const listPeriod = !query && attentionFilter ? attentionPeriod : period;
-  const matched = listFacts.filter(item => query ? [item.row.sku, ...item.row.sourceSkus, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) : matches(item, filter));
+  const matched = listFacts.filter(item => query ? [item.row.sku, ...item.row.sourceSkus, item.row.productName, item.current?.asin, item.current?.msku].some(value => value?.toLowerCase().includes(query)) && (filter !== "revenue" || contributes(item)) : matches(item, filter));
   const impact = (item: typeof facts[number]) => {
     if (item.complete && item.current?.quality?.profitVerified && item.previous?.quality?.profitVerified && item.previous.quality.completePeriod !== false && item.current.actualProfit !== null && item.previous.actualProfit !== null && item.previous.currency === item.current.currency) return Math.abs(item.current.actualProfit - item.previous.actualProfit);
     // Missing prior profit is not zero profit. Use a known revenue fact instead.
@@ -61,7 +63,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const priority = (item: typeof facts[number]) => item.issues.includes("利润为负") ? 0 : item.issues.includes("当前供货风险") ? 1 : item.issues.length ? 2 : 3;
   const impactRank = (a: typeof facts[number], b: typeof facts[number]) => priority(a) - priority(b) || impact(b) - impact(a) || a.row.sku.localeCompare(b.row.sku);
   const rank = (a: typeof facts[number], b: typeof facts[number]) => {
-    if (sort === "revenue" || filter === "revenue") return (b.current?.productSales ?? -Infinity) - (a.current?.productSales ?? -Infinity) || a.row.sku.localeCompare(b.row.sku);
+    if (sort === "revenue") return (b.current?.productSales ?? -Infinity) - (a.current?.productSales ?? -Infinity) || a.row.sku.localeCompare(b.row.sku);
     if (sort === "margin") {
       const margin = (item: typeof facts[number]) => item.current && item.current.productSales > 0 && item.current.actualProfit !== null ? item.current.actualProfit / item.current.productSales : Infinity;
       return margin(a) - margin(b) || a.row.sku.localeCompare(b.row.sku);
@@ -104,7 +106,12 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   }
   const chart = months.map(month => {
     const points = rows.flatMap(row => row.history.filter(point => point.reportMonth === month && point.currency === currency));
-    return { month, revenue: points.length ? points.reduce((total, point) => total + point.productSales, 0) : null, profit: points.length && points.every(point => point.actualProfit !== null) ? points.reduce((total, point) => total + point.actualProfit!, 0) : null };
+    const complete = completeMonth(month);
+    const dates = [...new Set(points.map(point => point.quality?.businessAsOf).filter((date): date is string => Boolean(date)))];
+    const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).toISOString().slice(0, 10);
+    return { month, revenue: points.length ? points.reduce((total, point) => total + point.productSales, 0) : null, profit: points.length && points.every(point => point.actualProfit !== null) ? points.reduce((total, point) => total + point.actualProfit!, 0) : null,
+      complete, mtd: points.length > 0 && month === currentMonth,
+      asOf: dates.length === 1 && points.every(point => point.quality?.businessAsOf === dates[0]) ? dates[0] : complete && dates.length === 0 ? monthEnd : null };
   });
   return { model: selected, market, period, focusPeriod, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
     summary: { revenue, profit, units, returns, adSales, adCost, advertising, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
