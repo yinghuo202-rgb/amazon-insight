@@ -21,7 +21,7 @@ export type GerpgoConnectionResult = {
 };
 
 export class GerpgoConnectionError extends Error {
-  constructor(message: string, public readonly httpStatus = 502) { super(message); }
+  constructor(message: string, public readonly httpStatus = 502, public readonly retryable = false) { super(message); }
 }
 
 function configuration(env: Environment) {
@@ -172,7 +172,7 @@ export async function createGerpgoClient(env: Environment = process.env, fetcher
     try {
       response = await fetcher(`${config.baseUrl}${endpoint}`, { method: "POST", headers, body, cache: "no-store", redirect: "error", signal });
     } catch {
-      throw new GerpgoConnectionError(signal.aborted ? "积加接口请求超时，请检查 NAS 网络后重试。" : "无法连接积加接口，请检查 NAS 出站网络和 HTTPS 访问。", 502);
+      throw new GerpgoConnectionError(signal.aborted ? "积加接口请求超时，请检查 NAS 网络后重试。" : "无法连接积加接口，请检查 NAS 出站网络和 HTTPS 访问。", 502, true);
     }
     const stage = accessToken ? "店铺读取" : "凭证申请";
     if (response.status === 429) throw new GerpgoConnectionError("积加接口限流，请稍后重试。", 429);
@@ -239,7 +239,9 @@ async function pacedGerpgoPost(client: Awaited<ReturnType<typeof createGerpgoCli
   for (let attempt = 0; ; attempt++) {
     try { return await client.post(endpoint, payload); }
     catch (error) {
-      if (!(error instanceof GerpgoConnectionError) || ![429, 509].includes(error.httpStatus) || attempt === 2) throw error;
+      // Only transport failures and explicit rate limits are retryable. A generic
+      // 502 may instead be a business-contract or authorization failure.
+      if (!(error instanceof GerpgoConnectionError) || !error.retryable && ![429, 509].includes(error.httpStatus) || attempt === 2) throw error;
     } finally {
       // Provider limits are response-to-next-request, not request-start pacing.
       await pause(Math.max(6000, options.intervalMs ?? 6000));

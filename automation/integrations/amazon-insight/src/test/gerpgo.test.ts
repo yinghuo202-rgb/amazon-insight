@@ -8,6 +8,41 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 const mockFetch = (...responses: Response[]) => vi.fn<typeof fetch>().mockImplementation(async () => responses.shift()!);
 
 describe("GERPgo read-only connection check", () => {
+  it("retries a transport timeout on the same advertising page and emits each row once", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const ad = { marketId: 1, msku: "SKU-TIMEOUT", asin: "ASIN-TIMEOUT", cost: 1 };
+    fetcher.mockResolvedValueOnce(json(token));
+    fetcher.mockRejectedValueOnce(new DOMException("private-provider-details", "TimeoutError"));
+    fetcher.mockResolvedValueOnce(json({ code: 200, data: { rows: [ad], total: 1 } }));
+    const client = await createGerpgoClient(env, fetcher), saved: unknown[] = [], pauses: number[] = [];
+    const result = await collectGerpgoPages(client, "/operation/ads/adsAsinAnalytical/page", { marketId: 1 }, async page => { saved.push(...page.rows); }, { pause: async ms => { pauses.push(ms); } });
+    expect(result).toMatchObject({ pages: 1, total: 1 });
+    expect(saved).toEqual([ad]);
+    expect(pauses).toEqual([6000, 6000]);
+    expect(fetcher.mock.calls[1][1]?.body).toBe(fetcher.mock.calls[2][1]?.body);
+  });
+  it("stops persistent transport failure after three paced attempts without emitting partial rows", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(token)).mockRejectedValue(new Error("private-provider-details"));
+    const client = await createGerpgoClient(env, fetcher), saved: unknown[] = [], pauses: number[] = [];
+    const error = await collectGerpgoPages(client, "/operation/ads/adsAsinAnalytical/page", { marketId: 1 }, async page => { saved.push(...page.rows); }, { pause: async ms => { pauses.push(ms); } }).catch(value => value);
+    expect(error).toMatchObject({ httpStatus: 502 });
+    expect(String(error)).not.toContain("private-provider-details");
+    expect(saved).toEqual([]);
+    expect(pauses).toEqual([6000, 6000, 6000]);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+  it("does not retry business failure disguised as 502 or an authorization rejection", async () => {
+    for (const response of [json({ code: 400, messages: ["private-provider-details"] }), json({ code: 403 }), new Response("private-provider-details", { status: 502 })]) {
+      const fetcher = mockFetch(json(token), response);
+      const client = await createGerpgoClient(env, fetcher), saved: unknown[] = [], pauses: number[] = [];
+      const error = await collectGerpgoPages(client, "/operation/ads/adsAsinAnalytical/page", { marketId: 1 }, async page => { saved.push(...page.rows); }, { pause: async ms => { pauses.push(ms); } }).catch(value => value);
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).not.toContain("private-provider-details");
+      expect(saved).toEqual([]);
+      expect(pauses).toEqual([6000]);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  });
   it("retries business code 509 through the real client without exposing provider messages", async () => {
     const fetcher = mockFetch(json(token), json({ code: 509, messages: ["private-provider-details"] }), json({ code: 200, data: { rows: [], total: 0 } }));
     const client = await createGerpgoClient(env, fetcher);
