@@ -1,12 +1,19 @@
 import { z } from "zod";
 
 import { createSession, getSharedLoginUser, normalizeEmail, verifyPassword } from "@/lib/auth";
+import { consumeLoginAttempt } from "@/lib/login-throttle";
 
 export const runtime = "nodejs";
 
 const schema = z.object({ email: z.string().email(), password: z.string().min(8).max(200) });
 
 export async function POST(request: Request) {
+  try {
+    const budget = consumeLoginAttempt();
+    if (!budget.allowed) return Response.json({ error: "登录尝试过于频繁，请按提示稍后重试。" }, { status: 429, headers: { "Retry-After": String(budget.retryAfter), "Cache-Control": "no-store" } });
+  } catch {
+    return Response.json({ error: "登录保护暂不可用，请稍后重试；已有登录会话不受影响。" }, { status: 503, headers: { "Retry-After": "5", "Cache-Control": "no-store" } });
+  }
   try {
     const payload = schema.parse(await request.json());
     const user = await getSharedLoginUser();

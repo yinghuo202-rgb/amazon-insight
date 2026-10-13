@@ -26,7 +26,7 @@ from .jobs.product_catalog import _extract_product_images, _merge_product_detail
 from .replenishment import ReplenishmentParameters, calculate_replenishment
 from .sku import SkuNormalizer
 from .jobs.profitability_snapshot import run as run_profitability_snapshot
-from .report_versions import current_reports, report_transaction, restore_reports
+from .report_versions import _binding_digest, current_reports, report_transaction, restore_reports, verify_report_guard
 from .jobs.sales_history import run as run_sales_history
 
 
@@ -847,14 +847,32 @@ def _patch_shipments(source_dir: Path, reports_dir: Path, uploaded_names: list[s
     return ["document_master.json"]
 
 
-def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, before_commit=None) -> dict[str, Any]:
+def publish_target_fingerprint(batch_dir: Path) -> str:
+    raw = (batch_dir / "manifest.json").read_bytes()
+    manifest = json.loads(raw)
+    hashes = []
+    for item in manifest["files"]:
+        if not isinstance(item.get("name"), str) or Path(item["name"]).name != item["name"]:
+            raise ValueError("批次源文件无效")
+        hashes.append([item["name"], _sha256(batch_dir / "source" / item["name"])])
+    return _binding_digest([hashlib.sha256(raw).hexdigest(), hashes])
+
+
+def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, before_commit=None, expected_baseline=None, expected_target=None) -> dict[str, Any]:
     original = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
     if original.get("status") == "published":
         raise ValueError("该批次已经发布")
     for item in original["files"]:
         if Path(item["name"]).name != item["name"] or _sha256(batch_dir / "source" / item["name"]) != item["sha256"]:
             raise ValueError("预览后的源文件已变化，请重新上传解析")
-    with report_transaction(reports_dir, snapshots_dir, before_commit=before_commit) as (stage, version):
+    def verify():
+        verify_report_guard(reports_dir, expected_baseline, expected_target, lambda: publish_target_fingerprint(batch_dir))
+    def guard():
+        if before_commit is not None:
+            before_commit()
+        verify()
+    with report_transaction(reports_dir, snapshots_dir, before_commit=guard) as (stage, version):
+        verify()
         previous_incoming = current_reports(reports_dir).parent / "incoming"
         if previous_incoming.is_dir():
             shutil.copytree(previous_incoming, stage.parent / "incoming", dirs_exist_ok=True)
@@ -941,8 +959,8 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
     return manifest
 
 
-def restore_version(version: str, reports_dir: Path, snapshots_dir: Path) -> dict[str, Any]:
-    return restore_reports(version, reports_dir, snapshots_dir)
+def restore_version(version: str, reports_dir: Path, snapshots_dir: Path, *, expected_baseline=None, expected_target=None) -> dict[str, Any]:
+    return restore_reports(version, reports_dir, snapshots_dir, expected_baseline=expected_baseline, expected_target=expected_target)
 
 
 def auto_publish_wps(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, task_id: str, lease: str) -> dict[str, Any]:
@@ -987,6 +1005,8 @@ def main() -> int:
     parser.add_argument("--reports-dir")
     parser.add_argument("--snapshots-dir")
     parser.add_argument("--version")
+    parser.add_argument("--expected-baseline")
+    parser.add_argument("--expected-target")
     parser.add_argument("--source-file")
     parser.add_argument("--file-token")
     parser.add_argument("--confirmed-inventory-date")
@@ -1003,7 +1023,7 @@ def main() -> int:
     elif args.command == "publish":
         if not args.batch_dir or not args.reports_dir or not args.snapshots_dir:
             parser.error("publish requires --batch-dir, --reports-dir and --snapshots-dir")
-        payload = publish_batch(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir))
+        payload = publish_batch(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir), expected_baseline=args.expected_baseline, expected_target=args.expected_target)
     elif args.command == "receive-wps":
         if not args.source_file or not args.share_url:
             parser.error("receive-wps requires --source-file and --share-url")
@@ -1016,7 +1036,7 @@ def main() -> int:
     else:
         if not args.version or not args.reports_dir or not args.snapshots_dir:
             parser.error("restore requires --version, --reports-dir and --snapshots-dir")
-        payload = restore_version(str(args.version), Path(args.reports_dir), Path(args.snapshots_dir))
+        payload = restore_version(str(args.version), Path(args.reports_dir), Path(args.snapshots_dir), expected_baseline=args.expected_baseline, expected_target=args.expected_target)
     print(json.dumps(payload, ensure_ascii=False))
     return 0
 

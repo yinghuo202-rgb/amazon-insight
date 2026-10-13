@@ -52,10 +52,12 @@ if (phase === "worker") {
   const team = await fetch(base + "/api/team", { headers });
   assert.equal(team.status, 200);
   const tasks = (await team.json()).tasks;
-  assert.equal(tasks.length, 1);
-  assert.equal(tasks[0].sku, "SMOKE");
-  assert.equal(tasks[0].market, "US");
-  assert.equal(tasks[0].history.length, 1);
+  assert.equal(tasks.length, phase === "fresh" ? 1 : 2);
+  const manualTask = tasks.find(task => task.sku === "SMOKE");
+  assert.ok(manualTask);
+  assert.equal(manualTask.market, "US");
+  assert.equal(manualTask.history.length, 1);
+  assert.equal((await fetch(base + "/api/inventory/data-import", { headers })).status, 200, "publication confirmation module must load in the actual image");
   const schedules = await fetch(base + "/api/inventory/data-refresh?tasks=1", { headers });
   assert.equal(schedules.status, 200);
   const config = await schedules.json();
@@ -74,6 +76,40 @@ if (phase === "worker") {
     const html = await response.text();
     assert.ok(!html.includes("运营数据暂时无法显示"), `render error: ${page}`);
   }
+  // Actual packaged Next startup hook, not a direct import of the coordinator.
+  // A synthetic unknown listing must be diagnosed, never acquire invented facts.
+  const accountUrl = process.env.DATABASE_URL;
+  assert.ok(accountUrl?.startsWith("file:/"), "isolated image verification requires the existing SQLite account volume");
+  const accounts = new DatabaseSync(accountUrl.slice(5));
+  accounts.exec("PRAGMA busy_timeout=5000");
+  try {
+    if (phase === "fresh") {
+      const owner = accounts.prepare('SELECT "workspaceId","createdById" FROM "CollaborationTask" WHERE id=?').get(manualTask.id);
+      assert.ok(owner);
+      const evidence = { version: "synthetic-evidence", publishedVersion: null, period: "2000-01", currency: "USD", capturedAt: new Date().toISOString(),
+        sales: null, profit: null, profitVerified: false, adShare: null, returnRate: null, fbaDays: null, supplyDays: null, issues: [], dataIssues: [] };
+      const context = { listingId: "synthetic-unknown-listing", issue: "利润待核查", baseline: evidence, latest: evidence };
+      const stamp = Date.now();
+      accounts.prepare('INSERT INTO "CollaborationTask"(id,"workspaceId",sku,market,title,note,status,"issueKey","contextJson","historyJson","createdById","updatedById","createdAt","updatedAt") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run("c" + randomBytes(12).toString("hex"), owner.workspaceId, "SMOKE-REVIEW-MISSING", "US", "Image automatic review verification", "Synthetic manual conclusion preserved", "DONE", "smoke-unknown-review", JSON.stringify(context), "[]", owner.createdById, owner.createdById, stamp, stamp);
+    }
+    let reconciled = false;
+    for (let attempt = 0; attempt < 75; attempt++) {
+      const run = state.prepare("SELECT status,summary_json FROM runs WHERE job_name='operating-review-reconcile' ORDER BY id DESC LIMIT 1").get();
+      if (run) {
+        const result = JSON.parse(run.summary_json);
+        reconciled = run.status === "degraded" && result.scanned === 1 && result.skipped === 1 && result.failed === 0 && result.updated === 0;
+      }
+      if (reconciled) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    assert.ok(reconciled, "packaged production instrumentation must automatically audit an unknown managed listing without any webpage action");
+    const preserved = accounts.prepare('SELECT status,note,"historyJson","contextJson" FROM "CollaborationTask" WHERE sku=?').get("SMOKE-REVIEW-MISSING");
+    assert.equal(preserved.status, "DONE");
+    assert.equal(preserved.note, "Synthetic manual conclusion preserved");
+    assert.deepEqual(JSON.parse(preserved.historyJson), []);
+    assert.equal(JSON.parse(preserved.contextJson).latest.version, "synthetic-evidence");
+  } finally { accounts.close(); }
 }
 state.close();
 console.log(`Image runtime verification passed: ${phase}`);

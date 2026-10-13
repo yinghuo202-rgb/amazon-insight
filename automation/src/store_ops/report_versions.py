@@ -65,6 +65,36 @@ def _sync_directory(path: Path) -> None:
             os.close(descriptor)
 
 
+def _binding_digest(value) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def report_file_hashes(directory: Path, *, allow_missing=False) -> list:
+    if not directory.is_dir() and not allow_missing:
+        raise ValueError("确认目标报告目录不存在")
+    files = sorted((p for p in directory.glob("*.json") if p.is_file() and not p.name.startswith(".") and p.name != "current.json"), key=lambda p: p.name.encode("utf-8"))
+    return [[p.name, hashlib.sha256(p.read_bytes()).hexdigest()] for p in files]
+
+
+def report_directory_fingerprint(directory: Path) -> str:
+    return _binding_digest(report_file_hashes(directory))
+
+
+def report_baseline_fingerprint(root: Path) -> str:
+    pointer = root / "current.json"
+    pointer_hash = hashlib.sha256(pointer.read_bytes()).hexdigest() if pointer.exists() else "legacy-flat-v1"
+    return _binding_digest([pointer_hash, report_file_hashes(current_reports(root), allow_missing=not pointer.exists())])
+
+
+def verify_report_guard(root: Path, expected_baseline, expected_target, target_fingerprint) -> None:
+    if expected_baseline is None and expected_target is None:
+        return  # Existing worker/CLI callers retain their existing authorization guards.
+    if any(not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value) for value in (expected_baseline, expected_target)):
+        raise ValueError("确认保护参数不完整")
+    if report_baseline_fingerprint(root) != expected_baseline or target_fingerprint() != expected_target:
+        raise ValueError("确认后的报告基线或操作目标已变化，请重新验证")
+
+
 @contextmanager
 def report_transaction(root: Path, snapshots: Path, before_commit=None):
     """Yield (staged reports, backup version). Publish only on successful exit.
@@ -127,13 +157,20 @@ def report_transaction(root: Path, snapshots: Path, before_commit=None):
         lock.close()  # OS releases the lease even if the process exits unexpectedly.
 
 
-def restore_reports(version: str, root: Path, snapshots: Path) -> dict:
+def restore_reports(version: str, root: Path, snapshots: Path, *, expected_baseline=None, expected_target=None, before_commit=None) -> dict:
     if not VERSION_RE.fullmatch(version):
         raise ValueError("数据版本编号不正确")
     source = snapshots / version / "reports"
     if not source.is_dir():
         raise FileNotFoundError(f"数据版本不存在: {version}")
-    with report_transaction(root, snapshots) as (stage, new_version):
+    def verify():
+        verify_report_guard(root, expected_baseline, expected_target, lambda: report_directory_fingerprint(source))
+    def guard():
+        if before_commit is not None:
+            before_commit()
+        verify()
+    with report_transaction(root, snapshots, before_commit=guard) as (stage, new_version):
+        verify()
         # Deletions belong to a version too; never leave new-only files after rollback.
         for item in stage.glob("*.json"):
             item.unlink()

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildOperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { profitabilityRowSchema } from "@/lib/inventory/contracts";
-import { appendTaskHistory, buildReviewEvidence, preserveReviewBaseline } from "@/lib/inventory/operating-review";
+import { appendTaskHistory, buildReviewEvidence, preserveReviewBaseline, reviewEvidenceUpdate, taskHistorySchema } from "@/lib/inventory/operating-review";
 import { safeSkuReturnHref, skuOperatingHref } from "@/lib/inventory/operating-navigation";
 import { queryOperatingModel } from "@/lib/inventory/operating-query";
 const now = new Date("2026-10-09T00:00:00Z");
@@ -42,6 +42,75 @@ describe("SKU review evidence", () => {
     expect(JSON.parse(appendTaskHistory(appendTaskHistory("[]", event), event))).toHaveLength(2);
     expect(() => appendTaskHistory("{}", event)).toThrow();
     expect(() => preserveReviewBaseline("{}", buildReviewEvidence(model(), request, now).context)).toThrow();
+  });
+  it("reopens handled reviews only for a new triggered version while retaining the written conclusion", () => {
+    const data = model(), initial = buildReviewEvidence(data, request, now);
+    const record = { contextJson: JSON.stringify(initial.context), historyJson: JSON.stringify([{ at: now.toISOString(), actor: "shared-account", userId: "shared", action: "update-task", status: "DONE", note: "已核对成本" }]), status: "DONE", note: "已核对成本" };
+    expect(reviewEvidenceUpdate(record, initial, { actor: "system", userId: "system", now })).toBeNull();
+    data.dataVersion = "v2"; data.publishedVersion = "new-publication-v2"; data.rows[0].history[0].productSales = 900;
+    const next = buildReviewEvidence(data, { ...request, version: "v2" }, now);
+    const update = reviewEvidenceUpdate(record, next, { actor: "system", userId: "system", now })!;
+    expect(update.status).toBe("REVIEW");
+    expect(JSON.parse(update.contextJson).baseline.version).toBe("legacy");
+    expect(JSON.parse(update.historyJson).at(-1)).toMatchObject({ actor: "system", previousStatus: "DONE", status: "REVIEW", note: "已核对成本", evidence: { version: "v2", period: "2026-09", sales: 900 }, triggered: true });
+    expect(update).not.toHaveProperty("note");
+  });
+  it("preserves every intermediate evidence snapshot and compatible legacy history", () => {
+    const data = model(), initial = buildReviewEvidence(data, request, now);
+    let record = { contextJson: JSON.stringify(initial.context), historyJson: "[]", status: "DISMISSED", note: "先观察" };
+    data.dataVersion = "v2"; data.publishedVersion = "new-publication-v2"; data.rows[0].history[0].productSales = 900;
+    const a = reviewEvidenceUpdate(record, buildReviewEvidence(data, { ...request, version: "v2" }, now), { actor: "system", userId: "system", now })!;
+    record = { ...record, ...a }; data.dataVersion = "v3"; data.rows[0].history[0].productSales = 800;
+    const b = reviewEvidenceUpdate(record, buildReviewEvidence(data, { ...request, version: "v3" }, now), { actor: "system", userId: "system", now })!;
+    const history = taskHistorySchema.parse(JSON.parse(b.historyJson));
+    expect(history.map(event => event.evidence?.sales)).toEqual([1000, 900, 800]);
+    expect(history.map(event => event.evidence?.version)).toEqual(["legacy", "v2", "v3"]);
+    expect(history[0].action).toBe("preserve-legacy-evidence");
+  });
+  it("does not automatically close a resolved problem or repeat a handled evidence version", () => {
+    const data = model(), initial = buildReviewEvidence(data, request, now);
+    const record = { contextJson: JSON.stringify(initial.context), historyJson: "[]", status: "IN_PROGRESS", note: "继续核查" };
+    data.dataVersion = "resolved"; data.rows[0].history[0].actualProfit = 300; data.rows[0].history[0].actualMargin = .3;
+    const review = buildReviewEvidence(data, { ...request, version: "resolved" }, now, true);
+    const update = reviewEvidenceUpdate(record, review, { actor: "system", userId: "system", now })!;
+    expect(update.status).toBe("IN_PROGRESS"); expect(JSON.parse(update.historyJson).at(-1).triggered).toBe(false);
+    expect(reviewEvidenceUpdate({ ...record, ...update, status: "DONE" }, review, { actor: "system", userId: "system", now })).toBeNull();
+    expect(taskHistorySchema.parse(JSON.parse(appendTaskHistory("[]", { at: now.toISOString(), actor: "shared-account", userId: "shared", action: "update-task", status: "DONE", note: "旧事件" })))[0].evidence).toBeUndefined();
+  });
+  it("a report rollback updates the current evidence without duplicating old snapshots or reopening a handled issue", () => {
+    const data = model(), first = buildReviewEvidence(data, request, now);
+    const base = { contextJson: JSON.stringify(first.context), historyJson: "[]", status: "DONE", note: "原结论" };
+    data.dataVersion = "v2"; data.rows[0].history[0].productSales = 900;
+    const next = reviewEvidenceUpdate(base, buildReviewEvidence(data, { ...request, version: "v2" }, now), { actor: "system", userId: "", now })!;
+    const rolledBack = reviewEvidenceUpdate({ ...base, ...next, status: "DONE" }, first, { actor: "system", userId: "", now })!;
+    expect(JSON.parse(rolledBack.contextJson).latest.version).toBe("legacy");
+    expect(rolledBack.status).toBe("DONE"); expect(JSON.parse(rolledBack.historyJson)).toHaveLength(2);
+  });
+  it("daily or other-SKU model hash changes do not reopen handled issues with unchanged published evidence", () => {
+    const data = model(); data.publishedVersion = "data-published-1";
+    const first = buildReviewEvidence(data, request, now);
+    const record = { contextJson: JSON.stringify(first.context), historyJson: "[]", status: "DISMISSED", note: "人工无需处理" };
+    data.dataVersion = "next-day-global-hash";
+    const identical = buildReviewEvidence(data, { ...request, version: data.dataVersion }, new Date("2026-10-10T00:00:00Z"));
+    expect(reviewEvidenceUpdate(record, identical, { actor: "system", userId: "", now })!.status).toBe("DISMISSED");
+    data.rows[0].history[0].productSales = 900;
+    expect(reviewEvidenceUpdate(record, buildReviewEvidence(data, { ...request, version: data.dataVersion }, now), { actor: "system", userId: "", now })!.status).toBe("REVIEW");
+    data.rows[0].history[0].productSales = 1000; data.publishedVersion = "data-published-2";
+    const republished = reviewEvidenceUpdate(record, buildReviewEvidence(data, { ...request, version: data.dataVersion }, now), { actor: "system", userId: "", now })!;
+    expect(republished.status).toBe("DISMISSED"); expect(republished.historyJson).toBe(record.historyJson);
+    expect(JSON.parse(republished.contextJson).latest.publishedVersion).toBe("data-published-2");
+  });
+  it.each(["period", "rules", "inventoryDate", "awdDate"])("real %s business evidence changes still retrigger a handled issue", change => {
+    const data = model(), first = buildReviewEvidence(data, request, now);
+    const record = { contextJson: JSON.stringify(first.context), historyJson: "[]", status: "DONE", note: "人工结论" };
+    data.dataVersion = "real-business-change";
+    let period = request.period;
+    if (change === "period") { period = "2026-08"; data.rows[0].history.push({ ...data.rows[0].history[0], reportMonth: period }); }
+    if (change === "rules") data.ruleOverrides = [{ market: "US", sku: "SKU-A", values: { profitMarginMinPercent: 30 } }];
+    if (change === "inventoryDate") data.rows[0].inventoryDate = "2026-10-08";
+    if (change === "awdDate") data.rows[0].awdDate = "2026-10-08";
+    const update = reviewEvidenceUpdate(record, buildReviewEvidence(data, { ...request, period, version: data.dataVersion }, now), { actor: "system", userId: "", now })!;
+    expect(update.status).toBe("REVIEW"); expect(update).not.toHaveProperty("note");
   });
 });
 describe("navigation and financial ranking", () => {

@@ -104,13 +104,19 @@ export async function finalizeChunkedImport(batchId: string) {
   return runImporter("inspect", directory);
 }
 
-export async function publishImportBatch(batchId: string) {
+export type DataOperationGuard = { expectedBaseline: string; expectedTarget: string };
+function operationGuardArgs(guard?: DataOperationGuard) {
+  if (!guard) return [];
+  if (![guard.expectedBaseline, guard.expectedTarget].every(value => /^[a-f0-9]{64}$/.test(value))) throw new Error("数据确认保护参数无效。");
+  return ["--expected-baseline", guard.expectedBaseline, "--expected-target", guard.expectedTarget];
+}
+export async function publishImportBatch(batchId: string, guard?: DataOperationGuard) {
   const batchDirectory = path.join(uploadsRoot(), safeBatchId(batchId));
   const manifest = await readManifest(batchDirectory);
   if (manifest.status === "published") throw new Error("该批次已经发布。");
   if (!manifest.summary.publishableCount) throw new Error("该批次没有可以发布的数据。");
   await mkdir(snapshotsRoot(), { recursive: true });
-  return runImporter("publish", batchDirectory, ["--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot()]);
+  return runImporter("publish", batchDirectory, ["--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot(), ...operationGuardArgs(guard)]);
 }
 
 export async function getImportBatch(batchId: string) {
@@ -143,9 +149,9 @@ export async function listDataVersions(): Promise<DataVersion[]> {
   })).then((versions) => versions.sort((left, right) => right.version.localeCompare(left.version)).slice(0, 20));
 }
 
-export async function restoreDataVersion(version: string) {
+export async function restoreDataVersion(version: string, guard?: DataOperationGuard) {
   if (!/^data-\d{8}-\d{6}-[a-zA-Z0-9-]{1,20}$/.test(version)) throw new Error("数据版本编号不正确。");
-  return runPythonJson(["-m", "store_ops.uploaded_data", "restore", "--version", version, "--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot()]);
+  return runPythonJson(["-m", "store_ops.uploaded_data", "restore", "--version", version, "--reports-dir", runtimePath("reports"), "--snapshots-dir", snapshotsRoot(), ...operationGuardArgs(guard)]);
 }
 
 async function readManifest(batchDirectory: string): Promise<ImportBatch> {

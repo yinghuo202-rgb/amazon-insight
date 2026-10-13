@@ -1,58 +1,106 @@
-import { requireCurrentUser } from "@/lib/auth";
+import { cookies } from "next/headers";
+import { z } from "zod";
+import { getSharedLoginUser, requireCurrentUser, SESSION_COOKIE, verifyPassword } from "@/lib/auth";
 import { appendImportChunk, finalizeChunkedImport, initializeChunkedImport, listDataVersions, listImportBatches, publishImportBatch, restoreDataVersion } from "@/lib/inventory/data-import";
+import { DataConfirmationError, DataOperationConfirmationStore, readDataOperationBinding, validateDataOperationTarget, type DataOperation } from "@/lib/inventory/data-operation-confirmation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-async function requireSharedUser() {
-  const user = await requireCurrentUser();
-  return user;
+const noStore = { "Cache-Control": "no-store" };
+function failure(error: unknown) {
+  if (error instanceof Error && error.message === "UNAUTHENTICATED") return Response.json({ error: "请先登录。" }, { status: 401, headers: noStore });
+  if (error instanceof DataConfirmationError) return Response.json({ error: error.message }, { status: error.status, headers: noStore });
+  return Response.json({ error: "数据操作未完成，请检查预览并重新验证。" }, { status: 400, headers: noStore });
 }
-
+function requireBrowserWrite(request: Request, type = "application/json") {
+  const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || request.url);
+  if (request.headers.get("origin") !== origin.origin || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== type) throw new DataConfirmationError("请从本站数据更新页面操作。", 403);
+  return origin;
+}
+function requireSecure(origin: URL) {
+  if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new DataConfirmationError("再次密码验证需要 HTTPS 或本机可信环境。", 403);
+}
+async function jsonBody(request: Request) {
+  const text = await request.text();
+  if (Buffer.byteLength(text) > 65536) throw new DataConfirmationError("数据操作请求过大。", 413);
+  const body = JSON.parse(text);
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new DataConfirmationError("数据操作参数无效。", 422);
+  return body;
+}
+async function actorFor(userId: string) {
+  const sessionToken = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!sessionToken) throw new Error("UNAUTHENTICATED");
+  return { userId, sessionToken };
+}
+function targetFor(body: { operation?: unknown; action?: unknown; batchId?: unknown; version?: unknown }) {
+  const operation: DataOperation = body.operation === "restore" || body.action === "restore" ? "restore" : "publish";
+  const target = operation === "restore" ? body.version : body.batchId;
+  if (typeof target !== "string") throw new DataConfirmationError("缺少操作目标。", 422);
+  validateDataOperationTarget(operation, target);
+  return { operation, target };
+}
 export async function GET() {
   try {
-    await requireSharedUser();
+    await requireCurrentUser();
     const [batches, versions] = await Promise.all([listImportBatches(), listDataVersions()]);
-    return Response.json({ batches, versions });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error && error.message === "FORBIDDEN" ? "只有管理员可以管理数据上传。" : "无法读取上传记录。" }, { status: 403 });
-  }
+    return Response.json({ batches, versions }, { headers: noStore });
+  } catch (error) { return failure(error); }
 }
-
 export async function POST(request: Request) {
   try {
-    await requireSharedUser();
-    const body = await request.json() as { action?: string; batchId?: string; files?: Array<{ name: string; size: number }> };
-    if (body.action === "initialize") return Response.json({ upload: await initializeChunkedImport(body.files ?? []) }, { status: 201 });
-    if (body.action === "finalize" && body.batchId) return Response.json({ batch: await finalizeChunkedImport(body.batchId) });
-    return Response.json({ error: "上传操作参数不正确。" }, { status: 400 });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "文件上传失败。" }, { status: 400 });
-  }
+    const user = await requireCurrentUser(), origin = requireBrowserWrite(request), body = await jsonBody(request);
+    if (body.action === "confirm_operation") {
+      requireSecure(origin);
+      const parsed = z.object({ action: z.literal("confirm_operation"), operation: z.enum(["publish", "restore"]), batchId: z.string().optional(), version: z.string().optional(), currentPassword: z.string().min(1).max(1024) }).strict().safeParse(body);
+      if (!parsed.success) throw new DataConfirmationError("请填写当前共用账号密码及唯一操作目标。", 422);
+      const { operation, target } = targetFor(parsed.data);
+      if (operation === "publish" && parsed.data.version || operation === "restore" && parsed.data.batchId) throw new DataConfirmationError("操作目标不唯一。", 422);
+      const actor = await actorFor(user.id), store = new DataOperationConfirmationStore();
+      store.reservePasswordAttempt(actor);
+      const shared = await getSharedLoginUser();
+      if (!shared || shared.id !== user.id || !verifyPassword(parsed.data.currentPassword, shared.passwordHash)) {
+        store.audit(actor, { operation, target }, "password_rejected");
+        throw new DataConfirmationError("当前密码验证失败。", 403);
+      }
+      const binding = await readDataOperationBinding(operation, target);
+      return Response.json({ confirmation: store.issue(binding, actor) }, { headers: noStore });
+    }
+    if (body.action === "initialize") {
+      const files = z.array(z.object({ name: z.string().min(1).max(500), size: z.number().int().positive() }).strict()).min(1).max(100).parse(body.files);
+      return Response.json({ upload: await initializeChunkedImport(files) }, { status: 201, headers: noStore });
+    }
+    if (body.action === "finalize" && typeof body.batchId === "string") return Response.json({ batch: await finalizeChunkedImport(body.batchId) }, { headers: noStore });
+    throw new DataConfirmationError("上传操作参数不正确。", 422);
+  } catch (error) { return failure(error); }
 }
-
 export async function PUT(request: Request) {
   try {
-    await requireSharedUser();
-    const url = new URL(request.url);
-    const batchId = url.searchParams.get("batchId") ?? "";
-    const fileIndex = Number(url.searchParams.get("fileIndex"));
-    const offset = Number(url.searchParams.get("offset"));
-    if (!Number.isInteger(fileIndex) || !Number.isInteger(offset) || offset < 0) return Response.json({ error: "上传分片参数不正确。" }, { status: 400 });
-    return Response.json(await appendImportChunk(batchId, fileIndex, offset, Buffer.from(await request.arrayBuffer())));
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "文件分片上传失败。" }, { status: 400 });
-  }
+    await requireCurrentUser(); requireBrowserWrite(request, "application/octet-stream");
+    const url = new URL(request.url), batchId = url.searchParams.get("batchId") ?? "";
+    const fileIndex = Number(url.searchParams.get("fileIndex")), offset = Number(url.searchParams.get("offset"));
+    if (!url.searchParams.has("fileIndex") || !url.searchParams.has("offset") || !Number.isInteger(fileIndex) || fileIndex < 0 || !Number.isInteger(offset) || offset < 0) throw new DataConfirmationError("上传分片参数不正确。", 422);
+    return Response.json(await appendImportChunk(batchId, fileIndex, offset, Buffer.from(await request.arrayBuffer())), { headers: noStore });
+  } catch (error) { return failure(error); }
 }
-
 export async function PATCH(request: Request) {
   try {
-    await requireSharedUser();
-    const body = await request.json() as { batchId?: string; version?: string; action?: string };
-    if (body.action === "restore" && body.version) return Response.json({ restored: await restoreDataVersion(body.version) });
-    if (!body.batchId) return Response.json({ error: "缺少上传批次编号。" }, { status: 400 });
-    return Response.json({ batch: await publishImportBatch(body.batchId) });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "数据发布失败。" }, { status: 400 });
-  }
+    const user = await requireCurrentUser(); requireSecure(requireBrowserWrite(request));
+    const body = await jsonBody(request);
+    const parsed = z.object({ action: z.enum(["publish", "restore"]).optional(), batchId: z.string().optional(), version: z.string().optional(), confirmationToken: z.string().max(128).optional() }).strict().safeParse(body);
+    if (!parsed.success) throw new DataConfirmationError("发布确认参数无效。", 422);
+    const { operation, target } = targetFor(parsed.data);
+    if (operation === "publish" && parsed.data.version || operation === "restore" && parsed.data.batchId) throw new DataConfirmationError("操作目标不唯一。", 422);
+    if (!parsed.data.confirmationToken) throw new DataConfirmationError("请重新验证密码并确认操作。");
+    const actor = await actorFor(user.id), store = new DataOperationConfirmationStore();
+    const confirmed = store.consume(parsed.data.confirmationToken, { operation, target }, actor);
+    // Consumption is final even on failure; Python rechecks the binding under its report lock.
+    try {
+      const binding = await readDataOperationBinding(operation, target);
+      if (binding.baseline !== confirmed.baseline || binding.targetFingerprint !== confirmed.targetFingerprint) throw new DataConfirmationError("确认后的报告基线或操作目标已变化，请重新验证。");
+      const guard = { expectedBaseline: binding.baseline, expectedTarget: binding.targetFingerprint };
+      const result = operation === "restore" ? { restored: await restoreDataVersion(target, guard) } : { batch: await publishImportBatch(target, guard) };
+      store.audit(actor, binding, operation === "restore" ? "restored" : "published");
+      return Response.json(result, { headers: noStore });
+    } catch (error) { store.audit(actor, { operation, target }, "failed"); throw error; }
+  } catch (error) { return failure(error); }
 }

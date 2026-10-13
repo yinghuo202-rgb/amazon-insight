@@ -1,10 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Evidence = { version: string; period: string; currency: string; sales: number | null; profit: number | null; profitVerified: boolean };
+type Evidence = { version: string; period: string; currency: string; sales: number | null; profit: number | null; profitVerified: boolean; adShare?: number | null; returnRate?: number | null; fbaDays?: number | null; supplyDays?: number | null };
 type Task = { id: string; sku: string; market: string | null; title: string; note: string | null; status: string; updatedAt: string;
-  context: { issue: string; baseline: Evidence; latest: Evidence } | null; history: { at: string; actor: string; action: string; status: string; note: string | null }[] };
-type Snapshot = { workspace: { name: string }; tasks: Task[]; limited: boolean };
+  context: { issue: string; baseline: Evidence; latest: Evidence } | null; history: { at: string; actor: string; action: string; status: string; note: string | null; previousStatus?: string; evidence?: Evidence; triggered?: boolean }[] };
+type Snapshot = { workspace: { name: string }; tasks: Task[]; limited: boolean; nextCursor?: string | null };
 type Review = { sku: string; market: string; period: string; version: string; issues: string[] };
 const statuses = [["OPEN", "新发现"], ["REVIEW", "待复核"], ["IN_PROGRESS", "处理中"], ["DONE", "已处理"], ["DISMISSED", "无需处理"]];
 const inputClass = "min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm";
@@ -15,13 +15,23 @@ export function TeamWorkbench({ review }: { review?: Review }) {
   const drafts = useRef<Record<string, { note: string; baseNote: string }>>({});
   const [notice, setNotice] = useState("");
   const [conflicts, setConflicts] = useState<Record<string, boolean>>({});
-  const endpoint = review ? "/api/team?" + new URLSearchParams({ sku: review.sku, market: review.market }) : "/api/team";
-  const refresh = useCallback(async () => {
-    const response = await fetch(endpoint, { cache: "no-store" }), data = await response.json();
+  const [filterForm, setFilterForm] = useState({ sku: "", market: "" }), [filters, setFilters] = useState({ sku: "", market: "" });
+  const [queryRun, setQueryRun] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const snapshotRef = useRef<Snapshot | null>(null), requestSequence = useRef(0);
+  const params = new URLSearchParams(review ? { sku: review.sku, market: review.market } : Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
+  const endpoint = "/api/team" + (params.size ? "?" + params : "");
+  const refresh = useCallback(async (cursor?: string) => {
+    const sequence = ++requestSequence.current;
+    const url = endpoint + (cursor ? (endpoint.includes("?") ? "&" : "?") + "cursor=" + encodeURIComponent(cursor) : "");
+    const response = await fetch(url, { cache: "no-store" }), data = await response.json();
+    if (sequence !== requestSequence.current) return;
     if (!response.ok) throw new Error(data.error || "记录读取失败。");
-    setSnapshot(data);
+    const tasks: Task[] = cursor ? [...new Map([...(snapshotRef.current?.tasks ?? []), ...data.tasks].map((task: Task) => [task.id, task])).values()] : data.tasks;
+    snapshotRef.current = { ...data, tasks };
+    setSnapshot(snapshotRef.current);
     const changed: Record<string, boolean> = {};
-    setNotes(Object.fromEntries(data.tasks.map((task: Task) => {
+    setNotes(Object.fromEntries(tasks.map((task: Task) => {
       const draft = drafts.current[task.id], note = task.note ?? "";
       if (draft && draft.note !== note) {
         if (draft.baseNote !== note) changed[task.id] = true;
@@ -36,7 +46,14 @@ export function TeamWorkbench({ review }: { review?: Review }) {
     let active = true;
     const timer = setTimeout(() => { void refresh().catch(e => { if (active) setError(e instanceof Error ? e.message : "读取失败。"); }); }, 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [refresh]);
+  }, [refresh, queryRun]);
+  async function loadMore() {
+    if (!snapshot?.nextCursor || loadingMore) return;
+    setLoadingMore(true); setError("");
+    try { await refresh(snapshot.nextCursor); }
+    catch (e) { setError(e instanceof Error ? e.message : "读取失败。"); }
+    finally { setLoadingMore(false); }
+  }
   async function save(method: string, body: Record<string, unknown>) {
     setBusy(true); setError(""); setNotice("");
     let saved = false;
@@ -72,7 +89,12 @@ export function TeamWorkbench({ review }: { review?: Review }) {
   return <div className="space-y-4">
     <section className="rounded-2xl border border-black/5 bg-white p-5">
       <h2 className="text-base font-semibold">{review ? "SKU 复核与处理记录" : "共享任务与复核"}</h2>
-      <p className="mt-2 text-xs leading-6 text-slate-500">共用账号记录，不区分个人身份。首次基线与人工结论保留，刷新证据不等于问题已解决。{review && "这里仅显示本站点记录；未标站点的历史任务在共享任务页查看。"}{snapshot?.limited && "当前显示最近 100 条记录，请按 SKU 筛选查看。"}</p>
+      <p className="mt-2 text-xs leading-6 text-slate-500">共用账号记录，不区分个人身份。首次基线与人工结论保留，新版本再次触发时重新待复核；未触发不自动关闭。按创建时间由新到旧排列，每次最多加载 100 条。{review && "这里仅显示本站点记录；未标站点的历史任务在共享任务页查看。"}</p>
+      {!review && <form className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={event => { event.preventDefault(); if (busy) return; requestSequence.current++; setError(""); snapshotRef.current = null; setSnapshot(null); setFilters({ sku: filterForm.sku.trim().toUpperCase(), market: filterForm.market }); setQueryRun(value => value + 1); }}>
+        <label className="text-xs text-slate-500">记录 SKU 筛选<input aria-label="记录 SKU 筛选" value={filterForm.sku} maxLength={64} onChange={event => setFilterForm({ ...filterForm, sku: event.target.value })} className={inputClass} /></label>
+        <label className="text-xs text-slate-500">记录站点筛选<select aria-label="记录站点筛选" value={filterForm.market} onChange={event => setFilterForm({ ...filterForm, market: event.target.value })} className={inputClass}><option value="">全部站点及历史</option><option value="US">US</option><option value="CA">CA</option><option value="legacy">历史 / 未标站点</option></select></label>
+        <button type="submit" disabled={busy} className="min-h-11 self-end rounded-lg border px-4 text-xs disabled:opacity-50">查询记录</button>
+      </form>}
       {notice && <p role="status" className="mt-3 text-xs text-emerald-700">{notice}</p>}
       {review && <div className="mt-4 flex flex-wrap gap-2">{review.issues.map(issue => <button key={issue} disabled={busy} onClick={() => void save("POST", { kind: "review", ...review, issues: undefined, issue })} className="min-h-11 rounded-lg border border-slate-300 px-3 text-xs text-[#0071e3] disabled:opacity-50">{issue} · 建立 / 更新依据</button>)}{!review.issues.length && <p className="text-xs text-slate-500">当前未触发规则；仍可手工记录运营动作。</p>}</div>}
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -96,9 +118,12 @@ export function TeamWorkbench({ review }: { review?: Review }) {
           <label className="text-xs text-slate-500">复核备注{(notes[task.id] ?? "") !== (task.note ?? "") && <span className="ml-2 text-amber-700">未保存草稿</span>}<textarea aria-label={task.title + "复核备注"} maxLength={500} value={notes[task.id] || ""} onChange={e => { const value = e.target.value; if (value === (task.note ?? "")) { delete drafts.current[task.id]; setConflicts(current => ({ ...current, [task.id]: false })); } else drafts.current[task.id] = { note: value, baseNote: drafts.current[task.id]?.baseNote ?? task.note ?? "" }; setNotes(current => ({ ...current, [task.id]: value })); setNotice(""); }} className={inputClass + " py-2"} /></label>
           <label className="text-xs text-slate-500">处理状态<select aria-label={task.title + "处理状态"} disabled={busy} value={task.status} onChange={e => update(task, e.target.value)} className={inputClass}>{statuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><button disabled={busy} onClick={() => update(task, task.status)} className="mt-2 min-h-11 w-full rounded-lg border px-3 text-xs">保存备注</button></label>
         </div>
-        <details className="mt-3 text-xs text-slate-500"><summary className="min-h-11 cursor-pointer">共用账号操作记录 · {task.history.length} 条</summary><ol className="space-y-2">{task.history.map((event, i) => <li key={i} className="break-words">{event.at} · 共用账号 · {event.action} · {statuses.find(([value]) => value === event.status)?.[1] || event.status}{event.note && " · " + event.note}</li>)}</ol></details>
+        <details className="mt-3 text-xs text-slate-500"><summary className="min-h-11 cursor-pointer">操作与证据历史 · {task.history.length} 条</summary><ol className="space-y-2">{task.history.map((event, i) => <li key={i} className="break-words rounded-lg border border-slate-100 p-2">{event.at} · {event.actor === "system" ? "系统自动复核" : "共用账号"} · {event.action} · {event.previousStatus && `${statuses.find(([value]) => value === event.previousStatus)?.[1] || event.previousStatus} → `}{statuses.find(([value]) => value === event.status)?.[1] || event.status}{event.note && " · " + event.note}
+          {event.evidence && <div className="mt-1 leading-6"><p>版本 {event.evidence.version} · {event.evidence.period} · {event.triggered ? "仍触发提醒" : "当前未触发；不自动关闭"}</p><p>{event.evidence.currency} · 销售额 {event.evidence.sales ?? "—"} · {event.evidence.profitVerified ? "已核验利润" : "利润待对账"} {event.evidence.profit ?? "—"}</p><p>广告花费比 {event.evidence.adShare == null ? "—" : `${(event.evidence.adShare * 100).toFixed(1)}%`} · 退货率 {event.evidence.returnRate == null ? "—" : `${(event.evidence.returnRate * 100).toFixed(1)}%`} · FBA 覆盖 {event.evidence.fbaDays ?? "—"} 天 · 网络覆盖 {event.evidence.supplyDays ?? "—"} 天</p></div>}
+        </li>)}</ol></details>
       </article>)}</div>
       {snapshot && !snapshot.tasks.length && <p className="mt-5 text-sm text-slate-500">暂无记录。</p>}
+      {snapshot?.nextCursor && <button disabled={loadingMore || busy} onClick={() => void loadMore()} className="mt-4 min-h-11 w-full rounded-lg border px-4 text-sm disabled:opacity-50">{loadingMore ? "正在加载…" : "加载更早记录"}</button>}
     </section>
     {error && <div role="alert" className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700"><p>{error}</p><button className="mt-2 min-h-11 rounded-lg border px-3" onClick={() => void refresh().then(() => setError("")).catch(e => setError(e instanceof Error ? e.message : "读取失败。"))}>重新加载记录</button></div>}
   </div>;

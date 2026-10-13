@@ -123,6 +123,42 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
   const [importBusy, setImportBusy] = useState<"upload" | "publish" | "">("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const [operation, setOperation] = useState<{ kind: "publish" | "restore"; target: string } | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [confirmation, setConfirmation] = useState<{ token: string; expiresAt: string } | null>(null);
+  const [confirmationError, setConfirmationError] = useState("");
+  useEffect(() => { if (operation) passwordRef.current?.focus(); }, [operation]);
+  useEffect(() => {
+    if (!confirmation) return;
+    const timer = setTimeout(() => { setConfirmation(null); setConfirmationError("确认已过期，请重新验证密码。"); }, Math.max(0, Math.min(120000, Date.parse(confirmation.expiresAt) - Date.now())));
+    return () => clearTimeout(timer);
+  }, [confirmation]);
+  function beginOperation(kind: "publish" | "restore", target: string) {
+    setOperation({ kind, target }); setCurrentPassword(""); setConfirmation(null); setConfirmationError("");
+  }
+  function cancelOperation() { setOperation(null); setCurrentPassword(""); setConfirmation(null); setConfirmationError(""); }
+  async function verifyOperation() {
+    if (!operation || !currentPassword || importBusy) return;
+    const password = currentPassword; setCurrentPassword("");
+    if (window.location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)) { setConfirmationError("再次验证请通过 HTTPS 访问；本次未发送密码。"); return; }
+    setImportBusy("publish"); setConfirmationError(""); setConfirmation(null);
+    try {
+      const target = operation.kind === "publish" ? { batchId: operation.target } : { version: operation.target };
+      const response = await fetch("/api/inventory/data-import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "confirm_operation", operation: operation.kind, ...target, currentPassword: password }), cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "密码验证失败。");
+      if (typeof payload.confirmation?.token !== "string" || !Number.isFinite(Date.parse(payload.confirmation.expiresAt))) throw new Error("确认响应无效，请重新验证。");
+      setConfirmation(payload.confirmation);
+    } catch (error) { setConfirmationError(error instanceof Error ? error.message : "再次验证失败。"); }
+    finally { setImportBusy(""); }
+  }
+  async function executeOperation() {
+    if (!operation || !confirmation || importBusy) return;
+    const token = confirmation.token; setConfirmation(null);
+    try { if (operation.kind === "publish") await publish(operation.target, token); else await restore(operation.target, token); }
+    finally { cancelOperation(); }
+  }
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
@@ -154,10 +190,10 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
     finally { setImportBusy(""); setUploadProgress(0); if (inputRef.current) inputRef.current.value = ""; }
   }
 
-  async function publish(batchId: string) {
+  async function publish(batchId: string, confirmationToken: string) {
     setImportBusy("publish"); setMessage("");
     try {
-      const response = await fetch("/api/inventory/data-import", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ batchId }) });
+      const response = await fetch("/api/inventory/data-import", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "publish", batchId, confirmationToken }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "发布失败。");
       setBatches((current) => current.map((item) => item.batchId === batchId ? payload.batch : item));
@@ -169,11 +205,10 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
     finally { setImportBusy(""); }
   }
 
-  async function restore(version: string) {
-    if (!window.confirm(`确定回滚到 ${version}？当前报告会先自动备份。`)) return;
+  async function restore(version: string, confirmationToken: string) {
     setImportBusy("publish"); setMessage("");
     try {
-      const response = await fetch("/api/inventory/data-import", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "restore", version }) });
+      const response = await fetch("/api/inventory/data-import", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "restore", version, confirmationToken }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "回滚失败。");
       setStatus(await fetch("/api/inventory/data-refresh", { cache: "no-store" }).then((result) => result.json()));
@@ -198,6 +233,18 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
   const latestRun = status.runs[0] ?? null;
   const topException = [...status.exceptions].sort((left, right) => right.count - left.count)[0];
   return <div className="space-y-5">
+    {operation && <section role="dialog" aria-labelledby="data-operation-title" className="rounded-2xl border border-amber-300 bg-amber-50 p-5" onKeyDown={event => { if (event.key === "Escape" && !importBusy) cancelOperation(); }}>
+      <h2 id="data-operation-title" className="text-sm font-semibold">再次验证：{operation.kind === "publish" ? "发布批次" : "回退报告"}</h2>
+      <p className="mt-2 break-all font-mono text-xs">{operation.target}</p>
+      <p className="mt-2 text-xs leading-6">将切换当前经营报告；采购、人工记录与原文件保留。确认仅对本次目标及当前数据基线有效，120 秒内只能执行一次。</p>
+      <form onSubmit={event => { event.preventDefault(); void verifyOperation(); }} className="mt-3 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <label className="min-w-0 flex-1 text-xs">当前共用账号密码<input ref={passwordRef} type="password" required maxLength={1024} autoComplete="current-password" value={currentPassword} disabled={Boolean(importBusy) || Boolean(confirmation)} onChange={event => setCurrentPassword(event.target.value)} className="mt-1 block min-h-11 w-full rounded-lg border px-3" /></label>
+        <button type="submit" disabled={Boolean(importBusy) || Boolean(confirmation) || !currentPassword} className="min-h-11 rounded-lg bg-[#1d1d1f] px-4 text-xs text-white disabled:opacity-50">验证密码</button>
+        <button type="button" disabled={Boolean(importBusy)} onClick={cancelOperation} className="min-h-11 rounded-lg border px-4 text-xs">取消二次验证</button>
+      </form>
+      {confirmation && <div className="mt-3"><p className="text-xs">密码已验证，有效至 {formatDateTime(confirmation.expiresAt)}。请核对上述目标。</p><button type="button" disabled={Boolean(importBusy)} onClick={() => void executeOperation()} className="mt-2 min-h-11 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white disabled:opacity-50">{operation.kind === "publish" ? "验证后确认发布" : "验证后确认回退"}</button></div>}
+      {confirmationError && <p role="alert" className="mt-3 text-xs text-rose-700">{confirmationError}</p>}
+    </section>}
     <RefreshTaskPanel />
     <OpsCard className="border-blue-200 bg-blue-50/30">
       <OpsCardHeader title="网页上传 Excel" description={isAdmin ? "支持库存规划、新品调研、发货清单、销售、广告、成本、产品明细和月度分析；先解析预览，确认后再发布。" : "只有管理员可以上传和发布数据，普通成员可查看当前数据状态。"} action={<UploadCloud className="h-5 w-5 text-blue-700" />} />
@@ -205,9 +252,9 @@ export function DataRefreshCenter({ initialStatus, initialBatches, initialVersio
       {message ? <p className={`border-t px-5 py-3 text-xs ${message.startsWith("已") || message.includes("发布") ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{message}</p> : null}
     </OpsCard>
 
-    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => void publish(batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.source && <p className="mt-3 text-[11px] text-slate-500">来源：{batch.source.kind === "wps-api-download" ? "WPS 官方授权自动下载" : "WPS 现有登录态下载"} · 文件校验 {batch.source.sha256.slice(0, 12)} · 业务截止日期 {batch.source.businessAsOf ?? "待核验"}</p>}{batch.warnings.map(warning => <p key={warning} role="status" className="mt-2 text-[11px] leading-6 text-amber-800">{warning}</p>)}{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
+    {batches.length ? <OpsCard><OpsCardHeader title="上传批次与发布预览" description="识别结果只显示结构和汇总；确认发布前现有网站数据保持不变。" /><div className="divide-y divide-slate-100">{batches.slice(0, 8).map((batch) => <div key={batch.batchId} className="p-4 sm:p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-mono text-xs font-semibold text-slate-800">{batch.batchId}</p><OpsBadge tone={batch.status === "published" ? "emerald" : batch.status === "ready" ? "blue" : "amber"}>{batch.status === "published" ? "已发布" : batch.status === "ready" ? "待确认" : "需检查"}</OpsBadge></div><p className="mt-1 text-[11px] text-slate-500">{formatDateTime(batch.createdAt)} · 识别 {batch.summary.recognizedCount}/{batch.summary.fileCount} 个文件{batch.dataVersion ? ` · ${batch.dataVersion}` : ""}</p></div>{isAdmin && batch.status !== "published" ? <button type="button" disabled={Boolean(importBusy) || !batch.summary.publishableCount} onClick={() => beginOperation("publish", batch.batchId)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{importBusy === "publish" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}确认发布</button> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">{batch.files.map((file) => <div key={file.sha256} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3"><div className="flex items-start gap-2"><FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800" title={file.name}>{file.name}</p><div className="mt-1 flex items-center gap-2"><OpsBadge tone={file.type === "unknown" ? "amber" : "emerald"}>{file.label}</OpsBadge><span className="text-[10px] text-slate-400">{formatSize(file.size)}</span></div><PreviewSummary preview={file.preview} error={file.error} /></div></div></div>)}</div>{batch.source && <p className="mt-3 text-[11px] text-slate-500">来源：{batch.source.kind === "wps-api-download" ? "WPS 官方授权自动下载" : "WPS 现有登录态下载"} · 文件校验 {batch.source.sha256.slice(0, 12)} · 业务截止日期 {batch.source.businessAsOf ?? "待核验"}</p>}{batch.warnings.map(warning => <p key={warning} role="status" className="mt-2 text-[11px] leading-6 text-amber-800">{warning}</p>)}{batch.stagedFiles?.length ? <p className="mt-3 text-[11px] text-amber-700">已安全保存、等待专用转换器：{batch.stagedFiles.join("、")}</p> : null}</div>)}</div></OpsCard> : null}
 
-    {isAdmin && versions.length ? <OpsCard><OpsCardHeader title="数据版本与回滚" description="每次发布前都会保存完整报告快照；回滚时也会先备份当前版本。" action={<History className="h-4 w-4 text-blue-700" />} /><div className="divide-y divide-slate-100">{versions.slice(0, 8).map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-mono text-xs font-semibold text-slate-800">{version.version}</p><p className="mt-1 text-[10px] text-slate-500">{formatDateTime(version.createdAt)} · {version.fileCount} 份报告</p></div><button type="button" disabled={Boolean(importBusy)} onClick={() => void restore(version.version)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" />回滚</button></div>)}</div></OpsCard> : null}
+    {isAdmin && versions.length ? <OpsCard><OpsCardHeader title="数据版本与回滚" description="每次发布前都会保存完整报告快照；回滚时也会先备份当前版本。" action={<History className="h-4 w-4 text-blue-700" />} /><div className="divide-y divide-slate-100">{versions.slice(0, 8).map((version) => <div key={version.version} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-mono text-xs font-semibold text-slate-800">{version.version}</p><p className="mt-1 text-[10px] text-slate-500">{formatDateTime(version.createdAt)} · {version.fileCount} 份报告</p></div><button type="button" disabled={Boolean(importBusy)} onClick={() => beginOperation("restore", version.version)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-40"><RotateCcw className="h-3.5 w-3.5" />回滚</button></div>)}</div></OpsCard> : null}
     <div className="ops-kpi-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <OpsKpi label="已识别数据源" value={`${status.summary.sourceCount} 项`} detail={`${status.summary.missingCount} 项必需源缺失`} tone={status.summary.missingCount ? "danger" : "positive"} />
       <OpsKpi label="标准数据集" value={`${status.summary.reportCount} / ${status.reports.length}`} detail="库存、采购、内容与单据" tone={status.summary.reportCount === status.reports.length ? "positive" : "warning"} />

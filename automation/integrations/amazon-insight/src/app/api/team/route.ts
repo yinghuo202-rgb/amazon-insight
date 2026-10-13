@@ -1,13 +1,15 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { requireCurrentUser, workspaceForUser } from "@/lib/auth";
 import { prisma } from "@/lib/db/prisma";
 import { loadOperatingModel } from "@/lib/inventory/data";
-import { appendTaskHistory, buildReviewEvidence, preserveReviewBaseline, reviewContextSchema, reviewRequestSchema, taskHistorySchema } from "@/lib/inventory/operating-review";
+import { appendTaskHistory, buildReviewEvidence, reviewEvidenceUpdate, reviewContextSchema, reviewRequestSchema, taskHistorySchema } from "@/lib/inventory/operating-review";
 
 export const runtime = "nodejs";
 const marketSchema = z.enum(["US", "CA", "MX"]);
 const taskSchema = z.object({ sku: z.string().trim().toUpperCase().min(1).max(64), market: marketSchema.optional(), title: z.string().trim().min(1).max(160), note: z.string().trim().max(500).optional(), assigneeId: z.string().cuid().nullable().optional() });
 const updateSchema = z.object({ id: z.string().cuid(), expectedUpdatedAt: z.iso.datetime(), status: z.enum(["OPEN", "REVIEW", "IN_PROGRESS", "DONE", "DISMISSED"]).optional(), assigneeId: z.string().cuid().nullable().optional(), note: z.string().trim().max(500).optional() });
+const cursorSchema = z.object({ v: z.literal(1), workspace: z.string(), sku: z.string().nullable(), market: z.string().nullable(), upperAt: z.iso.datetime(), upperId: z.string().cuid(), afterAt: z.iso.datetime(), afterId: z.string().cuid() }).strict();
 async function context() { const user = await requireCurrentUser(); return { user, workspace: await workspaceForUser(user.id) }; }
 function writeGuard(request: Request) {
   const origin = new URL(process.env.NEXT_PUBLIC_APP_URL || request.url).origin;
@@ -25,16 +27,30 @@ function failure(error: unknown) {
 export async function GET(request: Request) {
   try {
     const { workspace } = await context(), params = new URL(request.url).searchParams;
-    const market = params.has("market") ? marketSchema.parse(params.get("market")) : undefined;
+    const market = params.has("market") ? z.enum(["US", "CA", "MX", "legacy"]).parse(params.get("market")) : undefined;
     const sku = params.has("sku") ? z.string().trim().toUpperCase().min(1).max(64).parse(params.get("sku")) : undefined;
+    let cursor: z.infer<typeof cursorSchema> | undefined;
+    if (params.has("cursor")) {
+      const raw = z.string().min(1).max(2048).regex(/^[a-zA-Z0-9_-]+$/).parse(params.get("cursor"));
+      cursor = cursorSchema.parse(JSON.parse(Buffer.from(raw, "base64url").toString("utf8")));
+      if (cursor.workspace !== workspace.id || cursor.sku !== (sku ?? null) || cursor.market !== (market ?? null)) throw new SyntaxError("cursor scope mismatch");
+    }
+    const where: Prisma.CollaborationTaskWhereInput = { workspaceId: workspace.id, sku, ...(market ? { market: market === "legacy" ? null : market } : {}) };
+    if (cursor) where.AND = [
+      { OR: [{ createdAt: { lt: new Date(cursor.upperAt) } }, { createdAt: new Date(cursor.upperAt), id: { lte: cursor.upperId } }] },
+      { OR: [{ createdAt: { lt: new Date(cursor.afterAt) } }, { createdAt: new Date(cursor.afterAt), id: { lt: cursor.afterId } }] },
+    ];
     const [members, tasks] = await Promise.all([
       prisma.workspaceMember.findMany({ where: { workspaceId: workspace.id }, include: { user: true }, orderBy: { joinedAt: "asc" } }),
-      prisma.collaborationTask.findMany({ where: { workspaceId: workspace.id, sku, ...(market ? { market } : {}) }, include: { assignee: true }, orderBy: { updatedAt: "desc" }, take: 100 }),
+      prisma.collaborationTask.findMany({ where, include: { assignee: true }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 101 }),
     ]);
-    return Response.json({ workspace: { name: workspace.name }, members: members.map(({ user, role }) => ({ id: user.id, name: user.name, email: user.email, role })), tasks: tasks.map(task => ({
+    const page = tasks.slice(0, 100), last = page.at(-1), first = page[0];
+    const nextCursor = tasks.length > 100 && last ? Buffer.from(JSON.stringify({ v: 1, workspace: workspace.id, sku: sku ?? null, market: market ?? null,
+      upperAt: cursor?.upperAt ?? first.createdAt.toISOString(), upperId: cursor?.upperId ?? first.id, afterAt: last.createdAt.toISOString(), afterId: last.id })).toString("base64url") : null;
+    return Response.json({ workspace: { name: workspace.name }, members: members.map(({ user, role }) => ({ id: user.id, name: user.name, email: user.email, role })), tasks: page.map(task => ({
       id: task.id, sku: task.sku, market: task.market, title: task.title, note: task.note, status: task.status, assignee: task.assignee ? { id: task.assignee.id, name: task.assignee.name } : null,
       createdBy: "共用账号", updatedAt: task.updatedAt.toISOString(), context: task.contextJson ? reviewContextSchema.parse(JSON.parse(task.contextJson)) : null, history: taskHistorySchema.parse(JSON.parse(task.historyJson)),
-    })), limited: tasks.length === 100 }, { headers: { "Cache-Control": "no-store" } });
+    })), limited: Boolean(nextCursor), nextCursor, order: "created_desc" }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
 }
 export async function POST(request: Request) {
@@ -48,10 +64,14 @@ export async function POST(request: Request) {
       const task = await prisma.$transaction(async tx => {
         const existing = await tx.collaborationTask.findUnique({ where: { workspaceId_issueKey: { workspaceId: workspace.id, issueKey: review.issueKey } } });
         if (!existing && !review.triggered) throw new Error("REVIEW_NOT_TRIGGERED");
-        const historyJson = appendTaskHistory(existing?.historyJson ?? "[]", { at: new Date().toISOString(), actor: "shared-account", userId: user.id, action: existing ? "refresh-evidence" : "create-review", status: existing?.status ?? "OPEN", note: null });
-        const contextJson = JSON.stringify(preserveReviewBaseline(existing?.contextJson ?? null, review.context));
-        return existing ? tx.collaborationTask.update({ where: { id: existing.id }, data: { contextJson, historyJson, updatedById: user.id } })
-          : tx.collaborationTask.create({ data: { workspaceId: workspace.id, sku: input.sku, market: input.market, issueKey: review.issueKey, title: input.issue, contextJson, historyJson, createdById: user.id, updatedById: user.id } });
+        const update = reviewEvidenceUpdate(existing ?? { contextJson: null, historyJson: "[]", status: "OPEN", note: null }, review, { actor: "shared-account", userId: user.id, now: new Date() });
+        if (existing) {
+          if (!update) return existing;
+          const changed = await tx.collaborationTask.updateMany({ where: { id: existing.id, updatedAt: existing.updatedAt, historyJson: existing.historyJson, contextJson: existing.contextJson, status: existing.status, note: existing.note }, data: { ...update, updatedById: user.id } });
+          if (changed.count !== 1) throw new Error("TASK_CHANGED");
+          return existing;
+        }
+        return tx.collaborationTask.create({ data: { workspaceId: workspace.id, sku: input.sku, market: input.market, issueKey: review.issueKey, title: input.issue, ...update!, createdById: user.id, updatedById: user.id } });
       });
       return Response.json({ task: { id: task.id } }, { status: 200 });
     }
@@ -73,7 +93,9 @@ export async function PATCH(request: Request) {
       if (!existing) return false;
       if (existing.updatedAt.toISOString() !== payload.expectedUpdatedAt) throw new Error("TASK_CHANGED");
       if (existing.contextJson && ["DONE", "DISMISSED"].includes(payload.status || "") && !(payload.note ?? existing.note)?.trim()) throw new Error("REVIEW_NOTE_REQUIRED");
-      const historyJson = appendTaskHistory(existing.historyJson, { at: new Date().toISOString(), actor: "shared-account", userId: user.id, action: "update-task", status: payload.status ?? existing.status, note: payload.note ?? existing.note });
+      const reviewContext = existing.contextJson ? reviewContextSchema.parse(JSON.parse(existing.contextJson)) : null;
+      const historyJson = appendTaskHistory(existing.historyJson, { at: new Date().toISOString(), actor: "shared-account", userId: user.id, action: "update-task", previousStatus: existing.status, status: payload.status ?? existing.status, note: payload.note ?? existing.note,
+        ...(reviewContext ? { evidence: reviewContext.latest, triggered: [...reviewContext.latest.issues, ...reviewContext.latest.dataIssues].includes(reviewContext.issue) } : {}) });
       const changed = await tx.collaborationTask.updateMany({ where: { id: existing.id, workspaceId: workspace.id, updatedAt: existing.updatedAt }, data: { status: payload.status, assigneeId: payload.assigneeId, note: payload.note, historyJson, updatedById: user.id } });
       if (changed.count !== 1) throw new Error("TASK_CHANGED");
       return true;
