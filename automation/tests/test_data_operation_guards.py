@@ -64,7 +64,7 @@ class DataOperationGuardsTests(unittest.TestCase):
         raw = json.dumps(manifest).encode()
         (batch / "manifest.json").write_bytes(raw)
         target = digest([hashlib.sha256(raw).hexdigest(), [[original.name, hashlib.sha256(original.read_bytes()).hexdigest()]]])
-        def stage_only(batch, stage, version, image_output):
+        def stage_only(batch, stage, version, image_output, *, config=None):
             (stage / "report.json").write_text('{"rows":[9]}')
             return {**manifest, "status": "published", "dataVersion": version}
         for edit in [lambda: original.write_bytes(b"changed-source"), lambda: (batch / "manifest.json").write_text(json.dumps({**manifest, "changed": True}))]:
