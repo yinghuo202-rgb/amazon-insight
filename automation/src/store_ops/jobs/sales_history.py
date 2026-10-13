@@ -120,6 +120,7 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
     normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
     results = {}
     try:
+        pending_reports = []
         for market, settings in _settings_by_market(config).items():
             report_name = "inventory_dashboard.json" if market == "US" else f"inventory_dashboard.{market.lower()}.json"
             report_path = config.runtime_root / "reports" / report_name
@@ -154,12 +155,17 @@ def run(config: ProjectConfig, db: StateDb) -> dict:
                 *retained_sources,
                 *[_source_meta(config, path, "sales_history_month") for path in source_paths],
             ]
-            _atomic_json(report_path, payload)
+            pending_reports.append((report_path, payload))
             results[market] = {
                 **result,
                 "sourceCount": len(source_paths),
                 "reportPath": str(report_path),
             }
+
+        # Reject missing monthly values in any market before replacing any
+        # report. Uploaded publication still uses the outer report transaction.
+        for report_path, payload in pending_reports:
+            _atomic_json(report_path, payload)
 
         db.finish_run(run_id, "completed", summary=results)
         return {"run_id": run_id, "markets": results}

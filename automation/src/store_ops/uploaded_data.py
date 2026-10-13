@@ -20,6 +20,7 @@ import openpyxl
 from .advertising import AdvertisingParameters, recommend_campaign
 from .config import ProjectConfig, load_config
 from .db import StateDb
+from .monthly_report_values import open_monthly_report, validated_monthly_rows
 from .jobs.document_master import _read_shipments
 from .jobs.new_product_research import extract_research_rows
 from .jobs.product_catalog import _extract_product_images, _merge_product_details, _read_product_details
@@ -117,7 +118,7 @@ def _detect(path: Path, workbook) -> str:
         return "advertising"
     if "月度分析" in name or "仓租详情" in " ".join(sheets):
         return "monthly_analysis"
-    if "销售和毛利报告" in name and "SKU销售汇总" in workbook.sheetnames:
+    if "销售和毛利报告" in name:
         if "-mx" in name.lower():
             return "sales_mx"
         return "sales_ca" if "-ca" in name.lower() else "sales_us"
@@ -222,17 +223,22 @@ def _sales_preview(workbook, market: str) -> dict[str, Any]:
     return {"market": market, "skuCount": count, "units": units, "revenue": round(revenue, 2), "impacts": ["运营总览", "库存销量"]}
 
 
-def _profitability_preview(workbook, market: str) -> dict[str, Any]:
-    sheet = workbook["SKU销售汇总"]
+def _monthly_report_config() -> ProjectConfig:
+    automation_root = Path(os.environ["STORE_OPS_AUTOMATION_ROOT"]).expanduser() if os.environ.get("STORE_OPS_AUTOMATION_ROOT") else Path(__file__).resolve().parents[2]
+    return load_config(automation_root / "config" / "project.json")
+
+
+def _profitability_preview(workbook, market: str, path: Path | str = "上传月报", normalizer: SkuNormalizer | None = None) -> dict[str, Any]:
+    if normalizer is None:
+        config = _monthly_report_config()
+        normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
     count = 0
     units = 0
     sales = 0.0
-    for row in sheet.iter_rows(min_row=4, values_only=True):
-        if not _text(row[0] if row else None):
-            continue
+    for _, values in validated_monthly_rows(workbook, path, normalizer):
         count += 1
-        units += int(_number(row[1] if len(row) > 1 else None) or 0)
-        sales += _number(row[2] if len(row) > 2 else None) or 0
+        units += int(values["units"])
+        sales += values["productSales"]
     return {"market": market, "skuCount": count, "units": units, "sales": round(sales, 2), "impacts": ["运营总览", "利润分析", "销量历史"]}
 
 
@@ -247,7 +253,7 @@ def _generic_preview(workbook, kind: str) -> dict[str, Any]:
     return {"sheets": sheets[:12], "impacts": impacts}
 
 
-def inspect_batch(batch_dir: Path) -> dict[str, Any]:
+def inspect_batch(batch_dir: Path, *, config: ProjectConfig | None = None) -> dict[str, Any]:
     files: list[dict[str, Any]] = []
     warnings: list[str] = []
     for path in sorted((batch_dir / "source").iterdir()):
@@ -270,7 +276,12 @@ def inspect_batch(batch_dir: Path) -> dict[str, Any]:
                     item["preview"] = _shipment_preview(path)
                 elif kind in {"sales_us", "sales_ca", "sales_mx"}:
                     market = {"sales_us": "US", "sales_ca": "CA", "sales_mx": "MX"}[kind]
-                    item["preview"] = _profitability_preview(workbook, market) if "SKU销售汇总" in workbook.sheetnames else _sales_preview(workbook, market)
+                    if "销售和毛利报告" in path.name or "SKU销售汇总" in workbook.sheetnames:
+                        monthly_config = config or _monthly_report_config()
+                        normalizer = SkuNormalizer(monthly_config.sku_pattern, monthly_config.ignore_values)
+                        item["preview"] = _profitability_preview(workbook, market, path, normalizer)
+                    else:
+                        item["preview"] = _sales_preview(workbook, market)
                 else:
                     item["preview"] = _generic_preview(workbook, kind)
             finally:
@@ -331,7 +342,7 @@ def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *,
         target.chmod(0o600)
         if _sha256(target) != original_hash or _sha256(source) != original_hash:
             raise ValueError("下载文件在接收期间发生变化，请重新下载")
-        result = inspect_batch(batch)
+        result = inspect_batch(batch, config=config)
         if len(result["files"]) != 1 or result["files"][0].get("error") or result["files"][0]["type"] not in {"inventory", "research"}:
             raise ValueError("WPS 下载内容未识别为库存或新品表，请检查工作表结构")
         result["source"] = {"kind": "wps-browser-download", "shareUrl": share_url, "capturedAt": datetime.now(timezone.utc).isoformat(), "businessAsOf": None,
@@ -858,7 +869,7 @@ def publish_target_fingerprint(batch_dir: Path) -> str:
     return _binding_digest([hashlib.sha256(raw).hexdigest(), hashes])
 
 
-def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, before_commit=None, expected_baseline=None, expected_target=None) -> dict[str, Any]:
+def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, before_commit=None, expected_baseline=None, expected_target=None, config: ProjectConfig | None = None) -> dict[str, Any]:
     original = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
     if original.get("status") == "published":
         raise ValueError("该批次已经发布")
@@ -876,14 +887,24 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, be
         previous_incoming = current_reports(reports_dir).parent / "incoming"
         if previous_incoming.is_dir():
             shutil.copytree(previous_incoming, stage.parent / "incoming", dirs_exist_ok=True)
-        manifest = _publish_staged_batch(batch_dir, stage, version, reports_dir.parent / "output" / "product-images")
+        manifest = _publish_staged_batch(batch_dir, stage, version, reports_dir.parent / "output" / "product-images", config=config)
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     (snapshots_dir / version / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
 
-def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, image_output: Path | None = None) -> dict[str, Any]:
+def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, image_output: Path | None = None, *, config: ProjectConfig | None = None) -> dict[str, Any]:
     manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+    # Revalidate monthly sources even when preview made them unpublishable. A bad
+    # monthly report blocks the entire transaction, not just that file's patch.
+    for item in manifest["files"]:
+        source = batch_dir / "source" / item["name"]
+        if "销售和毛利报告" in source.name or "SKU销售汇总" in item.get("sheets", []):
+            config = config or _monthly_report_config()
+            normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
+            with open_monthly_report(source) as workbook:
+                for _ in validated_monthly_rows(workbook, source, normalizer):
+                    pass
     updated: list[str] = []
     skipped: list[str] = []
     shipment_names: list[str] = []
@@ -938,8 +959,7 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
         if not shipment_updates:
             skipped.extend(shipment_names)
     if monthly_sources:
-        automation_root = Path(os.environ.get("STORE_OPS_AUTOMATION_ROOT", "")).expanduser() if os.environ.get("STORE_OPS_AUTOMATION_ROOT") else Path(__file__).resolve().parents[2]
-        config = load_config(automation_root / "config" / "project.json")
+        config = config or _monthly_report_config()
         database = StateDb(config.runtime_root / "db" / "operations.sqlite3")
         config = replace(config, runtime_root=reports_dir.parent)
         database.init()
@@ -1019,11 +1039,11 @@ def main() -> int:
     if args.command == "inspect":
         if not args.batch_dir:
             parser.error("inspect requires --batch-dir")
-        payload = inspect_batch(Path(args.batch_dir))
+        payload = inspect_batch(Path(args.batch_dir), config=load_config(args.config))
     elif args.command == "publish":
         if not args.batch_dir or not args.reports_dir or not args.snapshots_dir:
             parser.error("publish requires --batch-dir, --reports-dir and --snapshots-dir")
-        payload = publish_batch(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir), expected_baseline=args.expected_baseline, expected_target=args.expected_target)
+        payload = publish_batch(Path(args.batch_dir), Path(args.reports_dir), Path(args.snapshots_dir), expected_baseline=args.expected_baseline, expected_target=args.expected_target, config=load_config(args.config))
     elif args.command == "receive-wps":
         if not args.source_file or not args.share_url:
             parser.error("receive-wps requires --source-file and --share-url")

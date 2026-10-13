@@ -8,23 +8,13 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-import openpyxl
-
 from ..config import ProjectConfig
 from ..db import StateDb
+from ..monthly_report_values import open_monthly_report, validated_monthly_rows
 from ..sku import SkuNormalizer
 
 
 REPORT_NAME_RE = re.compile(r"(20\d{2})[._-]?(0?[1-9]|1[0-2])月.*销售和毛利报告-(US|CA|MX)\.xlsx$", re.IGNORECASE)
-
-
-def _number(value: object) -> float:
-    if value in (None, "", "-"):
-        return 0.0
-    try:
-        return float(str(value).replace(",", "").strip())
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _sha256(path: Path) -> str:
@@ -51,28 +41,18 @@ def _latest_reports(root: Path) -> dict[tuple[str, str], Path]:
 
 def _read_report(path: Path, market: str, report_month: str, normalizer: SkuNormalizer) -> list[dict]:
     aggregate: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
-    try:
-        if "SKU销售汇总" not in workbook.sheetnames:
-            raise ValueError(f"Profitability report is missing SKU销售汇总: {path}")
-        worksheet = workbook["SKU销售汇总"]
-        for row in worksheet.iter_rows(min_row=4, values_only=True):
-            match = normalizer.extract(row[0] if row else None)
-            if not match or len(match.bases) != 1:
-                continue
-            sku = match.bases[0]
+    with open_monthly_report(path) as workbook:
+        for sku, values in validated_monthly_rows(workbook, path, normalizer):
             item = aggregate[sku]
-            item["units"] += max(0, _number(row[1] if len(row) > 1 else None))
-            item["productSales"] += _number(row[2] if len(row) > 2 else None)
-            item["settlementPayout"] += _number(row[3] if len(row) > 3 else None)
-            item["returns"] += max(0, _number(row[5] if len(row) > 5 else None))
-            item["landedCost"] += max(0, _number(row[8] if len(row) > 8 else None))
-            item["grossProfit"] += _number(row[9] if len(row) > 9 else None)
-            item["advertisingCost"] += max(0, -_number(row[11] if len(row) > 11 else None))
-            item["storageCost"] += max(0, -_number(row[12] if len(row) > 12 else None))
-            item["actualProfit"] += _number(row[13] if len(row) > 13 else None)
-    finally:
-        workbook.close()
+            item["units"] += max(0, values["units"])
+            item["productSales"] += values["productSales"]
+            item["settlementPayout"] += values["settlementPayout"]
+            item["returns"] += max(0, values["returns"])
+            item["landedCost"] += max(0, values["landedCost"])
+            item["grossProfit"] += values["grossProfit"]
+            item["advertisingCost"] += max(0, -values["advertisingCost"])
+            item["storageCost"] += max(0, -values["storageCost"])
+            item["actualProfit"] += values["actualProfit"]
 
     rows = []
     for sku, item in sorted(aggregate.items()):

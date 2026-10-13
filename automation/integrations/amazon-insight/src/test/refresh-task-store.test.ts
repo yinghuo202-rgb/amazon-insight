@@ -10,7 +10,7 @@ let folder: string;
 beforeEach(() => {
   folder = mkdtempSync(path.join(tmpdir(), "measureman-worker-tests-")); mocks.file = path.join(folder, "operations.sqlite3");
   const db = new DatabaseSync(mocks.file);
-  db.exec("CREATE TABLE runs(id INTEGER PRIMARY KEY,job_name TEXT,status TEXT,started_at TEXT,finished_at TEXT,summary_json TEXT)"); db.close();
+  db.exec("CREATE TABLE runs(id INTEGER PRIMARY KEY,job_name TEXT,status TEXT,started_at TEXT,finished_at TEXT,summary_json TEXT,error_text TEXT)"); db.close();
 });
 afterEach(() => { vi.unstubAllEnvs(); rmSync(folder, { recursive: true, force: true }); });
 it("boots env automatic collections and preserves due dates and safe retries across restart", () => {
@@ -137,4 +137,28 @@ it("persists a one-hour retry delay after failure without immediately flooding t
   expect(due - Date.now()).toBeGreaterThan(3590000);
   enqueueDueSyncTasks(ready, new Date(due - 1)); expect(listRefreshTasks()).toHaveLength(1);
   enqueueDueSyncTasks(ready, new Date(due)); expect(listRefreshTasks()).toHaveLength(2);
+});
+
+it("commits worker terminal state and its audit together, retaining the task's lease guard", () => {
+  submitRefreshTask("rebuild"); const task = claimRefreshTask()!;
+  const observer = new DatabaseSync(mocks.file);
+  const runId = observer.prepare("INSERT INTO runs(job_name,status,summary_json) VALUES('worker-rebuild','running',?)").run(JSON.stringify({ taskId: task.id })).lastInsertRowid;
+  expect(() => updateRefreshTask(task.id, "wrong-lease", "completed", "已发布", "", undefined, runId)).toThrow(/租约/);
+  expect(observer.prepare("SELECT status FROM runs WHERE id=?").get(runId)?.status).toBe("running");
+  updateRefreshTask(task.id, task.lease, "completed", "已发布", "", undefined, runId);
+  expect(observer.prepare("SELECT status FROM data_refresh_tasks_v1 WHERE id=?").get(task.id)?.status).toBe("completed");
+  expect(observer.prepare("SELECT status,finished_at,summary_json FROM runs WHERE id=?").get(runId)).toMatchObject({ status: "completed", summary_json: JSON.stringify({ taskId: task.id }) });
+  expect(observer.prepare("SELECT finished_at FROM runs WHERE id=?").get(runId)?.finished_at).toEqual(expect.any(String));
+  observer.close();
+});
+
+it("never publishes a completed queue state if the worker audit update cannot commit", () => {
+  submitRefreshTask("rebuild"); const task = claimRefreshTask()!;
+  const observer = new DatabaseSync(mocks.file);
+  const runId = observer.prepare("INSERT INTO runs(job_name,status,summary_json) VALUES('worker-rebuild','running',?)").run(JSON.stringify({ taskId: task.id })).lastInsertRowid;
+  observer.exec("CREATE TRIGGER reject_synthetic_audit BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END");
+  expect(() => updateRefreshTask(task.id, task.lease, "completed", "已发布", "", undefined, runId)).toThrow(/synthetic audit failure/);
+  expect(observer.prepare("SELECT status FROM data_refresh_tasks_v1 WHERE id=?").get(task.id)?.status).toBe("running");
+  expect(observer.prepare("SELECT status FROM runs WHERE id=?").get(runId)?.status).toBe("running");
+  observer.close();
 });

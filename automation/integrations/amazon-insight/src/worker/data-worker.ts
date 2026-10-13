@@ -155,8 +155,7 @@ while (!stopping) {
       }
     }
     const status = wpsResult?.status ?? (automaticallyPublished ? "completed" : preview ? preview.blocked ? "awaiting_mapping" : "awaiting_review" : "completed");
-    updateRefreshTask(task.id, task.lease, status, wpsResult ? wpsResult.reason || "WPS 库存已校验并发布；海外库存未被 WPS 规划值覆盖" : automaticallyPublished ? "定时采集校验通过，已自动发布经营数据" : preview ? preview.blocked ? "采集完成，存在映射或缺失字段，未发布；请查看预览" : "差异预览就绪，请人工对账后确认发布" : "整批报告已发布；请刷新运营页面");
-    db.prepare("UPDATE runs SET status=?,finished_at=?,summary_json=? WHERE id=?").run(status, new Date().toISOString(), JSON.stringify({ taskId: task.id }), runId);
+    updateRefreshTask(task.id, task.lease, status, wpsResult ? wpsResult.reason || "WPS 库存已校验并发布；海外库存未被 WPS 规划值覆盖" : automaticallyPublished ? "定时采集校验通过，已自动发布经营数据" : preview ? preview.blocked ? "采集完成，存在映射或缺失字段，未发布；请查看预览" : "差异预览就绪，请人工对账后确认发布" : "整批报告已发布；请刷新运营页面", "", undefined, runId);
   } catch (error) {
     const safe = error instanceof GerpgoConnectionError || error instanceof WpsError ? error.message : task.kind === "wps_inventory" ? "WPS 同步或发布失败；旧数据保留，请检查授权、任务预览和数据卷。" : task.kind === "gerpgo" ? "积加采集未完成；旧报告保留，请检查接口权限与 worker。" : task.kind === "gerpgo_publish" ? "积加审核发布失败；可能预览过期或报告基线变化，请检查运营异常记录并重新对账。" : "报告重建失败，请检查运营任务异常记录。";
     try { updateRefreshTask(task.id, task.lease, "failed", "任务失败，请核对当前版本；报告不会被部分覆盖", safe); } catch { /* Expired lease is already marked interrupted. */ }

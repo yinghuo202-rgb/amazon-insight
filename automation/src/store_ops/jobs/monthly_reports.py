@@ -6,10 +6,10 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-import openpyxl
-
 from ..config import ProjectConfig
 from ..db import StateDb
+from ..monthly_report_values import open_monthly_report, validated_monthly_rows
+from ..sku import SkuNormalizer
 
 
 REPORT_NAME_RE = re.compile(
@@ -33,20 +33,12 @@ def _report_identity(path: Path) -> tuple[str, str]:
     return f"{int(match.group(1)):04d}-{int(match.group(2)):02d}", match.group(3).upper()
 
 
-def _validate_report(path: Path) -> tuple[str, str, int]:
+def _validate_report(path: Path, normalizer: SkuNormalizer) -> tuple[str, str, int]:
     if not path.is_file():
         raise FileNotFoundError(path)
     report_month, market = _report_identity(path)
-    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
-    try:
-        if "SKU销售汇总" not in workbook.sheetnames:
-            raise ValueError(f"月报缺少 SKU销售汇总: {path}")
-        worksheet = workbook["SKU销售汇总"]
-        data_rows = sum(1 for row in worksheet.iter_rows(min_row=4, values_only=True) if row and row[0])
-        if data_rows == 0:
-            raise ValueError(f"月报 SKU销售汇总 无有效数据: {path}")
-    finally:
-        workbook.close()
+    with open_monthly_report(path) as workbook:
+        data_rows = sum(1 for _ in validated_monthly_rows(workbook, path, normalizer))
     return report_month, market, data_rows
 
 
@@ -55,11 +47,15 @@ def run(config: ProjectConfig, db: StateDb, sources: list[Path]) -> dict:
     try:
         if not sources:
             raise ValueError("至少需要一个 --source 月报文件")
-        imported = []
+        normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
+        validated = []
         for source in sources:
             resolved = source.expanduser().resolve()
-            report_month, market, data_rows = _validate_report(resolved)
+            report_month, market, data_rows = _validate_report(resolved, normalizer)
             digest = _sha256(resolved)
+            validated.append((resolved, report_month, market, data_rows, digest))
+        imported = []
+        for resolved, report_month, market, data_rows, digest in validated:
             destination_dir = config.runtime_root / "incoming" / "monthly-sales-reports" / report_month / market
             destination_dir.mkdir(parents=True, exist_ok=True)
             destination = destination_dir / resolved.name

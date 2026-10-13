@@ -77,15 +77,29 @@ export function claimRefreshTask() {
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   finally { db.close(); }
 }
-export function updateRefreshTask(id: string, lease: string, status: string, progress: string | null = null, error = "", artifact?: { batchId: string }) {
+export function updateRefreshTask(id: string, lease: string, status: string, progress: string | null = null, error = "", artifact?: { batchId: string }, auditRunId?: number | bigint) {
   if (!["running", "completed", "awaiting_mapping", "awaiting_review", "failed"].includes(status)) throw new Error("任务状态无效。");
+  if (auditRunId !== undefined && status === "running") throw new Error("运行中的任务不能结束审计。");
   const db = openRefreshDatabase();
   try {
-    const result = db.prepare("UPDATE data_refresh_tasks_v1 SET status=?,progress=COALESCE(?,progress),error=?,updated_at=? WHERE id=? AND lease=? AND status='running'").run(status, progress, error, new Date().toISOString(), id, lease);
+    db.exec("BEGIN IMMEDIATE");
+    const stamp = new Date().toISOString();
+    const result = db.prepare("UPDATE data_refresh_tasks_v1 SET status=?,progress=COALESCE(?,progress),error=?,updated_at=? WHERE id=? AND lease=? AND status='running'").run(status, progress, error, stamp, id, lease);
     if (!result.changes) throw new Error("任务租约失效，已停止写入。");
     if (artifact) db.prepare("UPDATE data_refresh_tasks_v1 SET artifact_json=? WHERE id=? AND lease=?").run(JSON.stringify(artifact), id, lease);
     db.prepare("UPDATE data_sync_schedules_v1 SET worker_heartbeat=?").run(new Date().toISOString());
     if (status === "failed") db.prepare("UPDATE data_sync_schedules_v1 SET next_run_at=? WHERE last_task_id=?").run(new Date(Date.now() + 3600000).toISOString(), id);
+    if (auditRunId !== undefined) {
+      // A terminal queue state is not observable before its own audit commits.
+      // Bind to the started task/kind so a wrong run cannot be silently closed.
+      const summary = JSON.stringify({ taskId: id });
+      const audit = db.prepare("UPDATE runs SET status=?,finished_at=?,summary_json=?,error_text=? WHERE id=? AND status='running' AND summary_json=? AND job_name=(SELECT 'worker-'||kind FROM data_refresh_tasks_v1 WHERE id=?)").run(status, stamp, summary, error, auditRunId, summary, id);
+      if (!audit.changes) throw new Error("任务审计记录不匹配，状态未提交。");
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   } finally { db.close(); }
 }
 

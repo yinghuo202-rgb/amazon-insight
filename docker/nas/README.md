@@ -4,7 +4,7 @@
 
 最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 全部成功，对应提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`；镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。包含此前费率来源/认证字段脱敏，以及复核闭环和登录/发布安全保护。按最新用户要求，NAS原env仅将 `IMAGE_TAG` 从rc.10改为rc.11，其他字节不变，备份为`_archive/env.before-rc11-20261013`。没有操作容器，实际运行版本仍待用户重建后验收；env备份不是数据库备份。
 
-rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本已在rc.12候选代码实施，镜像未通过云端构建前不用于部署，不能称整份PRD完成。当前NAS env保持rc.11。已有项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
+rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本已在rc.12代码实施，但rc.12云端Python门禁失败，镜像未构建，不能部署；新候选为rc.13，全部门禁成功前仍使用rc.11。当前NAS env保持rc.11，不能称整份PRD完成。已有项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
 
 ### rc.12候选成本版本：迁移与回退限制
 

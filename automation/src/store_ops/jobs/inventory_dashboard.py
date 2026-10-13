@@ -12,6 +12,7 @@ import openpyxl
 
 from ..config import ProjectConfig
 from ..db import StateDb
+from ..monthly_report_values import open_monthly_report, validated_monthly_rows
 from ..advertising import AdvertisingParameters, recommend_campaign
 from ..replenishment import ReplenishmentParameters, calculate_replenishment
 from ..sku import SkuNormalizer
@@ -416,9 +417,14 @@ def _read_monthly_sales_reports(
     normalizer: SkuNormalizer,
 ) -> tuple[dict, list[str], dict[str, dict], list[Path], dict[str, dict[str, float]]]:
     by_month: dict[str, tuple[float, dict[str, dict], Path]] = {}
+    latest: dict[str, Path] = {}
     folders = [folder] if isinstance(folder, Path) else list(folder)
     paths = sorted({path for root in folders if root.exists() for path in root.rglob("*.xlsx")})
     for path in paths:
+        # Select named monthly reports before opening them. Unrelated dated
+        # inventory/research files must not replace an otherwise valid month.
+        if "销售和毛利报告" not in path.name:
+            continue
         upper_name = path.name.upper()
         if market == "CA":
             if "CA" not in upper_name and "加拿大" not in str(path):
@@ -428,29 +434,18 @@ def _read_monthly_sales_reports(
         month = _month_from_report_name(path)
         if not month:
             continue
-        try:
-            workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
-        except Exception:
-            continue
-        try:
-            if "SKU销售汇总" not in workbook.sheetnames:
-                continue
-            worksheet = workbook["SKU销售汇总"]
+        current = latest.get(month)
+        if current is None or (path.stat().st_mtime, str(path)) > (current.stat().st_mtime, str(current)):
+            latest[month] = path
+    for month, path in sorted(latest.items()):
+        with open_monthly_report(path) as workbook:
             monthly_rows: dict[str, dict] = defaultdict(lambda: {"units": 0, "revenue": 0.0})
-            for row in worksheet.iter_rows(min_row=4, values_only=True):
-                sku = _base_sku(normalizer, row[0] if row else None)
-                if not sku:
-                    continue
-                monthly_rows[sku]["units"] += _integer(row[1] if len(row) > 1 else None)
-                monthly_rows[sku]["revenue"] += _number(row[2] if len(row) > 2 else None)
-        finally:
-            workbook.close()
+            for sku, values in validated_monthly_rows(workbook, path, normalizer):
+                monthly_rows[sku]["units"] += int(round(values["units"]))
+                monthly_rows[sku]["revenue"] += values["productSales"]
         if not monthly_rows:
             continue
-        marker = path.stat().st_mtime
-        current = by_month.get(month)
-        if current is None or marker > current[0]:
-            by_month[month] = (marker, dict(monthly_rows), path)
+        by_month[month] = (path.stat().st_mtime, dict(monthly_rows), path)
 
     months = sorted(by_month)
     if not months:
