@@ -4,7 +4,9 @@
 
 ## 当前交付与操作入口（2026-10-13）
 
-已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，代码提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 的应用验证、AMD64/ARM64 发布与隔离启动检查全部通过；候选标签不提升 `latest`。**构建成功不是 NAS 上线或经营数据自动同步成功的证明。**
+已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.14`，代码提交 `59068c6fee0fb91541d21b5228de6aa260c23b50`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38392637697) 的61文件/462条网页、166条Python、AMD64/ARM64发布及fresh/worker/resume实际启动检查全部通过。镜像摘要 `sha256:e9699a332f50d27130b494cd24d74a9acc108b43f9fc8bda2f7d5abf150515dc`，不提升 `latest`。**构建成功不是 NAS 上线或经营数据自动同步成功的证明。**
+
+按用户“只改env、自己重建”的要求，全门禁通过后已备份NAS原配置，仅将`IMAGE_TAG`从rc.11更新至rc.14；备份`_archive/env.before-rc14-20261013`，逐字节确认其余不变。原项目app和data-worker均引用同一镜像变量，容器由用户重新创建，cloudflared不动。当前报告仍为今天08:25发布的旧批，最新公网检查仍为HTTP530/Cloudflare1033；不称新版已上线。以下rc.10—rc.13是同日历史记录，不覆盖本段当前状态。
 
 rc.10 包含认证字段脱敏补丁：清理新生成的积加证据和来源报告副本，不自动清理历史文件或吊销凭证。云端 50 个文件、333 条网页测试和 123 条 Python 测试通过；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。按用户要求备份并仅更新 NAS env 至 rc.10，不自动操作容器。
 
@@ -14,7 +16,7 @@ rc.12代码已补齐[成本版本](docs/superpowers/plans/2026-10-13-cost-versio
 
 新成本能力不在rc.11内，NAS不自动升级到候选。旧镜像不理解新成本日期，回退时保留新表且停止成本编辑/决策，详见NAS说明。
 
-rc.13固定代码`02ec8bc1e960d8be25973f2624ca149bb687d0f3`的[Actions 38391811216](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38391811216)网页61文件/462条通过，Python166条中1条测试模拟函数不接受新增config参数而失败，镜像未构建，**不要部署rc.13**。该测试签名已修正，锁内再次校验/并发变化拒绝断言不变，主代理完整Python166条通过。下一候选rc.14只补此测试兼容和交付记录，不覆盖失败标签，不修改NAS当前rc.11。
+rc.13固定代码`02ec8bc1e960d8be25973f2624ca149bb687d0f3`的[Actions 38391811216](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38391811216)网页61文件/462条通过，Python166条中1条测试模拟函数不接受新增config参数而失败，镜像未构建，**不要部署rc.13**。该测试签名已在rc.14修正，锁内再次校验/并发变化拒绝断言不变，主代理完整Python166条通过，最终云端全门禁亦通过。不覆盖失败标签，不自动重建NAS容器。
 
 - 前台仅保留运营总览、SKU 简报、利润试算；后台分组折叠。所有使用者沿用既有共用账号，仍校验登录会话与敏感写操作。
 - 新采集和经营展示仅纳入一店 MEASUREMAN 的 US/CA。MX/AU 历史保留但不恢复采集，不跨币种合计，不按父体展示。

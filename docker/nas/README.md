@@ -2,11 +2,11 @@
 
 ## 当前交付状态（2026-10-13）
 
-最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 全部成功，对应提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`；镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。包含此前费率来源/认证字段脱敏，以及复核闭环和登录/发布安全保护。按最新用户要求，NAS原env仅将 `IMAGE_TAG` 从rc.10改为rc.11，其他字节不变，备份为`_archive/env.before-rc11-20261013`。没有操作容器，实际运行版本仍待用户重建后验收；env备份不是数据库备份。
+最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.14`，[Actions 38392637697](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38392637697) 全部成功，对应提交 `59068c6fee0fb91541d21b5228de6aa260c23b50`；镜像摘要 `sha256:e9699a332f50d27130b494cd24d74a9acc108b43f9fc8bda2f7d5abf150515dc`。61文件/462条网页、166条Python及AMD64/ARM64实际fresh/worker/resume检查通过，包含成本历史、原子worker审计、完整月报发布和指标口径记录。不提升latest。
 
-rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本已在rc.12代码实施，但rc.12云端Python门禁失败，镜像未构建，不能部署；新候选为rc.13，全部门禁成功前仍使用rc.11。当前NAS env保持rc.11，不能称整份PRD完成。已有项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
+全门禁成功后按用户“只改env、自己重建”的要求，备份原NAS配置并仅将`IMAGE_TAG`从rc.11改为rc.14，其他字节比较完全不变，备份为`_archive/env.before-rc14-20261013`。没有操作容器、密钥或数据，实际运行版本仍待用户重建后验收；env备份不是数据库备份。原项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重新拉取并创建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
 
-rc.13网页61文件/462条通过，Python166条中1条旧测试模拟函数签名失败，docker门禁跳过，无镜像，不能部署。只修测试config参数兼容，原锁内保护断言未改；主代理完整Python166条通过。下一固定候选为rc.14，全部云端门禁成功前仍保持NAS env rc.11，不在构建过程中操作NAS。
+rc.12和rc.13均因Python门禁失败而跳过docker，没有镜像，不能部署，不覆盖失败标签。rc.14只补旧提交锁测试config参数兼容及交付记录，原锁内保护断言未改；全流程已通过。补丁不自动清理历史凭证、替换数据或更换密钥，也不表示整份PRD和生产经营验收完成。
 
 ### 候选成本版本：迁移与回退限制
 
