@@ -4,7 +4,11 @@
 
 ## 当前交付与操作入口（2026-10-13）
 
-已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.8`，代码提交 `e9fbcc02bba8b9713b63986a3d073158b84faa6b`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38353275785) 的应用验证、AMD64/ARM64 发布与隔离启动检查全部通过；候选标签不提升 `latest`。**构建成功不是 NAS 上线或经营数据自动同步成功的证明。**
+已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.10`，代码提交 `e27d786a43af063c50eb3f5bcf7082f49ca2a797`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38363672448) 的应用验证、AMD64/ARM64 发布与隔离启动检查全部通过；候选标签不提升 `latest`。**构建成功不是 NAS 上线或经营数据自动同步成功的证明。**
+
+rc.10 包含认证字段脱敏补丁：清理新生成的积加证据和来源报告副本，不自动清理历史文件或吊销凭证。云端 50 个文件、333 条网页测试和 123 条 Python 测试通过；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。未覆盖 rc.9 标签，NAS env 保持 rc.9，不自动操作容器。
+
+下一候选 rc.11 正在按[核心闭环计划](docs/superpowers/plans/2026-10-13-prd-core-closure.md)补齐复核重新触发、证据历史、连续查询、登录限流以及发布/回退二次验证。这些未完成项不能当作 rc.10 已有能力。
 
 - 前台仅保留运营总览、SKU 简报、利润试算；后台分组折叠。所有使用者沿用既有共用账号，仍校验登录会话与敏感写操作。
 - 新采集和经营展示仅纳入一店 MEASUREMAN 的 US/CA。MX/AU 历史保留但不恢复采集，不跨币种合计，不按父体展示。

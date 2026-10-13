@@ -1,6 +1,14 @@
 # NAS 在线部署文件
 
-## v1.5.0-rc.8 最终候选（云端与双架构启动检查通过）
+## 当前交付状态（2026-10-13）
+
+最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.10`，[Actions 38363672448](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38363672448) 全部成功，对应提交 `e27d786a43af063c50eb3f5bcf7082f49ca2a797`；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。包含 rc.9 的费率来源、线路、适用范围与手工覆盖展示，以及新积加证据/报告脱敏。NAS 原 env 已备份，仅 `IMAGE_TAG` 从 rc.8 改为 rc.9，容器由用户自行重建，尚未验真实际运行版本。
+
+rc.10 的 333 条网页测试、123 条 Python 测试及双架构启动检查通过，不提升 latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。下一候选 rc.11 尚在补齐复核和登录/发布保护，不能称作 rc.10 已完成整份 PRD。当前 NAS env 仍为 rc.9。已有项目沿用原 Compose、原挂载和账号，不导入新模板；重建 app 与 data-worker，不重建 cloudflared。
+
+最近只读公网检查返回 Cloudflare 1033，完整经营数据发布也未验收成功。下方旧版本号及命令为历史记录，不是当前上线证明。
+
+## v1.5.0-rc.8（历史发布记录，云端与双架构启动检查通过）
 
 固定镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.8`。[Actions 38353275785](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38353275785) 全部成功，对应代码 `e9fbcc02bba8b9713b63986a3d073158b84faa6b`；镜像清单摘要 `sha256:7a37d97f69467a0610fbef9cc6d1daefaf7bab1adab33fcdc2f98105ce0a55b4`，AMD64、ARM64 构建及账号保留、只读就绪、写入保护和 worker 启动检查通过。不提升 `latest`。
 
@@ -58,6 +66,8 @@ docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.o
 app_container="$(docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml ps -q app)"
 test -n "$app_container"
 old_image="$(docker inspect --format '{{.Config.Image}}' "$app_container")"
+backup_user="$(docker inspect --format '{{.Config.User}}' "$app_container")"
+test -n "$backup_user"
 backup_dir="./backups/pre-rc7-20261013"
 test ! -e "$backup_dir"
 mkdir -p "$backup_dir"
@@ -67,13 +77,13 @@ cp docker-compose.yml "$backup_dir/compose.before.yml"
 cp measureman-data-worker.override.yml "$backup_dir/worker.before.yml"
 chmod 600 "$backup_dir/env.before"
 docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml stop app data-worker
-docker run --rm --user 0:0 --volumes-from "$app_container:ro" --entrypoint /bin/sh "$old_image" \
+docker run --rm --user "$backup_user" --volumes-from "$app_container:ro" --entrypoint /bin/sh "$old_image" \
   -c 'tar -C /data -cf - app runtime uploads snapshots' > "$backup_dir/persistent-data.tar"
 tar -tf "$backup_dir/persistent-data.tar" >/dev/null
 docker compose --env-file .env -f docker-compose.yml -f measureman-data-worker.override.yml start app data-worker
 ```
 
-只读备份 helper 复用旧 app 的现有挂载，可同时覆盖绑定目录与命名卷，不创建替代业务卷；它临时以 root 读取备份，并不改变 app/worker 的原用户。示例要求原账号库、运营库与报告位于标准 `/data/app`、`/data/runtime` 挂载；自定义数据库/上传/快照路径须先补齐归档范围。停掉全部写入者后归档整个目录，不能只复制在线 SQLite 主文件或遗漏 `-wal` / `-shm`。若备份失败，先恢复旧 app/worker 运行并查明原因，不继续升级。
+只读备份 helper 复用旧 app 的现有挂载和容器用户，可同时覆盖绑定目录与命名卷，不创建替代业务卷，也不要求平台额外授予 root。检查得到用户为空或读取权限不足时应暂停并核对原用户/ACL，不能自动改用 root 或改变生产目录权限。示例要求原账号库、运营库与报告位于标准 `/data/app`、`/data/runtime` 挂载；自定义数据库/上传/快照路径须先补齐归档范围。停掉全部写入者后归档整个目录，不能只复制在线 SQLite 主文件或遗漏 `-wal` / `-shm`。若备份失败，先恢复旧 app/worker 运行并查明原因，不继续升级；这是操作方案，不表示已经执行或验真备份。
 
 备份确认后仅在原 env 中修改 `IMAGE_TAG=v1.5.0-rc.7`，保持原 `SECRET_KEY`、账号、调度、Cloudflare、目录和全部连接凭证。不要用示例 env 覆盖原文件。拉取成功后再重建两个服务：
 
