@@ -85,7 +85,7 @@ class ReportVersionTests(unittest.TestCase):
                 # Metadata can also appear after copying on a mounted share.
                 (stage / "._two.json").write_bytes(b'\xff')
             pointer = json.loads((root / "current.json").read_text())
-            self.assertEqual(set(pointer["files"]), {"one.json"})
+            self.assertEqual(set(pointer["files"]), {"one.json", "metric-contract.json"})
             self.assertEqual(json.loads((current_reports(root) / "one.json").read_text()), {"n": 1})
 
     def test_publish_and_rollback_remove_new_only_files_and_keep_captured_reader(self):

@@ -31,23 +31,23 @@
 
 **Interfaces:** 当前版本对象含`metricDefinitionVersion`、`calculationRuleVersion`及完整definitions；已发布来源版本可null。evidenceSchema可选兼容版本字段，buildReviewEvidence实际写入，旧baseline不重写。GET报告和当前模型的日期/版本固定在既有withReportVersion范围。
 
-- [ ] 先失败复现当前模型/证据无定义版本，旧证据不应被回填，变动版本改变复核比较。
-- [ ] 实现单一资产、严格读取、当前解释与来源版本分离；默认规则纳入模型版本。
-- [ ] 现有折叠区简洁展示，不新增主入口；合成测试、相关ESLint/类型检查通过。
+- [x] 先失败复现当前模型/证据无定义版本，旧证据不应被回填，变动版本改变复核比较。
+- [x] 实现单一资产、严格读取、当前解释与来源版本分离；默认规则纳入模型版本。
+- [x] 现有折叠区简洁展示，不新增主入口；合成测试、相关ESLint/类型检查通过。
 
 ### Task 2: Python发布与镜像资产
 
-**Files:** 新增automation/src/store_ops/metric_contract.py；修改report_versions.py、Dockerfile；新增合成Python测试。
+**Files:** 新增automation/src/store_ops/metric_contract.py；修改report_versions.py、Dockerfile、docker/scripts/smoke-runtime.mjs；新增合成Python测试。
 
 **Interfaces:** Python读取同一JSON资产，生成新批`reports/metric-contract.json`并在manifest/current保存版本引用；SHA沿用已有report_file_hashes。report_transaction扩展显式`preserve_metric_contract=False`，restore_reports使用True；恢复已有资产保留原版本，无资产旧备份保留未知，不给原始源报告伪造版本。Python资产由Docker从同一src JSON复制至`/opt/store-ops/config/metric-definitions.json`。
 
-- [ ] 先失败复现发布缺完整定义资产/引用；损坏资产拒绝并保留旧指针，回退保留原归档定义。
-- [ ] 最小实现，Docker复制同一资产到现有config目录，无新增Python依赖。
-- [ ] 聚焦报告版本及编译worker回归通过；不更改原始源资料。
+- [x] 先失败复现发布缺完整定义资产/引用；损坏资产拒绝并保留旧指针，回退保留原归档定义。
+- [x] 最小实现，Docker复制同一资产到现有config目录，无新增Python依赖。
+- [x] 聚焦报告版本及编译worker回归通过；不更改原始源资料。最终所有集成改动仍需云端完整门禁。
 
 ### Task 3: 集成与候选
 
-- [ ] 主代理读diff及独立审查，一次修复轮，聚焦回归与生产构建。
+- [x] 主代理读diff及独立审查，一次修复轮，聚焦回归与生产构建。
 - [ ] 与成本版本、worker原子审计和月报完整性一起提交新固定候选，云端全流程/双架构实际启动通过。
 - [ ] 更新审查与部署材料，明确代码、镜像、NAS及真实数据各自状态；完整PRD仍按外部证据逐项验收。
 
@@ -57,3 +57,10 @@
 - 原本rc.12门禁网页448条成功、Python130条中1条失败；失败发生于worker任务完成后审计尚未提交，镜像未构建，不覆盖标签。修复采用任务/审计同事务而非放宽测试或延长等待。
 - 月报完整性保持既有完整数值契约，已确认未知值不填零；字段缺失拒绝整批而非放行部分和。积加已有nullable费用事实路径不变。
 - 复核显示范围裁定：现有team-workbench只显示金额和“非因果证明”，未实现自动动作效果评分。本轮仅在原证据区补基线/最新口径版本和可比性，不添加效果公式；未知不能冒充相同口径。
+
+## 实际证据与审查修复
+
+- 主代理集成网页9文件/108条通过；生产构建含类型检查、standalone与worker打包成功。主代理Python相关10模块/101条通过；编译worker原子审计6场景另有实跑记录。所有数据为隔离合成源。
+- 实际组件与生产CSS在390×844和1440×900无页面横向溢出；11项定义在原数据状态折叠区，Enter可开合；旧基线与来源未知保留，复核备注草稿可输入。截图存忽略的runtime/reviews/20261013-maturity，不是NAS页面验收。
+- 一次独立审查在发布链路实跑出P1：大写XLSX/独立Report源被接受却不被消费者读取；P2：非目标MX坏日期阻断US。指标版本/恢复/worker原子提交未发现新阻断；原实现者同一修复轮7项RED→GREEN，主代理读最终diff并另复现AU排除失败后修复。最终10模块108条Python通过；uppercase真实消费、旧副本/不支持Report拒绝保指针、跨历史消费者核对及窗口外合法历史均覆盖，不放宽未知费用或市场范围。云端结果仍待。
+- 本机没有Docker；新asset的Python与受保护API一致性断言已加入现有双架构fresh/resume门禁，语法检查不冒充真实容器启动。

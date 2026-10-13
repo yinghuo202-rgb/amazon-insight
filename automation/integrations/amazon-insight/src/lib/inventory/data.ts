@@ -13,6 +13,8 @@ import { buildOperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { publishedReportPath, withReportVersion } from "@/lib/inventory/report-version";
 import { operatingPerformanceSchema } from "@/lib/inventory/operating-performance";
 import { listOperatingRuleOverrides } from "@/lib/inventory/operating-rules-store";
+import { defaultOperatingRules } from "@/lib/inventory/operating-rules";
+import { metricContractSchema, metricVersions } from "@/lib/inventory/metric-contract";
 
 export async function loadOperatingModel() {
   return withReportVersion(async () => {
@@ -31,9 +33,13 @@ export async function loadOperatingModel() {
   const publishedPath = await publishedReportPath(runtimePath("reports", "gerpgo-performance.json"));
   const versionId = path.basename(path.dirname(path.dirname(publishedPath)));
   model.publishedVersion = /^data-/.test(versionId) ? versionId : null;
+  if (model.publishedVersion) {
+    try { model.publishedMetricContract = metricVersions(await loadJsonReport(runtimePath("reports", "metric-contract.json"), input => metricContractSchema.parse(input))); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
   try { model.ruleOverrides = listOperatingRuleOverrides(); }
   catch { model.rulesAvailable = false; model.warnings.push("提醒配置读取失败，经营提醒暂停；事实数据仍可查看，请检查运营数据库。"); }
-  model.dataVersion = createHash("sha256").update(JSON.stringify([new Date().toISOString().slice(0, 10), model.publishedVersion, model.generatedAt, model.rows, model.snapshots, model.ruleOverrides, model.rulesAvailable])).digest("hex");
+  model.dataVersion = createHash("sha256").update(JSON.stringify([new Date().toISOString().slice(0, 10), model.publishedVersion, model.generatedAt, model.rows, model.snapshots, model.ruleOverrides, model.rulesAvailable, model.metricContract, model.publishedMetricContract, defaultOperatingRules])).digest("hex");
   return model;
   });
 }

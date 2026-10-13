@@ -1,7 +1,19 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type Evidence = { version: string; period: string; currency: string; sales: number | null; profit: number | null; profitVerified: boolean; adShare?: number | null; returnRate?: number | null; fbaDays?: number | null; supplyDays?: number | null };
+type Evidence = { version: string; period: string; currency: string; sales: number | null; profit: number | null; profitVerified: boolean; adShare?: number | null; returnRate?: number | null; fbaDays?: number | null; supplyDays?: number | null;
+  metricDefinitionVersion?: string | null; calculationRuleVersion?: string | null; publishedMetricDefinitionVersion?: string | null; publishedCalculationRuleVersion?: string | null };
+function MetricEvidence({ label, evidence }: { label: string; evidence: Evidence }) {
+  return <p className="break-all text-slate-500">{label}口径：定义 {evidence.metricDefinitionVersion ?? "未知"} · 计算 {evidence.calculationRuleVersion ?? "未知"}；发布来源：定义 {evidence.publishedMetricDefinitionVersion ?? "未知"} · 计算 {evidence.publishedCalculationRuleVersion ?? "未知"}</p>;
+}
+function MetricComparability({ baseline, latest }: { baseline: Evidence; latest: Evidence }) {
+  const fields = ["metricDefinitionVersion", "calculationRuleVersion", "publishedMetricDefinitionVersion", "publishedCalculationRuleVersion"] as const;
+  // A known change deserves the more specific message even if older source
+  // publication metadata remains unknown.
+  if (fields.some(field => baseline[field] != null && latest[field] != null && baseline[field] !== latest[field])) return <p>口径版本不同，需重新核查；金额不按同口径比较。</p>;
+  if (fields.some(field => baseline[field] == null || latest[field] == null)) return <p>口径版本未知，不能按同口径比较。</p>;
+  return null;
+}
 type Task = { id: string; sku: string; market: string | null; title: string; note: string | null; status: string; updatedAt: string;
   context: { issue: string; baseline: Evidence; latest: Evidence } | null; history: { at: string; actor: string; action: string; status: string; note: string | null; previousStatus?: string; evidence?: Evidence; triggered?: boolean }[] };
 type Snapshot = { workspace: { name: string }; tasks: Task[]; limited: boolean; nextCursor?: string | null };
@@ -111,6 +123,8 @@ export function TeamWorkbench({ review }: { review?: Review }) {
           <p>首次基线：{task.context.baseline.period} · {task.context.baseline.currency} · 销售额 {task.context.baseline.sales ?? "—"} · {task.context.baseline.profitVerified ? "已核验利润" : "来源利润待对账"} {task.context.baseline.profit ?? "—"}</p>
           <p>最新依据：{task.context.latest.period} · {task.context.latest.currency} · 销售额 {task.context.latest.sales ?? "—"} · {task.context.latest.profitVerified ? "已核验利润" : "来源利润待对账"} {task.context.latest.profit ?? "—"}</p>
           <p className="break-all text-slate-500">基线版本 {task.context.baseline.version}；最新版本 {task.context.latest.version}</p>
+          <MetricEvidence label="基线" evidence={task.context.baseline} /><MetricEvidence label="最新" evidence={task.context.latest} />
+          <MetricComparability baseline={task.context.baseline} latest={task.context.latest} />
           <p className="text-slate-500">期间可能不同；金额变化仅供复核，不是动作效果或因果证明。</p>
           {review && <button disabled={busy} className="mt-2 min-h-11 rounded-lg border bg-white px-3 text-[#0071e3]" onClick={() => void save("POST", { kind: "review", sku: review.sku, market: review.market, period: review.period, version: review.version, issue: task.context!.issue })}>按当前期间更新证据（不改结论）</button>}
         </div>}

@@ -8,6 +8,20 @@ const task = (id: string, title: string) => ({ id, sku: "SKU-" + id, market: "US
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each(["unknown", "different", "same"])("shows %s metric comparability without inventing an action effect", async mode => {
+  const base = { version: "v1", period: "2026-09", currency: "USD", sales: 100, profit: 10, profitVerified: true, metricDefinitionVersion: "definitions-v1", calculationRuleVersion: "rules-v1", publishedMetricDefinitionVersion: "definitions-v1", publishedCalculationRuleVersion: "rules-v1" };
+  const baseline = mode === "unknown" ? { ...base, calculationRuleVersion: undefined } : base;
+  const latest = { ...base, version: "v2", calculationRuleVersion: mode === "different" ? "rules-v2" : "rules-v1" };
+  vi.stubGlobal("fetch", vi.fn(async () => json({ workspace: { name: "shared" }, tasks: [{ ...task("A", "任务 A"), context: { issue: "利润待核查", baseline, latest } }], limited: false })));
+  render(createElement(TeamWorkbench));
+  await screen.findByLabelText("任务 A复核备注");
+  expect(screen.getByText(/基线口径.*definitions-v1/)).toBeInTheDocument();
+  expect(screen.getByText(/最新口径.*rules-v/)).toBeInTheDocument();
+  if (mode === "unknown") expect(screen.getByText(/口径版本未知，不能按同口径比较/)).toBeInTheDocument();
+  if (mode === "different") expect(screen.getByText(/口径版本不同，需重新核查/)).toBeInTheDocument();
+  if (mode === "same") expect(screen.queryByText(/口径版本不同|口径版本未知/)).not.toBeInTheDocument();
+});
+
 it("saving one task preserves other drafts, reports success and detects remote note changes", async () => {
   const tasks = [task("A", "任务 A"), task("B", "任务 B")];
   const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {

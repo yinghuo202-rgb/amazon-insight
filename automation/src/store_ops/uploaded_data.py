@@ -22,6 +22,7 @@ from .config import ProjectConfig, load_config
 from .db import StateDb
 from .monthly_report_values import open_monthly_report, validated_monthly_rows
 from .jobs.document_master import _read_shipments
+from .jobs.monthly_reports import _report_identity
 from .jobs.new_product_research import extract_research_rows
 from .jobs.product_catalog import _extract_product_images, _merge_product_details, _read_product_details
 from .replenishment import ReplenishmentParameters, calculate_replenishment
@@ -104,6 +105,9 @@ def _base_sku(value: object) -> str | None:
 def _detect(path: Path, workbook) -> str:
     name = path.name.lower()
     sheets = {value.strip() for value in workbook.sheetnames}
+    if "销售和毛利报告" in name:
+        _, market = _report_identity(path)
+        return f"sales_{market.lower()}"
     if "发货清单" in name and "Measureman" in workbook.sheetnames:
         return "shipment"
     if "新品调研" in name or any(re.fullmatch(r"\d{1,2}月新品", value) for value in sheets):
@@ -118,10 +122,6 @@ def _detect(path: Path, workbook) -> str:
         return "advertising"
     if "月度分析" in name or "仓租详情" in " ".join(sheets):
         return "monthly_analysis"
-    if "销售和毛利报告" in name:
-        if "-mx" in name.lower():
-            return "sales_mx"
-        return "sales_ca" if "-ca" in name.lower() else "sales_us"
     if "report" in name and "Report" in workbook.sheetnames:
         return "sales_ca" if "-ca-" in name else "sales_us"
     return "unknown"
@@ -229,6 +229,9 @@ def _monthly_report_config() -> ProjectConfig:
 
 
 def _profitability_preview(workbook, market: str, path: Path | str = "上传月报", normalizer: SkuNormalizer | None = None) -> dict[str, Any]:
+    report_month, source_market = _report_identity(Path(path))
+    if market != source_market:
+        raise ValueError(f"月报 market 与文件名身份不一致: 文件={path}; market={market}; 文件名market={source_market}")
     if normalizer is None:
         config = _monthly_report_config()
         normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
@@ -239,7 +242,7 @@ def _profitability_preview(workbook, market: str, path: Path | str = "上传月�
         count += 1
         units += int(values["units"])
         sales += values["productSales"]
-    return {"market": market, "skuCount": count, "units": units, "sales": round(sales, 2), "impacts": ["运营总览", "利润分析", "销量历史"]}
+    return {"market": source_market, "reportMonth": report_month, "skuCount": count, "units": units, "sales": round(sales, 2), "impacts": ["运营总览", "利润分析", "销量历史"]}
 
 
 def _generic_preview(workbook, kind: str) -> dict[str, Any]:
@@ -281,7 +284,7 @@ def inspect_batch(batch_dir: Path, *, config: ProjectConfig | None = None) -> di
                         normalizer = SkuNormalizer(monthly_config.sku_pattern, monthly_config.ignore_values)
                         item["preview"] = _profitability_preview(workbook, market, path, normalizer)
                     else:
-                        item["preview"] = _sales_preview(workbook, market)
+                        raise ValueError(f"不支持独立 Report 销售导出: 文件={path}; 请上传完整销售和毛利月报")
                 else:
                     item["preview"] = _generic_preview(workbook, kind)
             finally:
@@ -899,7 +902,17 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
     # monthly report blocks the entire transaction, not just that file's patch.
     for item in manifest["files"]:
         source = batch_dir / "source" / item["name"]
+        if item.get("type") in {"sales_us", "sales_ca", "sales_mx"} and "销售和毛利报告" not in source.name:
+            raise ValueError(f"不支持独立 Report 销售导出: 文件={source}; 请上传完整销售和毛利月报")
         if "销售和毛利报告" in source.name or "SKU销售汇总" in item.get("sheets", []):
+            report_month, source_market = _report_identity(source)
+            expected_type = f"sales_{source_market.lower()}"
+            if item.get("type") != expected_type:
+                raise ValueError(f"月报 type 与文件名身份不一致: 文件={source}; type={item.get('type')}; 文件名type={expected_type}")
+            preview = item.get("preview", {})
+            for field, expected in (("market", source_market), ("reportMonth", report_month)):
+                if field in preview and preview[field] != expected:
+                    raise ValueError(f"月报 {field} 与文件名身份不一致: 文件={source}; {field}={preview[field]}; 文件名{field}={expected}")
             config = config or _monthly_report_config()
             normalizer = SkuNormalizer(config.sku_pattern, config.ignore_values)
             with open_monthly_report(source) as workbook:
@@ -966,15 +979,37 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
         previous_profitability_root = os.environ.get("STORE_OPS_PROFITABILITY_ROOT")
         os.environ["STORE_OPS_PROFITABILITY_ROOT"] = str(reports_dir.parent / "incoming" / "monthly-sales-reports")
         try:
-            run_profitability_snapshot(config, database)
-            run_sales_history(config, database)
+            profitability_result = run_profitability_snapshot(config, database)
+            history_result = run_sales_history(config, database)
+            profit_report = json.loads((reports_dir / "profitability.json").read_text(encoding="utf-8"))
+            profit_sources = {
+                (entry["market"], entry["reportMonth"]): Path(entry["path"]).resolve()
+                for entry in profit_report["sources"]
+            }
+            history_sources = {}
+            for market, result in history_result["markets"].items():
+                history_report = json.loads(Path(result["reportPath"]).read_text(encoding="utf-8"))
+                history_sources[market] = {
+                    (config.data_root / entry["path"]).resolve()
+                    for entry in history_report["sources"] if entry.get("kind") == "sales_history_month"
+                }
+            for source in monthly_sources:
+                month, market = _report_identity(source)
+                staged_source = (reports_dir.parent / "incoming" / "monthly-sales-reports" / source.name).resolve()
+                if profit_sources.get((market, month)) != staged_source:
+                    raise ValueError(f"本批月报未被利润报告消费，按 (mtime, path) 选择的同月最新来源不是本文件: {source.name}")
+                # History sources cover all imported months, not just the live
+                # sales window. MX has no live inventory/history consumer here.
+                if market in {"US", "CA"} and market in history_sources and staged_source not in history_sources[market]:
+                    raise ValueError(f"本批月报未被 {market} 销量历史消费，同月最新来源不是本文件: {source.name}")
         finally:
             database.close()
             if previous_profitability_root is None:
                 os.environ.pop("STORE_OPS_PROFITABILITY_ROOT", None)
             else:
                 os.environ["STORE_OPS_PROFITABILITY_ROOT"] = previous_profitability_root
-        updated.extend(["profitability.json", "inventory_dashboard.json", "inventory_dashboard.ca.json"])
+        updated.append(Path(profitability_result["report_path"]).name)
+        updated.extend(Path(result["reportPath"]).name for result in history_result["markets"].values())
     manifest.update({"status": "published", "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "dataVersion": version, "updatedReports": sorted(set(updated)), "stagedFiles": skipped})
     return manifest
 

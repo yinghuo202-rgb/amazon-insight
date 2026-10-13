@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "metricDefinitionVersion": "operating-metrics-v1",
+  "calculationRuleVersion": "operating-calculations-v1",
+  "scope": "本站已实施的解释与计算定义；归档不代表外部源报告重算或费用已对账",
+  "definitions": [
+    {
+      "id": "sales",
+      "name": "销售额",
+      "formula": "取来源 productSales，不以销量或结算回款代替",
+      "unit": "money",
+      "denominator": "无",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "缺来源时 null；合法零保留",
+      "verificationBoundary": "来源销售/税退款归属未由本站重新核验"
+    },
+    {
+      "id": "source-profit",
+      "name": "来源利润",
+      "formula": "取来源 actualProfit；不由销售额重算源费用",
+      "unit": "money",
+      "denominator": "无",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "缺来源或费用时 null；合法零保留",
+      "verificationBoundary": "profitVerified 不因版本归档变为 true；外部费用范围待对账"
+    },
+    {
+      "id": "source-margin",
+      "name": "来源利润率",
+      "formula": "来源 actualProfit / 同期间 productSales（productSales > 0），沿用发布的 actualMargin；Excel 保留既有四位小数处理，不重算源费用",
+      "unit": "ratio",
+      "denominator": "同期间同币种 productSales > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "来源缺失或分母不可用时 null",
+      "verificationBoundary": "仅 profitVerified 为 true 时用于利润提醒；不确认源费用范围"
+    },
+    {
+      "id": "average-price",
+      "name": "成交均价",
+      "formula": "来源 averagePrice 优先；否则 productSales / units",
+      "unit": "money/unit",
+      "denominator": "同期间 units > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "无来源且 units <= 0 时 null",
+      "verificationBoundary": "成交收入每件，不是当前 listing 价格"
+    },
+    {
+      "id": "ad-attribution-ratio",
+      "name": "广告归因比",
+      "formula": "同期间 advertisingSales / productSales",
+      "unit": "ratio",
+      "denominator": "同期间同币种 productSales > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "advertising / profitability / gerpgo-performance",
+      "missingRule": "期间或 businessAsOf 不匹配，缺值或分母 <= 0 时 null",
+      "verificationBoundary": "可超过100%；不是销售组成或自然销售占比；广告归因窗口待核验"
+    },
+    {
+      "id": "ad-spend-ratio",
+      "name": "广告投入比",
+      "formula": "同期间 advertisingCost / productSales",
+      "unit": "ratio",
+      "denominator": "同期间同币种 productSales > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "advertising / profitability / gerpgo-performance",
+      "missingRule": "期间或 businessAsOf 不匹配，缺值或分母 <= 0 时 null",
+      "verificationBoundary": "广告花费占销售额；不混同广告归因比"
+    },
+    {
+      "id": "return-rate",
+      "name": "退货率",
+      "formula": "returns / units",
+      "unit": "ratio",
+      "denominator": "同期间 units > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "returns 缺失或 units <= 0 时 null",
+      "verificationBoundary": "returnsVerified 不变；退货原订单归属与退款时点未确认"
+    },
+    {
+      "id": "acos",
+      "name": "ACOS",
+      "formula": "advertisingCost / advertisingSales",
+      "unit": "ratio",
+      "denominator": "所选广告报告 advertisingSales > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "advertising / profitability / gerpgo-performance",
+      "missingRule": "广告值缺失或分母 <= 0 时 null",
+      "verificationBoundary": "广告报告自身期间；未确认外部归因窗口，不按总销售额计算"
+    },
+    {
+      "id": "storage-cost",
+      "name": "仓储费",
+      "formula": "取来源 storageCost；同期间 storageCost / productSales 仅用于趋势假设",
+      "unit": "money",
+      "denominator": "费用值无分母；趋势比用同期间 productSales > 0",
+      "period": "所选来源经营月；广告用所选报告期间",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "profitability / gerpgo-performance",
+      "missingRule": "源费用缺失为 null，不补零",
+      "verificationBoundary": "未确认源费用范围；趋势假设不是因果归因"
+    },
+    {
+      "id": "fba-cover",
+      "name": "FBA覆盖",
+      "formula": "fbaSellable / dailySales",
+      "unit": "days",
+      "denominator": "当前可用需求基线 dailySales > 0",
+      "period": "最新库存业务日期与当前需求基线；不是所选经营月",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "inventory_dashboard FBA快照及既有需求基线",
+      "missingRule": "库存日期过期、需求不可用或分母 <= 0 时 null",
+      "verificationBoundary": "仅FBA可售；沿用日期、需求核验及库存新鲜度规则"
+    },
+    {
+      "id": "overseas-supply-cover",
+      "name": "海外供应覆盖",
+      "formula": "(fbaSellable + awdAvailable + awdOutboundToFba + inTransitInventory) / dailySales；沿用已计算的一位小数覆盖",
+      "unit": "days",
+      "denominator": "当前可用需求基线 dailySales > 0",
+      "period": "最新库存业务日期与当前需求基线；不是所选经营月",
+      "currencyIsolation": "US USD 与 CA CAD 独立，不跨币种相加或比较",
+      "source": "inventory_dashboard FBA/AWD/在途及既有需求基线",
+      "missingRule": "供应未确认、日期过期、需求不可用或分母 <= 0 时 null",
+      "verificationBoundary": "国内库存和采购订单不计海外覆盖；沿用已确认供应池与90天目标"
+    }
+  ]
+}

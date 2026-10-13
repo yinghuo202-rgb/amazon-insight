@@ -57,6 +57,7 @@ COPY --from=prisma-builder /opt/prisma-cli /opt/prisma-cli
 COPY automation/pyproject.toml /opt/store-ops/pyproject.toml
 COPY automation/src /opt/store-ops/src
 COPY automation/config /opt/store-ops/config
+COPY automation/integrations/amazon-insight/src/lib/inventory/metric-definitions.json /opt/store-ops/config/metric-definitions.json
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN /opt/store-ops-venv/bin/pip install --no-cache-dir /opt/store-ops \

@@ -16,6 +16,24 @@ REPORT_NAME_RE = re.compile(
     r"(20\d{2})[._-]?(0?[1-9]|1[0-2])月.*销售和毛利报告-(US|CA|MX)\.xlsx$",
     re.IGNORECASE,
 )
+# AU is recognized only to exclude its historical files from US/CA readers;
+# it is deliberately not a supported import identity above.
+REPORT_MARKET_RE = re.compile(r"-(US|CA|MX|AU)\.xlsx$", re.IGNORECASE)
+
+
+def _report_paths(root: Path):
+    """All consumers recognize the same named .xlsx candidates, case-insensitively."""
+    for path in root.rglob("*"):
+        if path.is_file() and path.suffix.lower() == ".xlsx" and "销售和毛利报告" in path.name:
+            yield path
+
+
+def _report_market(path: Path) -> str:
+    """Read only the authoritative suffix before validating a target market's period."""
+    match = REPORT_MARKET_RE.search(path.name)
+    if not match:
+        raise ValueError(f"无法从文件名识别月报站点后缀: {path.name}")
+    return match.group(1).upper()
 
 
 def _sha256(path: Path) -> str:

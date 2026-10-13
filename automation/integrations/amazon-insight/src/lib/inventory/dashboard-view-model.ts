@@ -3,6 +3,7 @@ import type { InventoryDashboardData, ProfitabilityData, VariantCatalogData } fr
 import { calculateCampaignRows, calculateInventoryRows, inventoryDemandUsable, inventorySupplyStatus, type InventoryDemandBasis, type InventorySupplyBasis } from "@/lib/inventory/presentation";
 import { buildSeasonalityProfile } from "@/lib/inventory/seasonality";
 import { operatingMarkets, selectAdvertisingPeriod, type OperatingPerformance, type OperatingPerformanceRow } from "@/lib/inventory/operating-performance";
+import { currentMetricContract, type MetricVersions } from "@/lib/inventory/metric-contract";
 
 export type OperatingModel = ReturnType<typeof buildOperatingModel>;
 export type OperatingSku = OperatingModel["rows"][number];
@@ -63,6 +64,7 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
     });
   });
   return { markets, periods, rows, warnings, advertisingScopes: advertising?.scopes ?? [], storeName: performance?.storeScope?.storeName ?? null, ruleOverrides: [] as OperatingRuleOverride[], dataVersion: "legacy", publishedVersion: performance?.publication.version ?? null, rulesAvailable: true, generatedAt: performance?.generatedAt ?? profitability?.generatedAt ?? null,
+    metricContract: currentMetricContract, publishedMetricContract: null as MetricVersions | null,
     snapshots: inventories.map((item) => ({ market: item.market, date: item.snapshots.fbaDate, awdDate: item.snapshots.awdDate, awdAvailable: item.snapshots.awdSourceAvailable,
       stale: snapshotAgeDays(item.snapshots.fbaDate, now) === null || snapshotAgeDays(item.snapshots.fbaDate, now)! > item.snapshots.staleAfterDays })) };
 }

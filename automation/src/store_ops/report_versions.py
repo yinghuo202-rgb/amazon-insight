@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .gerpgo_evidence import sanitize_gerpgo_evidence
+from .metric_contract import load_metric_contract, validate_metric_contract
 
 VERSION_RE = re.compile(r"data-\d{8}-\d{6}-[a-zA-Z0-9-]{1,20}")
 
@@ -96,7 +97,7 @@ def verify_report_guard(root: Path, expected_baseline, expected_target, target_f
 
 
 @contextmanager
-def report_transaction(root: Path, snapshots: Path, before_commit=None):
+def report_transaction(root: Path, snapshots: Path, before_commit=None, *, preserve_metric_contract=False):
     """Yield (staged reports, backup version). Publish only on successful exit.
 
     Snapshot identifiers retain the existing UI's 'before this import' meaning.
@@ -129,6 +130,12 @@ def report_transaction(root: Path, snapshots: Path, before_commit=None):
         stage = root / ".versions" / version / "reports"
         _copy_reports(active, stage)
         yield stage, version
+        contract = None
+        if not preserve_metric_contract:
+            contract = load_metric_contract()
+            _json_write(stage / "metric-contract.json", contract)
+        elif (stage / "metric-contract.json").exists():
+            contract = validate_metric_contract(json.loads((stage / "metric-contract.json").read_text(encoding="utf-8")))
         files = {}
         for item in sorted(stage.glob("*.json")):
             if item.name.startswith("."):
@@ -140,10 +147,12 @@ def report_transaction(root: Path, snapshots: Path, before_commit=None):
             files[item.name] = hashlib.sha256(item.read_bytes()).hexdigest()
             with item.open("rb") as handle:
                 os.fsync(handle.fileno())
-        if not files:
+        if not (set(files) - {"metric-contract.json"}):
             raise ValueError("Cannot publish an empty report generation")
         manifest = {"schemaVersion": 1, "version": version,
-                    "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "files": files}
+                    "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"), "files": files,
+                    "metricDefinitionVersion": contract["metricDefinitionVersion"] if contract else None,
+                    "calculationRuleVersion": contract["calculationRuleVersion"] if contract else None}
         _json_write(stage.parent / "manifest.json", manifest)
         _sync_directory(stage)
         _sync_directory(stage.parent)
@@ -169,7 +178,7 @@ def restore_reports(version: str, root: Path, snapshots: Path, *, expected_basel
         if before_commit is not None:
             before_commit()
         verify()
-    with report_transaction(root, snapshots, before_commit=guard) as (stage, new_version):
+    with report_transaction(root, snapshots, before_commit=guard, preserve_metric_contract=True) as (stage, new_version):
         verify()
         # Deletions belong to a version too; never leave new-only files after rollback.
         for item in stage.glob("*.json"):

@@ -14,6 +14,8 @@ export const evidenceSchema = z.object({
   adShare: z.number().nullable(), returnRate: z.number().nullable(), fbaDays: z.number().nullable(), supplyDays: z.number().nullable(),
   issues: z.array(z.string()), dataIssues: z.array(z.string()),
   rules: operatingRulesSchema.optional(), rulesAvailable: z.boolean().optional(), inventoryDate: z.string().nullable().optional(), awdDate: z.string().nullable().optional(),
+  metricDefinitionVersion: z.string().min(1).nullable().optional(), calculationRuleVersion: z.string().min(1).nullable().optional(),
+  publishedMetricDefinitionVersion: z.string().min(1).nullable().optional(), publishedCalculationRuleVersion: z.string().min(1).nullable().optional(),
 });
 export const reviewContextSchema = z.object({ listingId: z.string(), issue: z.string(), baseline: evidenceSchema, latest: evidenceSchema });
 export const taskHistorySchema = z.array(z.object({ at: z.string(), actor: z.enum(["shared-account", "system"]), userId: z.string(), action: z.string(), status: z.string(), note: z.string().nullable(),
@@ -32,6 +34,8 @@ export function buildReviewEvidence(model: OperatingModel, input: z.infer<typeof
     adShare: facts.advertisingSpendShare, returnRate: facts.returnRate, fbaDays: facts.fbaCover,
     supplyDays: facts.supplyFresh ? row.stock?.cover ?? null : null, issues: facts.issues, dataIssues: facts.dataIssues,
     rules, rulesAvailable: model.rulesAvailable, inventoryDate: row.inventoryDate, awdDate: row.awdDate,
+    metricDefinitionVersion: model.metricContract.metricDefinitionVersion, calculationRuleVersion: model.metricContract.calculationRuleVersion,
+    publishedMetricDefinitionVersion: model.publishedMetricContract?.metricDefinitionVersion ?? null, publishedCalculationRuleVersion: model.publishedMetricContract?.calculationRuleVersion ?? null,
   });
   return { triggered, issueKey: createHash("sha256").update(JSON.stringify([row.listingId, input.issue])).digest("hex"), context: { listingId: row.listingId, issue: input.issue, baseline: evidence, latest: evidence } };
 }
@@ -44,19 +48,28 @@ export function appendTaskHistory(existing: string, event: z.infer<typeof taskHi
 
 // Logical/publication IDs and capture times describe provenance, not a new
 // business problem. A restore always gets a new publication ID. Only this
-// listing's period/facts/rules and actual inventory business dates are material.
-function materialEvidence(evidence: z.infer<typeof evidenceSchema>) {
+// listing's period/facts/rules, known metric contracts and inventory business
+// dates are material; unknown legacy metadata is never assigned today's version.
+function businessEvidence(evidence: z.infer<typeof evidenceSchema>) {
   return JSON.stringify([evidence.period, evidence.currency, evidence.sales, evidence.profit, evidence.profitVerified,
     evidence.adShare, evidence.returnRate, evidence.fbaDays, evidence.supplyDays, evidence.rules ?? null, evidence.rulesAvailable ?? null, evidence.inventoryDate ?? null, evidence.awdDate ?? null]);
+}
+
+const versionFields = ["metricDefinitionVersion", "calculationRuleVersion", "publishedMetricDefinitionVersion", "publishedCalculationRuleVersion"] as const;
+function contractEvidence(evidence: z.infer<typeof evidenceSchema>) {
+  return JSON.stringify(versionFields.map(field => evidence[field] ?? null));
+}
+function materialEvidence(evidence: z.infer<typeof evidenceSchema>) {
+  return JSON.stringify([businessEvidence(evidence), contractEvidence(evidence)]);
 }
 
 export function reviewEvidenceUpdate(existing: { contextJson: string | null; historyJson: string; status: string; note: string | null }, review: ReturnType<typeof buildReviewEvidence>, actor: { actor: "shared-account" | "system"; userId: string; now: Date }) {
   const previous = existing.contextJson ? reviewContextSchema.parse(JSON.parse(existing.contextJson)) : null;
   const history = taskHistorySchema.parse(JSON.parse(existing.historyJson));
   const evidence = review.context.latest;
-  if (previous?.latest.version === evidence.version && previous.latest.period === evidence.period) return null;
+  if (previous?.latest.version === evidence.version && materialEvidence(previous.latest) === materialEvidence(evidence)) return null;
   // A rolled-back/revisited version is already evidence, not a new trigger.
-  if (history.some(event => event.evidence?.version === evidence.version && event.evidence.period === evidence.period)) {
+  if (history.some(event => event.evidence?.version === evidence.version && materialEvidence(event.evidence) === materialEvidence(evidence))) {
     return { status: existing.status, contextJson: JSON.stringify(preserveReviewBaseline(existing.contextJson, review.context)), historyJson: existing.historyJson };
   }
   const alreadyReviewed = previous && [previous.baseline, previous.latest, ...history.flatMap(event => event.evidence ? [event.evidence] : [])]
@@ -67,13 +80,19 @@ export function reviewEvidenceUpdate(existing: { contextJson: string | null; his
     return { status: existing.status, contextJson: JSON.stringify(preserveReviewBaseline(existing.contextJson, review.context)), historyJson: existing.historyJson };
   }
   let historyJson = JSON.stringify(history);
-  if (previous && !history.some(event => event.evidence?.version === previous.latest.version && event.evidence.period === previous.latest.period)) {
+  if (previous && !history.some(event => event.evidence?.version === previous.latest.version && materialEvidence(event.evidence) === materialEvidence(previous.latest))) {
     historyJson = appendTaskHistory(historyJson, { at: actor.now.toISOString(), actor: "system", userId: "system", action: "preserve-legacy-evidence", status: existing.status, note: null,
       evidence: previous.latest, triggered: [...previous.latest.issues, ...previous.latest.dataIssues].includes(previous.issue) });
   }
-  const status = previous && review.triggered && ["DONE", "DISMISSED"].includes(existing.status) ? "REVIEW" : existing.status;
+  const priorEvidence = previous ? [previous.latest, ...history.slice().reverse().flatMap(event => event.evidence ? [event.evidence] : []), previous.baseline] : [];
+  const knownContractChanged = versionFields.some(field => {
+    const prior = priorEvidence.find(item => item[field] != null);
+    return prior != null && evidence[field] != null && prior[field] !== evidence[field];
+  });
+  const metadataOnly = Boolean(previous && !knownContractChanged && businessEvidence(previous.latest) === businessEvidence(evidence));
+  const status = previous && !metadataOnly && (review.triggered || knownContractChanged) && ["DONE", "DISMISSED"].includes(existing.status) ? "REVIEW" : existing.status;
   historyJson = appendTaskHistory(historyJson, { at: actor.now.toISOString(), actor: actor.actor, userId: actor.userId,
-    action: previous ? "refresh-evidence" : "create-review", previousStatus: existing.status, status, note: existing.note,
+    action: knownContractChanged ? "metric-contract-changed" : metadataOnly ? "attach-metric-contract" : previous ? "refresh-evidence" : "create-review", previousStatus: existing.status, status, note: existing.note,
     evidence, triggered: review.triggered });
   return { status, contextJson: JSON.stringify(preserveReviewBaseline(existing.contextJson, review.context)), historyJson };
 }

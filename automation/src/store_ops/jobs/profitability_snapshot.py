@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,9 +11,7 @@ from ..config import ProjectConfig
 from ..db import StateDb
 from ..monthly_report_values import open_monthly_report, validated_monthly_rows
 from ..sku import SkuNormalizer
-
-
-REPORT_NAME_RE = re.compile(r"(20\d{2})[._-]?(0?[1-9]|1[0-2])月.*销售和毛利报告-(US|CA|MX)\.xlsx$", re.IGNORECASE)
+from .monthly_reports import _report_identity, _report_paths
 
 
 def _sha256(path: Path) -> str:
@@ -27,12 +24,12 @@ def _sha256(path: Path) -> str:
 
 def _latest_reports(root: Path) -> dict[tuple[str, str], Path]:
     latest: dict[tuple[str, str], Path] = {}
-    for path in root.rglob("*销售和毛利报告-*.xlsx"):
-        match = REPORT_NAME_RE.search(path.name)
-        if not match:
+    for path in _report_paths(root):
+        try:
+            month, market = _report_identity(path)
+        except ValueError:
             continue
-        month = f"{int(match.group(1)):04d}-{int(match.group(2)):02d}"
-        key = (match.group(3).upper(), month)
+        key = (market, month)
         current = latest.get(key)
         if current is None or (path.stat().st_mtime, str(path)) > (current.stat().st_mtime, str(current)):
             latest[key] = path

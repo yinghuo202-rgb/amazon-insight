@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
@@ -70,6 +71,16 @@ if (phase === "worker") {
   const runtime = await diagnostic.json();
   assert.equal(runtime.ready, true);
   assert.equal(runtime.checks.worker.status, "disabled", "paused synchronization is not a worker failure");
+  // Read the packaged Python config through its real loader, then compare with
+  // the existing authenticated, paginated web model (not a second file read).
+  assert.ok(process.env.STORE_OPS_PYTHON, "image must configure its Python runtime");
+  const pythonContract = JSON.parse(execFileSync(process.env.STORE_OPS_PYTHON,
+    ["-c", "import json; from store_ops.metric_contract import load_metric_contract; print(json.dumps(load_metric_contract()))"],
+    { encoding: "utf8", timeout: 10000 }));
+  const operating = await fetch(base + "/api/inventory/operating-data?market=US", { headers });
+  assert.equal(operating.status, 200, "packaged metric model requires the shared login");
+  const operatingPage = await operating.json();
+  assert.deepEqual(operatingPage.model.metricContract, pythonContract, "Python publication and current web explanation must use the same packaged metric contract");
   for (const page of ["/inventory", "/inventory/brief", "/inventory/calculator", "/inventory/data"]) {
     const response = await fetch(base + page, { headers });
     assert.equal(response.status, 200, `page startup failed: ${page}`);

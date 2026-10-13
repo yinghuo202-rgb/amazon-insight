@@ -19,6 +19,7 @@ from ..sku import SkuNormalizer
 from .document_master import run as run_document_master
 from .product_catalog import run as run_product_catalog
 from .content_workflow import run as run_content_workflow
+from .monthly_reports import _report_identity, _report_market, _report_paths
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
@@ -419,21 +420,14 @@ def _read_monthly_sales_reports(
     by_month: dict[str, tuple[float, dict[str, dict], Path]] = {}
     latest: dict[str, Path] = {}
     folders = [folder] if isinstance(folder, Path) else list(folder)
-    paths = sorted({path for root in folders if root.exists() for path in root.rglob("*.xlsx")})
+    paths = sorted({path for root in folders if root.exists() for path in _report_paths(root)})
     for path in paths:
         # Select named monthly reports before opening them. Unrelated dated
         # inventory/research files must not replace an otherwise valid month.
-        if "销售和毛利报告" not in path.name:
+        source_market = _report_market(path)
+        if source_market not in {"US", "CA"} or source_market != market:
             continue
-        upper_name = path.name.upper()
-        if market == "CA":
-            if "CA" not in upper_name and "加拿大" not in str(path):
-                continue
-        elif any(token in upper_name for token in ("-CA", "CA.", "MX")) or "加拿大" in str(path):
-            continue
-        month = _month_from_report_name(path)
-        if not month:
-            continue
+        month, _ = _report_identity(path)
         current = latest.get(month)
         if current is None or (path.stat().st_mtime, str(path)) > (current.stat().st_mtime, str(current)):
             latest[month] = path

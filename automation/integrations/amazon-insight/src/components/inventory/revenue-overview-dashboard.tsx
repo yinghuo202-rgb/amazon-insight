@@ -143,6 +143,9 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
     </section>
     <details className="rounded-xl px-1 py-3 text-xs leading-6 text-slate-500"><summary className={`cursor-pointer ${model.warnings.length || snapshot?.stale ? "text-amber-700" : "text-slate-500"}`}>数据状态{model.warnings.length > 0 ? ` · ${model.warnings.length} 项读取异常` : ""}{snapshot?.stale ? " · 库存过期" : ""}</summary>
       <div className="mt-3 space-y-1">{model.warnings.map(item => <p key={item}>{item}</p>)}<p>经营 {period || "—"} · 库存 {snapshot?.date || "—"} · AWD {snapshot?.awdAvailable ? snapshot.awdDate : "—"}</p><p>更新 {model.generatedAt || "—"} · 版本 {model.publishedVersion ?? model.dataVersion.slice(0, 12)}</p><p>已发布积加报告优先，未覆盖月份沿用 Excel；未对账利润标为报告利润。缺失值显示 —。</p><p>覆盖使用最新库存快照；{page.summary.unknownCoverageCount} 个 SKU 未能计算。过期库存不触发补货建议，国内库存与采购订单不计入海外覆盖。</p><p>关注排序：亏损、FBA 供货、其他提醒；同组按可比利润变化，其余按销售额。</p></div>
+      <div className="mt-3 space-y-2 break-words"><p className="break-all">当前解释：定义 {model.metricContract.metricDefinitionVersion} · 计算 {model.metricContract.calculationRuleVersion}</p><p className="break-all">发布来源：定义 {model.publishedMetricContract?.metricDefinitionVersion ?? "未知（旧报告无记录）"} · 计算 {model.publishedMetricContract?.calculationRuleVersion ?? "未知"}</p><p>{model.metricContract.scope}</p>
+        <dl className="space-y-3">{model.metricContract.definitions.map(item => <div key={item.id}><dt className="font-medium">{item.name} · {item.unit}</dt><dd>{item.formula}；分母：{item.denominator}。{item.period}；{item.currencyIsolation}。来源：{item.source}。缺失：{item.missingRule}。{item.verificationBoundary}。</dd></div>)}</dl>
+      </div>
     </details>
   </div>;
 }
