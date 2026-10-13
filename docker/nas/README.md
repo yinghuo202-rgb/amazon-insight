@@ -12,6 +12,18 @@ NAS 挂载恢复后先做只读检查：原配置为 rc.6，积加调度启用�
 
 已有 NAS 应沿用**当前实际导入的 Compose**。本轮挂载目录内有 docker-compose.yml 和 measureman-commerce-online.yml，不能仅因两个文件都存在就认定实际运行的是哪一个。原部署已合并 worker 时，不额外叠加历史命名卷 overlay；保持原非 root 用户、账号库、运营库、runtime、密钥及 Tunnel。按下方增量升级说明先备份，把固定标签替换为 **rc.8**，app 和 data-worker 同时拉取并重建。不要用仓库内历史模板替换原 NAS 文件，不提升 latest，不自动部署。
 
+### 费率配置的容器传入
+
+试算页读取 app 容器内的 `STORE_OPS_PROFIT_FEE_RULES`，不是直接读取宿主机 `.env`。使用 `env_file` 的根 Compose 会传入该变量；旧的显式 `environment` NAS 文件未必包含映射，即使填写 `.env` 也可能仍得到空规则。仓库绑定模板和 worker overlay 的 app 映射已补齐；**没有自动修改用户 NAS 的 Compose**。
+
+已有项目需先确认并沿用实际 Compose，在原 `services.app.environment` 中加入这一项，不替换其他配置、不导入命名卷 overlay：
+
+```yaml
+STORE_OPS_PROFIT_FEE_RULES: "${STORE_OPS_PROFIT_FEE_RULES:-[]}"
+```
+
+只有经确认、同币种且在有效期内的费率才能填入 JSON；默认 `[]` 表示没有预设，继续手工确认。修改 app 的环境配置后重新创建 app，单纯重启不生效。费率不参与 worker 经营提醒，也不能用试算的广告 15% 或退货 1% 替代真实经营阈值。此配置项无需更换账号、密钥、数据路径或 Tunnel。
+
 ## v1.5.0-rc.7 发布候选（历史准备记录）
 
 本节以下保留 rc.7 发布前准备记录；rc.7 最终构建也已成功，但未包含后续超时修复。最新交付状态以上方 rc.8 为准。增量操作示例中的 `pre-rc7` 和 `v1.5.0-rc.7` 使用时应替换为新的备份目录和 **v1.5.0-rc.8**，不能覆盖已有备份。

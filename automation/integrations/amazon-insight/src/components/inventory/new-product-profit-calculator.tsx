@@ -82,7 +82,21 @@ export function NewProductProfitCalculator({ products, rules = [] }: { products:
     <section className="ops-calc-result"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="ops-section-title">当前选中方案</h2><p className="ops-subtext mt-2">{scenarios[selectedScenario].name} · {market} · {category || "未选类目"}</p></div><span className="ops-status">预计结果</span></div>
       {result ? <><div className="ops-result-focus" aria-live="polite"><div><p className={`ops-result-amount ${result.profit < 0 ? "text-rose-700" : ""}`}>{money(result.profit)}</p><p className="ops-subtext mt-2">预计单件利润</p></div><div><p className="ops-result-rate">{(result.margin * 100).toFixed(1)}%</p><p className="ops-subtext mt-2">预计利润率</p></div></div><div className="ops-result-body"><div className="ops-donut" style={{ background: `conic-gradient(${donutStops})` }} role="img" aria-label="成本与正利润构成，金额见右侧明细"><div className="ops-donut-hole"><span className="ops-subtext">售价</span><strong>{money(result.price)}</strong></div></div><div className="space-y-3">{[["采购成本", result.cost], ["佣金", result.referral], ["配送", result.fba], ["头程", result.freight], ["广告", result.ad], ["退货预留", result.returns]].map(([label, amount], index) => <div key={String(label)} className="flex items-center gap-2 text-xs text-slate-600"><span className="h-2 w-2 shrink-0 rounded-full" style={{ background: feeColors[index] }} /><span>{label}</span><strong className="ml-auto font-medium">{money(Number(amount))}</strong></div>)}</div></div><dl className="mt-6 grid grid-cols-2 gap-4 border-t border-slate-100 pt-4"><div><dt className="text-xs text-slate-500">盈亏平衡售价</dt><dd className="mt-1 text-sm font-semibold">{result.breakeven === null ? "无法达到" : money(result.breakeven)}</dd></div><div><dt className="text-xs text-slate-500">盈亏平衡广告占比</dt><dd className="mt-1 text-sm font-semibold">{result.maxAdPercent.toFixed(1)}%</dd></div></dl></> : <div role="status" className="my-5 rounded-lg border border-dashed border-slate-300 p-6 text-sm leading-7 text-slate-500">{emptyStatus}</div>}
       <section aria-label="售价方案对比" className="mt-6 border-t border-slate-100 pt-5"><h3 className="ops-section-title">售价方案比较</h3><div className="ops-scenarios">{scenarios.map((item, index) => <button key={item.name} type="button" className="ops-scenario" aria-pressed={selectedScenario === index} onClick={() => setSelectedScenario(index)}><div><p className="text-xs font-semibold">{item.name} {selectedScenario === index ? "✓" : ""}</p><p className="ops-subtext mt-1">{item.label}</p></div><div><p className="mt-3 text-lg font-semibold">{money(item.price)}</p><p className={`mt-4 text-sm font-semibold ${item.result && item.result.profit < 0 ? "text-rose-700" : ""}`}>{money(item.result?.profit ?? null)}</p><p className="ops-subtext mt-1">利润率 {item.result ? (item.result.margin * 100).toFixed(1) + "%" : "—"}</p></div></button>)}</div></section>
-      <details className="mt-5 text-xs leading-6 text-slate-500"><summary className="cursor-pointer">试算范围与费率</summary><p className="mt-2">{rule ? `配置费率 ${rule.effectiveDate}` : "手工确认费率"}。不含税、仓储、危险品、电池及额外附加费。最低佣金和分段佣金按已配置规则计算；各售价使用同一配送档位，低价优惠及价格相关附加费需单独填写。</p></details>
+      <details className="mt-5 text-xs leading-6 text-slate-500 [overflow-wrap:anywhere]"><summary className="cursor-pointer">试算范围与费率</summary>
+        {rule ? <div className="mt-2 space-y-1">
+          <p>配置有效期：{rule.effectiveDate} 至 {rule.validUntil || "未配置截止日期，使用前确认"}</p>
+          <p>配置来源：{rule.source || "来源未配置"}；仅描述匹配配置，不代表手填覆盖值来源。</p>
+          <p>头程线路：{rule.route || "线路未配置（体积计费）"}</p>
+          <p>配置适用范围：{rule.scope || "适用范围未配置；头程仅适用于体积计费线路。"}</p>
+          <p>以上为配置说明，未经过官方费率校验；头程公式仅适用于体积计费。</p>
+        </div> : <p className="mt-2">未匹配配置；来源未配置，使用本次手工确认费率。头程仅适用于体积计费线路。</p>}
+        <div className="mt-2 space-y-1" aria-label="本次费用来源">
+          <p>佣金：{manual.referral.trim() ? "手填覆盖，来源为本次输入" : rule ? "匹配配置" : "待手工确认"}</p>
+          <p>配送：{manual.fba.trim() ? "手填覆盖，来源为本次输入" : fbaMatched !== null ? "匹配配置档位" : "未匹配，待手工确认"}</p>
+          <p>头程：{manual.rate.trim() ? "手填覆盖，来源为本次输入" : rule ? "匹配配置" : "待手工确认"}</p>
+        </div>
+        <p className="mt-2">不含税、仓储、危险品、电池及额外附加费。最低佣金和分段佣金按已配置规则计算；各售价使用同一配送档位，低价优惠及价格相关附加费需单独填写。</p>
+      </details>
     </section>
   </div>;
 }

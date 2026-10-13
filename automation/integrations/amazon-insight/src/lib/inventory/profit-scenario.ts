@@ -9,6 +9,9 @@ const referralFields = z.object({
 }).refine(value => !value.referralTiers || value.referralTiers.every((tier, i, all) => i === 0 || tier.maxPrice > all[i - 1].maxPrice), "佣金档位须递增");
 export const profitFeeRulesSchema = z.array(z.object({
   market: z.enum(["US", "CA", "MX"]), category: z.string().min(1), effectiveDate: calendarDate, validUntil: calendarDate.optional(),
+  source: z.string().trim().min(1).max(500).optional(),
+  route: z.string().trim().min(1).max(500).optional(),
+  scope: z.string().trim().min(1).max(500).optional(),
   referralPercent: z.number().min(0).max(100), minimumReferralFee: z.number().nonnegative().optional(),
   referralTiers: z.array(z.object({ maxPrice: z.number().positive(), percent: z.number().min(0).max(100) })).optional(),
   freightPerM3: z.number().nonnegative(),

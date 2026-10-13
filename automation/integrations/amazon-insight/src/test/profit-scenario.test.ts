@@ -3,6 +3,21 @@ import { calculateProfitScenario, cartonFreight, matchFbaFee, matchProfitFeeRule
 const input = { price: 20, cost: 4, referralPercent: 15, fba: 3, freight: 1, adPercent: 15, returnPercent: 1 };
 const rule: ProfitFeeRule = { market: "US", category: "test-category", effectiveDate: "2026-01-01", referralPercent: 15, freightPerM3: 100, fbaTiers: [{ maxWeightG: 500, maxLengthCm: 30, maxWidthCm: 20, maxHeightCm: 10, fee: 3 }] };
 describe("profit calculator", () => {
+  it("retains trimmed fee provenance, route and applicability through configuration parsing", () => {
+    const parsed = profitFeeRulesSchema.parse([{ ...rule, source: "  已确认报价单  ", route: "  US 海运体积线  ", scope: "  普货、按体积计费  " }]);
+    expect(parsed[0]).toMatchObject({ source: "已确认报价单", route: "US 海运体积线", scope: "普货、按体积计费" });
+    expect(matchProfitFeeRule(parsed, "US", "test-category", "2026-10-13")).toMatchObject({ source: "已确认报价单" });
+  });
+  it.each(["source", "route", "scope"])("rejects blank, oversized or non-text %s metadata instead of silently ignoring it", field => {
+    for (const value of ["", " \t\n ", "x".repeat(501), 42, null]) {
+      expect(profitFeeRulesSchema.safeParse([{ ...rule, [field]: value }]).success).toBe(false);
+    }
+  });
+  it("keeps legacy rules without provenance usable while accepting the maximum metadata length", () => {
+    const parsed = profitFeeRulesSchema.parse([rule]);
+    expect(matchFbaFee(matchProfitFeeRule(parsed, "US", "test-category", "2026-10-13"), [10, 30, 20], 500)).toBe(3);
+    expect(profitFeeRulesSchema.safeParse([{ ...rule, source: "x".repeat(500), route: "x".repeat(500), scope: "x".repeat(500) }]).success).toBe(true);
+  });
   it("calculates minimum commission using the same function at break-even", () => {
     const result = calculateProfitScenario({ ...input, referralRule: { referralPercent: 15, minimumReferralFee: 3 } })!;
     expect(result.referral).toBe(3);

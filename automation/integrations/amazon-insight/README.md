@@ -1,4 +1,18 @@
-# Amazon Selection Workbench Web V1
+# Measureman Commerce OS
+
+## 当前交付状态（2026-10-13）
+
+已验证候选为 `v1.5.0-rc.8`，对应 [Actions 38353275785](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38353275785)。云端测试、AMD64/ARM64 构建和实际镜像启动检查通过；真实 NAS、外部授权、财务口径和自动发布仍需分别验收。最新部署及回退依据是 [NAS 增量说明](../../../docker/nas/README.md)，审查与已知边界见 [本轮审查报告](../../../docs/网站审查与优化-20261013.md)。
+
+当前覆盖原共用账号、三个主前台入口、US/CA 单 SKU 经营分析、后台库存/采购/发货/供应链/协作，以及按日销售和广告自动采集。MX/AU 不恢复采集或前台展示，历史证据保留。完整 env 积加凭证优先，不要求网页重新保存；app 与 worker 须使用同版镜像和同一运营库、密钥及报告挂载。自动任务失败保留原版，不部分覆盖。
+
+WPS 官方 OAuth、令牌刷新、下载校验、独立 worker 调度和暂存发布已有实现，生产正式授权尚未验收；分享链接或 Mac 登录态不能替代 NAS 服务端授权。新品 WPS 按用户要求暂缓。库存业务日期和确认口径独立保存，不用下载时间替代。
+
+利润试算自动匹配使用经确认的 `STORE_OPS_PROFIT_FEE_RULES`，默认空数组，不包含猜测的官方费率；在没有 `env_file` 的 Compose 中，必须显式把此变量传入 app。手工输入继续可用，费用或确认缺失时不输出完整利润。
+
+下一候选 `v1.5.0-rc.9` 增加了费率 `source`、头程 `route`、适用 `scope` 的纯文本展示，保留旧规则兼容及手工覆盖的独立来源；**不属于已发布 rc.8，须以 rc.9 构建通过为准**。它不增加官方费率、不替代真实报价确认，也没有改动 NAS Compose。
+
+以下按日期保留旧版实施记录。早期“未实现自动调度/WPS OAuth”、US/CA/MX 范围、网页凭证优先及旧版本号属于历史，不覆盖本节。具体能力以当前源码和最新 NAS 文档为准，不能用历史测试结果证明本轮或生产验收。
 
 ## PRD V2.0 本轮实施（2026-10-09，NAS 试用版 v1.5.0-rc.2）
 
@@ -100,6 +114,7 @@ GERPGO_TIMEOUT_MS=10000
 | 字段 | 口径 |
 | --- | --- |
 | `market`, `category`, `effectiveDate` | 站点、已确认的佣金类目映射、生效日期 YYYY-MM-DD |
+| `source`, `route`, `scope`（后续补丁） | 可选的公开费率来源、体积头程线路、适用范围说明；每项为去除前后空白后的非空文本，最多 500 字符。不要填 Key、令牌或客户信息。旧规则不必补造来源 |
 | `referralPercent` | 确认后的类目佣金百分比，0–100 |
 | `freightPerM3` | 预设体积头程费，使用所选站点币种 |
 | `fbaTiers` | 数组，每项 `maxWeightG`, `maxLengthCm`, `maxWidthCm`, `maxHeightCm`, `fee` |
