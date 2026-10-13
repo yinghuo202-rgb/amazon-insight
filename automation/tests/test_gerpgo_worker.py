@@ -1,5 +1,6 @@
 """Opt-in acceptance of the compiled worker, with isolated evidence and SQLite."""
 import json
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -25,10 +26,13 @@ class CompiledWorkerTests(unittest.TestCase):
     def test_env_worker_collects_all_ad_days_and_empty_markets_before_publication(self):
         self.run_environment_worker(include_ads=True)
 
+    def test_env_worker_redacts_success_and_attempt_evidence_without_changing_business_facts(self):
+        self.run_environment_worker(include_ads=True, check_redaction=True)
+
     def test_failed_ad_day_preserves_reports_and_does_not_skip_other_days_or_markets(self):
         self.run_environment_worker(include_ads=True, fail_ad=True)
 
-    def run_environment_worker(self, *, include_ads, fail_ad=False, initial_review=True):
+    def run_environment_worker(self, *, include_ads, fail_ad=False, initial_review=True, check_redaction=False):
         from urllib.parse import quote
         fixture = fixtures.GerpgoPreviewTests()
         fixture.setUp()
@@ -55,13 +59,14 @@ class CompiledWorkerTests(unittest.TestCase):
 const timer = globalThis.setTimeout;
 globalThis.setTimeout = (callback, ms, ...args) => timer(callback, ms === 6000 ? 1 : ms, ...args);
 let failedAd = false;
+const auth = () => process.env.TEST_REDACTION === 'true' ? {publicToken:'SYNTHETIC_SECRET_PUBLIC',authToken:'SYNTHETIC_SECRET_AUTH',refreshToken:'SYNTHETIC_SECRET_REFRESH',nested:[{APP_KEY:'SYNTHETIC_SECRET_KEY'}]} : {};
 globalThis.fetch = async (url, options) => {
   const endpoint = new URL(url).pathname.replace('/api/open', '');
   const request = JSON.parse(options.body);
   let data;
   if (endpoint === '/api_token') data = {accessToken:'fixture-token', expiresIn:3600};
-  else if (endpoint === '/middle/base/market/page') data = {rows:[{marketListVos:[1,2,3].map((marketId,index)=>({marketId,market:['amazon-us','amazon-ca','amazon-mx'][index],serverName:'MEASUREMAN',serverId:1}))}],total:1};
-  else if (endpoint === '/purchase/goods/product/page') data = {rows:[{sku:'SKU-A'}],total:1};
+  else if (endpoint === '/middle/base/market/page') data = {rows:[{marketListVos:[1,2,3].map((marketId,index)=>({marketId,market:['amazon-us','amazon-ca','amazon-mx'][index],serverName:'MEASUREMAN',serverId:1,...auth()}))}],total:1};
+  else if (endpoint === '/purchase/goods/product/page') data = {rows:[{sku:'SKU-A',tokenCount:5,...auth()}],total:1};
   else if (endpoint === '/operation/sts/listingAnalyzeMultiIndex/page') {
     if (JSON.stringify(request.marketList) !== '[1]' && JSON.stringify(request.marketList) !== '[2]' || request.isShowTotal !== false || request.groupByType !== 'seller_sku') throw new Error('Unexpected listing scope');
     const marketId=request.marketList[0];
@@ -71,7 +76,7 @@ globalThis.fetch = async (url, options) => {
     if (process.env.TEST_FAIL_AD === 'true' && request.marketId === 2 && !failedAd) {
       failedAd = true;
       data = {rows:null,total:1}; // A malformed day must fail, not masquerade as no ads.
-    } else data = request.marketId === 2 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A',currencySymbol:'$',cost:1,sales:2}],total:1};
+    } else data = request.marketId === 2 ? {rows:null,total:0} : {rows:[{marketId:request.marketId,msku:'SKU-A',currencySymbol:'$',cost:1,sales:2,...auth()}],total:1};
   }
   else throw new Error('Unmocked provider request');
   return Response.json({code:200,data});
@@ -81,7 +86,7 @@ globalThis.fetch = async (url, options) => {
                        "STORE_OPS_AUTOMATION_ROOT": str(automation), "STORE_OPS_PYTHON": sys.executable,
                        "GERPGO_APP_ID": "fixture-id", "GERPGO_APP_KEY": "fixture-key", "GERPGO_STORE_NAME": "MEASUREMAN",
                        "GERPGO_AUTO_SYNC": "true", "GERPGO_SYNC_SUPPLEMENTAL": str(include_ads).lower(), "GERPGO_SYNC_INTERVAL_MINUTES": "1440", "NODE_PATH": "",
-                       "TEST_FAIL_AD": str(fail_ad).lower()}
+                       "TEST_FAIL_AD": str(fail_ad).lower(), "TEST_REDACTION": str(check_redaction).lower()}
         process = subprocess.Popen([os.environ["MEASUREMAN_TEST_NODE"], "--import=data:text/javascript," + quote(preload), str(bundle / "worker" / "data-worker.js")], cwd=bundle, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 40
@@ -123,6 +128,24 @@ globalThis.fetch = async (url, options) => {
             self.assertNotIn("initialAuthorization", report["publication"])
             self.assertNotIn("fixture-key", json.dumps(report))
             self.assertEqual(json.loads((current_reports(fixture.reports) / "manual.json").read_text()), {"notes": "preserve"})
+            if check_redaction:
+                capture = fixture.runtime / "incoming" / "gerpgo" / row[1]
+                for file in capture.glob("*.json"):
+                    self.assertNotIn("SYNTHETIC_SECRET", file.read_text(), file.name)
+                source_data = (current_reports(fixture.reports) / "gerpgo-source-data.json").read_text()
+                self.assertNotIn("SYNTHETIC_SECRET", source_data)
+                self.assertIn('"tokenCount": 5', source_data)
+                attempts = []
+                for source in sources:
+                    for page in source["pageHashes"]:
+                        file = capture / f"{source['name']}-{page['page']}.json"
+                        self.assertEqual(hashlib.sha256(file.read_bytes()).hexdigest(), page["sha256"])
+                    for attempt in source.get("attemptEvidence", []):
+                        file = capture / attempt["filename"]
+                        self.assertEqual(hashlib.sha256(file.read_bytes()).hexdigest(), attempt["sha256"])
+                        attempts.append(json.loads(file.read_text()))
+                self.assertTrue(attempts, "必须覆盖广告 attempt 落盘分支")
+                self.assertTrue(any(page.get("rows") and page["rows"][0].get("cost") == 1 and page["rows"][0].get("sales") == 2 for page in attempts))
         finally:
             process.terminate()
             _, errors = process.communicate(timeout=10)

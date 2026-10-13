@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -7,6 +8,72 @@ from store_ops.report_versions import current_reports, report_transaction, resto
 
 
 class ReportVersionTests(unittest.TestCase):
+    def test_non_gerpgo_publication_cleans_new_copies_but_keeps_legacy_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "reports"
+            snapshots = Path(folder) / "snapshots"
+            old_version = "data-20261012-000000-legacy"
+            old = root / ".versions" / old_version / "reports"
+            old.mkdir(parents=True)
+            source = {"schemaVersion": 1, "sources": [{"name": "shops", "total": 1, "records": [{
+                "key": "business-key", "marketListVos": [{"marketId": 1, "authToken": "fixture-auth", "tokenCount": 2}],
+            }]}]}
+            expected = {"schemaVersion": 1, "sources": [{"name": "shops", "total": 1, "records": [{
+                "key": "business-key", "marketListVos": [{"marketId": 1, "tokenCount": 2}],
+            }]}]}
+            (old / "gerpgo-source-data.json").write_text(json.dumps(source))
+            (old / "inventory.json").write_text('{"rows":[{"sku":"SKU-A","fba":40,"currency":"USD"}]}')
+            original = {p.name: p.read_bytes() for p in old.glob("*.json")}
+            (root / "current.json").write_text(json.dumps({"version": old_version, "files": {name: hashlib.sha256(value).hexdigest() for name, value in original.items()}}))
+
+            # A WPS/local inventory-only transaction inherits the old GERPgo evidence.
+            with report_transaction(root, snapshots) as (stage, version):
+                self.assertEqual(json.loads((stage / "gerpgo-source-data.json").read_text()), expected)
+                (stage / "inventory.json").write_text('{"rows":[{"sku":"SKU-A","fba":50,"currency":"USD"}]}')
+            active = current_reports(root)
+            self.assertEqual(json.loads((active / "gerpgo-source-data.json").read_text()), expected)
+            self.assertEqual(json.loads((snapshots / version / "reports" / "gerpgo-source-data.json").read_text()), expected)
+            self.assertEqual((snapshots / version / "reports" / "inventory.json").read_bytes(), original["inventory.json"])
+            self.assertEqual(json.loads((active / "inventory.json").read_text())["rows"], [{"sku": "SKU-A", "fba": 50, "currency": "USD"}])
+            for name, value in original.items():
+                self.assertEqual((old / name).read_bytes(), value)
+            pointer = json.loads((root / "current.json").read_text())
+            self.assertEqual(pointer["version"], version)
+            for name, sha in pointer["files"].items():
+                self.assertEqual(hashlib.sha256((active / name).read_bytes()).hexdigest(), sha)
+
+    def test_rollback_of_legacy_snapshot_publishes_clean_new_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "reports"
+            snapshots = Path(folder) / "snapshots"
+            legacy_version = "data-20261011-000000-legacy"
+            legacy = snapshots / legacy_version / "reports"
+            legacy.mkdir(parents=True)
+            (legacy / "gerpgo-source-data.json").write_text(json.dumps({"sources": [{"records": [{
+                "sku": "SKU-A", "quantity": 4, "refresh_token": "fixture-refresh", "details": [{"publicToken": "fixture-public", "currency": "USD"}],
+            }]}]}))
+            (legacy / "profitability.json").write_text('{"rows":[{"sku":"SKU-A","productSales":100,"currency":"USD"}]}')
+            original = {p.name: p.read_bytes() for p in legacy.glob("*.json")}
+            with report_transaction(root, snapshots) as (stage, _):
+                (stage / "manual.json").write_text('{"notes":"new-only"}')
+            previous_active = current_reports(root)
+            previous_manual = (previous_active / "manual.json").read_bytes()
+
+            result = restore_reports(legacy_version, root, snapshots)
+            active = current_reports(root)
+            self.assertNotEqual(result["publishedVersion"], legacy_version)
+            self.assertEqual(json.loads((active / "gerpgo-source-data.json").read_text()), {"sources": [{"records": [{
+                "sku": "SKU-A", "quantity": 4, "details": [{"currency": "USD"}],
+            }]}]})
+            self.assertEqual((active / "profitability.json").read_bytes(), original["profitability.json"])
+            self.assertFalse((active / "manual.json").exists())
+            self.assertEqual((previous_active / "manual.json").read_bytes(), previous_manual)
+            for name, value in original.items():
+                self.assertEqual((legacy / name).read_bytes(), value)
+            pointer = json.loads((root / "current.json").read_text())
+            for name, sha in pointer["files"].items():
+                self.assertEqual(hashlib.sha256((active / name).read_bytes()).hexdigest(), sha)
+
     def test_appledouble_files_are_not_copied_or_published(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder) / "reports"

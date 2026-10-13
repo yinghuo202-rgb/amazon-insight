@@ -8,6 +8,7 @@ import { readGerpgoPreview } from "@/lib/inventory/gerpgo-preview";
 import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 import { claimRefreshTask, updateRefreshTask, listRefreshTasks, listSyncSchedules, enqueueDueSyncTasks, completeReviewedSyncTask, configureGerpgoEnvironmentSchedule } from "@/lib/inventory/refresh-task-store";
 import { collectGerpgoPages, createGerpgoClient, gerpgoPerformanceSources, gerpgoSupplementalSources, GerpgoConnectionError, getGerpgoSettingsStatus, resolveGerpgoEnvironment, resolveGerpgoStoreScope } from "@/lib/inventory/gerpgo";
+import { redactGerpgoEvidence } from "@/lib/inventory/gerpgo-evidence";
 import { publishedReportPath } from "@/lib/inventory/report-version";
 import { getWpsStatus, downloadWpsInventory, WpsError } from "@/lib/inventory/wps";
 import { receiveWpsInventoryDownload, autoPublishWpsInventory, getImportBatch } from "@/lib/inventory/data-import";
@@ -47,7 +48,7 @@ export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof clai
     const manifest = { schemaVersion: 1, taskId: task.id, source: "gerpgo", capturedAt: now.toISOString(), businessAsOf: null, status, sources: completed, storeScope,
       performanceContract: "listing-market-v1", collectionMode: task.includeSupplemental ? "sales_ads" : "sales", collectionScope: recent ? "recent" : "initial", deferredDomains: task.includeSupplemental ? [] : ["ads"],
       excludedDomains: ["fba", "returns", "storage", "shipments"],
-      reason: "全部原始分页保存在服务端；未完成的数据域和未核验的字段不会伪装成已发布业务数据。" };
+      reason: "全部脱敏分页证据保存在服务端；未完成的数据域和未核验的字段不会伪装成已发布业务数据。" };
     await writeFile(path.join(folder, "manifest.json.tmp"), JSON.stringify(manifest, null, 2), { mode: 0o600 });
     await rename(path.join(folder, "manifest.json.tmp"), path.join(folder, "manifest.json"));
   }
@@ -64,13 +65,13 @@ export async function collectGerpgoTask(task: NonNullable<ReturnType<typeof clai
       const result = await collectGerpgoPages(client, source.endpoint, source.condition, async page => {
       if (stopping) throw new Error("worker 正在停止。");
       updateRefreshTask(task.id, task.lease, "running", `${source.name}：第 ${page.page} 页 / ${page.total} 条`);
-      // Server-side evidence only; never send entire raw pages or credentials to the browser.
-      const contents = JSON.stringify(page);
+      // Persist redacted evidence; keep live rows untouched for collection and identity guards.
+      const contents = JSON.stringify(redactGerpgoEvidence(page));
       await writeFile(path.join(folder, `${source.name}-${page.page}.json`), contents, { mode: 0o600 });
       pageHashes.push({ page: page.page, sha256: createHash("sha256").update(contents).digest("hex") });
       if (source.name === "shops") sellers.push(...page.rows);
       }, { onAttemptPage: async page => {
-        const filename = `${source.name}-attempt-${page.pagesize}-${page.page}.json`, contents = JSON.stringify(page);
+        const filename = `${source.name}-attempt-${page.pagesize}-${page.page}.json`, contents = JSON.stringify(redactGerpgoEvidence(page));
         await writeFile(path.join(folder, filename), contents, { mode: 0o600 });
         attemptEvidence.push({ filename, sha256: createHash("sha256").update(contents).digest("hex") });
       } });

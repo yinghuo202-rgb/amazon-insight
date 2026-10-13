@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from ..db import StateDb
+from ..gerpgo_evidence import sanitize_gerpgo_evidence
 from ..report_versions import VERSION_RE, _json_write, current_reports, report_transaction
 from .gerpgo_advertising import aggregate_advertising, attach_advertising
 
@@ -494,6 +495,8 @@ def build_preview(runtime: Path, task_id: str, now: datetime | None = None, *, s
         report["collectionMode"] = source_data["collectionMode"] = mode
     if selected_scope:
         source_data["storeScope"] = report["storeScope"] = selected_scope
+    # Original capture hashes above remain authoritative; only the new copy is cleaned.
+    source_data = sanitize_gerpgo_evidence(source_data)
     if advertising:
         attach_advertising(report, advertising)
     report_hash = digest(report)
@@ -633,8 +636,10 @@ def publish(runtime: Path, request: dict) -> dict:
                                     "initialReview": initial_review if automatic else {"storeScope": candidate.get("storeScope"), "reviewedAt": reviewed_at, "sourceTaskId": request["sourceTaskId"]}}
         _json_write(file, candidate)
         if source_data is not None:
-            source_data["publication"] = candidate["publication"]
-            _json_write(stage / "gerpgo-source-data.json", source_data)
+            # Legacy approved candidates are validated before removing their auth fields.
+            publish_source = sanitize_gerpgo_evidence(source_data)
+            publish_source["publication"] = candidate["publication"]
+            _json_write(stage / "gerpgo-source-data.json", publish_source)
     return {"status": "completed", "publishedVersion": version, "sourceTaskId": request["sourceTaskId"]}
 
 

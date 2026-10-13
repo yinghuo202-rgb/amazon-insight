@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -327,6 +328,73 @@ class GerpgoPreviewTests(unittest.TestCase):
         file.write_text(json.dumps({"page": 1, "total": 1, "rows": [self.row(150)]}))
         with self.assertRaisesRegex(ValueError, "SHA"):
             build_preview(self.runtime, TASK)
+
+    def test_legacy_capture_hashes_are_checked_before_clean_preview_and_publication(self):
+        shops_file = self.folder / "shops-1.json"
+        shops = [{"serverId": 1, "key": "shop-business-key", "marketListVos": [{
+            "marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1,
+            "authToken": "fixture-auth", "publicToken": "fixture-public", "refreshToken": "fixture-refresh",
+            "metadata": [{"X-API-Key": "fixture-api", "tokenCount": 7, "sku": "token-SKU"}],
+        }]}]
+        shops_file.write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
+        source = next(s for s in self.sources if s["name"] == "shops")
+        original_hash = hashlib.sha256(shops_file.read_bytes()).hexdigest()
+        source["pageHashes"] = [{"page": 1, "sha256": original_hash}]
+        source["condition"] = {"appKey": "fixture-app", "key": "business-query"}
+        self.manifest()
+        original_files = {p.name: p.read_bytes() for p in self.folder.glob("*.json")}
+
+        preview = build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        archived = json.loads((self.folder / "candidate-source-data.json").read_text())
+        shop_source = next(s for s in archived["sources"] if s["name"] == "shops")
+        expected_shops = [{"serverId": 1, "key": "shop-business-key", "marketListVos": [{
+            "marketId": 1, "market": "amazon-us", "serverName": "MEASUREMAN", "serverId": 1,
+            "metadata": [{"tokenCount": 7, "sku": "token-SKU"}],
+        }]}]
+        self.assertEqual(shop_source["records"], expected_shops)
+        self.assertEqual(shop_source["condition"], {"key": "business-query"})
+        self.assertEqual(shop_source["pageHashes"], [{"page": 1, "sha256": original_hash}])
+        self.assertEqual((shop_source["queryTotal"], shop_source["selectedRecordCount"], preview["recordCount"]), (1, 1, 7))
+        result = publish(self.runtime, self.approval(preview))
+        active = current_reports(self.reports)
+        published = json.loads((active / "gerpgo-source-data.json").read_text())
+        self.assertEqual(next(s for s in published["sources"] if s["name"] == "shops")["records"], expected_shops)
+        rows = json.loads((active / "gerpgo-performance.json").read_text())["rows"]
+        self.assertEqual([(r["sku"], r["units"], r["productSales"], r["currency"]) for r in rows], [("SKU-A", 40, 100, "USD")] * 7)
+        pointer = json.loads((self.reports / "current.json").read_text())
+        self.assertEqual(pointer["version"], result["publishedVersion"])
+        for name, sha in pointer["files"].items():
+            self.assertEqual(hashlib.sha256((active / name).read_bytes()).hexdigest(), sha)
+        for name, content in original_files.items():
+            self.assertEqual((self.folder / name).read_bytes(), content)
+        self.assertEqual((active / "manual.json").read_bytes(), b'{"notes":"preserve"}')
+
+        # Even an authentication-only edit invalidates the ORIGINAL capture SHA.
+        shops[0]["marketListVos"][0]["authToken"] = "fixture-changed"
+        shops_file.write_text(json.dumps({"page": 1, "total": 1, "rows": shops}))
+        with self.assertRaisesRegex(ValueError, "SHA"):
+            build_preview(self.runtime, TASK, store_name="MEASUREMAN")
+        self.assertEqual(current_reports(self.reports), active)
+
+    def test_approved_legacy_raw_candidate_is_sanitized_only_after_hash_validation(self):
+        preview = build_preview(self.runtime, TASK)
+        source_file = self.folder / "candidate-source-data.json"
+        legacy = json.loads(source_file.read_text())
+        legacy["token"] = "fixture-token"
+        shop = next(s for s in legacy["sources"] if s["name"] == "shops")["records"][0]["marketListVos"][0]
+        shop.update({"Authorization": "fixture-bearer", "tokenCount": 3})
+        source_file.write_text(json.dumps(legacy))
+        original_candidate = source_file.read_bytes()
+        preview["sourceDataHash"] = digest(legacy)
+        preview["previewHash"] = digest({k: v for k, v in preview.items() if k != "previewHash"})
+        (self.folder / "preview.json").write_text(json.dumps(preview))
+
+        publish(self.runtime, self.approval(preview))
+        published = json.loads((current_reports(self.reports) / "gerpgo-source-data.json").read_text())
+        self.assertNotIn("token", published)
+        published_shop = next(s for s in published["sources"] if s["name"] == "shops")["records"][0]["marketListVos"][0]
+        self.assertEqual(published_shop, {"marketId": 1, "market": "amazon-us", "tokenCount": 3})
+        self.assertEqual(source_file.read_bytes(), original_candidate)
 
     def test_listing_zero_core_identityless_record_is_archived_with_reason_not_verified_profit(self):
         self.listing_manifest()

@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .gerpgo_evidence import sanitize_gerpgo_evidence
+
 VERSION_RE = re.compile(r"data-\d{8}-\d{6}-[a-zA-Z0-9-]{1,20}")
 
 
@@ -35,7 +37,11 @@ def _copy_reports(source: Path, destination: Path) -> None:
         if item.name != "current.json" and not item.name.startswith("."):
             # Report generations need file contents, not macOS resource forks.
             # copy2 creates binary ._*.json sidecars on some NAS mounts.
-            shutil.copyfile(item, destination / item.name)
+            if item.name == "gerpgo-source-data.json":
+                value = json.loads(item.read_text(encoding="utf-8"))
+                _json_write(destination / item.name, sanitize_gerpgo_evidence(value))
+            else:
+                shutil.copyfile(item, destination / item.name)
 
 
 def _json_write(path: Path, value: dict) -> None:
