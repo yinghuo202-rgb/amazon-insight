@@ -2,9 +2,9 @@
 
 ## 当前交付状态（2026-10-13）
 
-最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.10`，[Actions 38363672448](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38363672448) 全部成功，对应提交 `e27d786a43af063c50eb3f5bcf7082f49ca2a797`；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。包含 rc.9 的费率来源、线路、适用范围与手工覆盖展示，以及新积加证据/报告脱敏。NAS 原 env 已备份，仅 `IMAGE_TAG` 从 rc.9 改为 rc.10，其他字节不变，容器由用户自行重建，尚未验真实际运行版本。
+最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.11`，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 全部成功，对应提交 `c75f3cfbc113ce63ca5f00966f634dbf09955dae`；镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。包含此前费率来源/认证字段脱敏，以及复核闭环和登录/发布安全保护。NAS原env已备份，仅 `IMAGE_TAG` 从rc.9改为rc.10，其他字节不变；本轮没有自动更新为rc.11或操作容器，实际运行版本仍待用户重建后验收。
 
-rc.10 的 333 条网页测试、123 条 Python 测试及双架构启动检查通过，不提升 latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。rc.11 已实现复核和登录/发布保护，本地验收通过，[Actions 38375784053](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38375784053) 正在构建；尚不可称作可交付镜像或整份 PRD 完成。当前 NAS env 保持 rc.10。已有项目沿用原 Compose、原挂载和账号，不导入新模板；重建 app 与 data-worker，不重建 cloudflared。
+rc.11的403条网页测试、130条Python测试及双架构实际fresh/worker/resume检查通过，不提升latest。补丁保留业务数据和旧历史，不自动清理历史凭证或更换密钥。成本版本仍在下一候选实施，不能称整份PRD完成。当前NAS env保持rc.10。已有项目沿用原Compose、原挂载和账号，不导入新模板；重建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
 
 最近只读公网检查返回 Cloudflare 1033，完整经营数据发布也未验收成功。下方旧版本号及命令为历史记录，不是当前上线证明。
 
