@@ -370,12 +370,21 @@ function RefreshTaskPanel() {
     finally { setBusy(false); }
   }
   const labels: Record<string, string> = { queued: "已排队", running: "处理中", awaiting_mapping: "映射待核验", awaiting_review: "待对账确认", completed: "已完成", failed: "失败", interrupted: "已中断，需核查", superseded: "旧预览已保留，已重新拉取" };
+  const wpsSchedule = schedules.find(value => value.key === "wps_inventory");
+  const wpsConfigured = Boolean(wps?.configured || wps?.authorized || wpsSchedule?.enabled);
   return <section className="rounded-2xl border border-black/5 bg-white p-5" aria-label="同步任务">
     <h2 className="text-sm font-semibold">定时同步</h2>
-    <div className="mb-4 mt-3 grid gap-3 lg:grid-cols-2">{schedules.map(value => <SyncScheduleControls key={value.key} value={value} ready={value.key === "gerpgo" ? gerpgoReady : Boolean(wps?.authorized)} onSave={saveSchedule} onRestart={restartSchedule} />)}</div>
+    <div className="mb-4 mt-3 grid gap-3 lg:grid-cols-2">
+      {schedules.filter(value => value.key === "gerpgo").map(value => <SyncScheduleControls key={value.key} value={value} ready={gerpgoReady} onSave={saveSchedule} onRestart={restartSchedule} />)}
+      {(wps || wpsSchedule) && <details key={String(wpsConfigured)} open={wpsConfigured ? true : undefined} className="rounded-xl border border-black/5 bg-[#f5f5f7] p-4 text-xs">
+        <summary className="min-h-11 cursor-pointer font-medium leading-[44px]">WPS 自动下载（可选）{wps?.authorized ? " · 已授权" : " · 未授权"}</summary>
+        <p className="leading-6 text-slate-500">当前可在上方手动导入库存 Excel；只有申请正式文件授权后才需要配置此项。</p>
+        {wpsSchedule && <div className="mt-3"><SyncScheduleControls value={wpsSchedule} ready={Boolean(wps?.authorized)} onSave={saveSchedule} onRestart={restartSchedule} /></div>}
+        {wps && <WpsSyncSettings value={wps} onChange={setWps} onError={setError} />}
+      </details>}
+    </div>
     {wpsReturn && <p role="status" className="mb-3 text-xs leading-6 text-slate-600">{wpsReturn}</p>}
     {pollError && <p role="alert" className="mb-3 text-xs leading-6 text-rose-700">{pollError}</p>}
-    {wps && <WpsSyncSettings value={wps} onChange={setWps} onError={setError} />}
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-semibold">同步任务</h2>{!schedules.find(s => s.key === "gerpgo")?.environmentManaged && <div className="flex flex-wrap gap-2"><button disabled={busy} onClick={() => void pull()} className="min-h-11 rounded-full bg-[#0071e3] px-4 text-sm text-white disabled:opacity-50">{busy ? "正在提交…" : "拉取销售预览"}</button><button disabled={busy} onClick={() => void pull(true)} className="min-h-11 rounded-full border px-4 text-sm disabled:opacity-50">销售及广告采集</button></div>}</div>
     <p className="mt-2 text-xs leading-6 text-slate-500">env 模式首次自动拉近六个完整月和当月的销售及广告，随后重拉上月和当月并保留历史。广告按逐日逐站点采集；缺页、映射异常、历史金额或 SKU 数修订超过 10% 时保留旧报告。库存和历史发货不从积加同步，本轮不重建本地数据。长期排队请检查 worker 容器。</p>
     {tasks.filter(task => task.kind === "wps_inventory").map(task => <div key={task.id} className="mt-3 rounded-xl bg-slate-50 p-3 text-xs"><p>WPS 库存同步 · {labels[task.status] || task.status}</p><p role="status" className="mt-1 leading-6 text-slate-500">{task.progress}{task.error ? ` · ${task.error}` : ""}</p>{task.batchId && <button type="button" onClick={() => window.location.reload()} className="mt-2 min-h-11 rounded-full border px-3">查看上传批次预览 · {task.batchId}</button>}</div>)}

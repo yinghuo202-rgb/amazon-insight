@@ -54,3 +54,13 @@ it("shows actual date and honest manual provenance, then clears confirmation for
   expect(screen.queryByLabelText("库存业务日期")).toBeNull();
   expect(calls.some(call => call.method === "PATCH")).toBe(false);
 });
+
+it.each([false, true])("keeps WPS auto download optional while preserving configured access (%s)", async configured => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...status, tasks: [], schedules: [{ key: "wps_inventory", enabled: false, intervalMinutes: 240, autoPublish: false, nextRunAt: "", lastTaskId: null, lastStatus: null, lastUpdatedAt: null, workerHeartbeat: null, workerActive: false }], wps: { configured, authorized: configured, fileToken: "", shareUrl: "", expiresAt: null, message: configured ? "已授权" : "尚未配置" } })));
+  show();
+  const summary = await screen.findByText(/WPS 自动下载（可选）/);
+  const optional = summary.closest("details");
+  expect(optional).not.toBeNull();
+  expect(optional).toHaveProperty("open", configured);
+  expect(screen.getByRole("button", { name: /选择或拖入多个 Excel 文件/ })).toBeVisible();
+});
