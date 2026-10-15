@@ -5,18 +5,21 @@ import { Search, SlidersHorizontal, ChevronDown, ArrowUpRight, ArrowRight } from
 import { OperatingHistoryChart } from "@/components/inventory/operating-history-chart";
 import { ProductArtwork } from "@/components/inventory/product-artwork";
 import { OpsKpi } from "@/components/inventory/ops-ui";
+import { SalesOverviewAnalysisPanel } from "@/components/inventory/sales-overview-analysis-panel";
 import { operatingFacts, type OperatingSku } from "@/lib/inventory/dashboard-view-model";
 import { resolveOperatingRules, type OperatingRules } from "@/lib/inventory/operating-rules";
 import type { OperatingPage } from "@/lib/inventory/operating-query";
 import { fullCurrency } from "@/lib/inventory/presentation";
 import { skuOperatingHref } from "@/lib/inventory/operating-navigation";
+import { buildSkuActionRecommendations, type SkuActionEvidence, type SkuActionRecommendations } from "@/lib/inventory/sku-action-recommendations";
 
 const percent = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
 const money = (value: number | null | undefined, currency: string) => value == null ? "—" : fullCurrency(value, currency);
 const fieldClass = "min-h-11 rounded-xl border border-black/10 bg-white px-3 text-sm";
 const issueLabels: Record<string, string> = { "利润待核查": "利润偏低", "广告待核查": "广告投入偏高", "退货待核查": "退货偏高", "当前供货风险": "FBA 供货偏紧" };
 const issueLabel = (issue: string) => issueLabels[issue] ?? issue;
-const returnPages = new Map<string, { page: OperatingPage; scroll: number }>();
+const issueTone = (issue: string) => issue === "利润为负" || issue === "利润待核查" || issue === "退货待核查" ? "danger" : "warning";
+const returnPages = new Map<string, { page: OperatingPage; scroll: number; analysisExpanded: boolean }>();
 const pageKey = (p: OperatingPage, brief: boolean) => JSON.stringify([brief, p.market, p.period, p.query, p.filter, p.sort]);
 export function RevenueOverviewDashboard({ initial, brief = false }: { initial: OperatingPage; brief?: boolean }) {
   const [page, setPage] = useState(initial);
@@ -24,6 +27,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
   const [query, setQuery] = useState(initial.query), [filter, setFilter] = useState(initial.filter);
   const [sort, setSort] = useState(initial.sort);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [analysisExpanded, setAnalysisExpanded] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
   const incomingPage = useRef("");
   const model = page.model, currency = page.currency, snapshot = model.snapshots.find(item => item.market === market);
@@ -33,7 +37,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
   const focusPeriod = page.focusPeriod || period;
   function remember() {
     if (loading) return;
-    returnPages.set(pageKey(page, brief), { page, scroll: window.scrollY });
+    returnPages.set(pageKey(page, brief), { page, scroll: window.scrollY, analysisExpanded });
     while (returnPages.size > 10) returnPages.delete(returnPages.keys().next().value!);
   }
   useEffect(() => {
@@ -47,6 +51,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
     const next = restore?.page ?? initial;
     const timer = setTimeout(() => {
       setPage(next); setMarket(next.market); setPeriod(next.period); setQuery(next.query); setFilter(next.filter); setSort(next.sort); setError("");
+      setAnalysisExpanded(restore?.analysisExpanded ?? false);
       if (restore) requestAnimationFrame(() => window.scrollTo(0, restore.scroll));
     }, 0);
     return () => clearTimeout(timer);
@@ -98,8 +103,8 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       <label className="text-xs text-slate-500">月份 <select aria-label="月份" value={period} onChange={event => { setPeriod(event.target.value); reset(); }} className={fieldClass + " ml-2"}>{model.periods.length ? model.periods.map(item => <option key={item}>{item}</option>) : <option value="">暂无经营报告</option>}</select></label>
       <span className="text-xs text-slate-500">{model.storeName ? `${model.storeName} · ` : ""}{loading ? "正在更新筛选…" : <>{currency} · 有经营数据 {page.summary.reportedCount} 个 SKU{page.summary.reportedCount > 0 && !page.summary.complete ? period === new Date().toISOString().slice(0, 7) ? " · 月内累计" : " · 期间未齐" : ""}</>}</span>
     </section>
-    {!brief && loading && <div role="status" className="ops-surface p-8 text-center text-sm text-slate-500">正在加载 {market} · {period} 的经营数据…</div>}
-    {!brief && !loading && <>
+    {!brief && <div className="ops-stale-content" aria-busy={loading}>
+      <div className="ops-stale-body space-y-5" inert={loading}>
       <section className="ops-overview-kpis grid grid-cols-2 gap-3" aria-label="经营指标">
         <OpsKpi label="销售额" value={money(revenue, currency)} detail={delta === null ? period || "" : `环比 ${delta >= 0 ? "+" : ""}${delta.toFixed(1)}%`} />
         <OpsKpi label={page.summary.profitVerified ? "实际利润" : "报告利润"} value={money(profit, currency)} detail={profit !== null && !page.summary.profitVerified ? "未对账" : period || ""} tone={page.summary.profitVerified && profit !== null ? profit < 0 ? "danger" : "positive" : "default"} />
@@ -115,6 +120,7 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
           <div className="ops-focus-footer"><span className="ops-subtext">查看完整关注清单与依据</span><Link className="ops-text-link" href={`/inventory/brief?market=${market}&period=${focusPeriod}&filter=focus`}>查看简报 <ArrowRight size={14} /></Link></div>
         </aside>
       </div>
+      {page.salesAnalysis && <SalesOverviewAnalysisPanel analysis={page.salesAnalysis} onNavigate={remember} context={context} expanded={analysisExpanded} onExpandedChange={setAnalysisExpanded} />}
       {advertising && <section aria-label="广告表现" className="ops-ad-strip ops-surface">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">广告表现</h2><span className="text-xs text-slate-400">{advertising.reportMonth}{advertising.reportMonth !== period ? " · 最近有数据月份" : ""} · 截至 {advertising.businessAsOf}</span></div>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-5"><Metric label="广告归因销售" value={money(advertising.sales, currency)} /><Metric label="ACOS" value={percent(advertising.acos)} /><Metric label="广告归因比" value={percent(advertising.share)} /><Metric label="退货率" value={percent(units !== null && units > 0 && returns !== null ? returns / units : null)} /><Metric label="供应达标占比" value={percent(coverage)} /></div>
@@ -123,8 +129,10 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       {!advertising && adSales !== null && <p className="text-xs text-slate-500">广告归因比 {percent(revenue !== null && revenue > 0 ? adSales / revenue : null)}</p>}
       {!advertising && <section aria-label="辅助经营指标" className="ops-surface grid grid-cols-2 gap-4 p-5"><Metric label="退货率" value={percent(units !== null && units > 0 && returns !== null ? returns / units : null)} /><Metric label="供应达标占比" value={percent(coverage)} /></section>}
 
-    </>}
-    {!brief && !loading && <nav aria-label="经营变化入口" className="flex flex-wrap gap-2">{([["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).filter(([kind]) => page.counts[kind] > 0).map(([kind, label]) => <Link key={kind} href={`/inventory/brief?market=${market}&period=${focusPeriod}&filter=${kind}`} className="inline-flex min-h-11 items-center rounded-full bg-white px-4 text-sm text-[#0071e3]">{label} · {page.counts[kind]}</Link>)}</nav>}
+      <nav aria-label="经营变化入口" className="flex flex-wrap gap-2">{([["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).filter(([kind]) => page.counts[kind] > 0).map(([kind, label]) => <Link key={kind} href={`/inventory/brief?market=${market}&period=${focusPeriod}&filter=${kind}`} className="inline-flex min-h-11 items-center rounded-full bg-white px-4 text-sm text-[#0071e3]">{label} · {page.counts[kind]}</Link>)}</nav>
+      </div>
+      {loading && <div role="status" className="ops-stale-status"><span>正在更新 {market} · {period} 的经营数据…</span></div>}
+    </div>}
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold tracking-tight">{brief ? "SKU 经营卡片" : "查看一个 SKU"}</h2>{!brief && <Link href={`/inventory/brief?market=${market}&period=${period}&query=${encodeURIComponent(query)}`} className="text-sm text-[#0071e3]">浏览经营简报</Link>}</div>
       <div className={`ops-search-toolbar grid gap-3 ${brief ? "sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_170px_170px]" : ""}`}>
@@ -134,9 +142,11 @@ export function RevenueOverviewDashboard({ initial, brief = false }: { initial: 
       </div>
       {brief && <div className="ops-filter-chips" aria-label="快速筛选">{([["focus", "重点关注"], ["all", "全部"], ["decline", "销售下降"], ["loss", "利润偏低"], ["advertising", "广告投入"], ["returns", "退货偏高"], ["stock", "供货偏紧"]] as const).map(([kind, label]) => <button key={kind} aria-pressed={filter === kind} onClick={() => { setFilter(kind); reset(); }} className={filter === kind ? "active" : ""}>{label}{kind in page.counts && <span>{page.counts[kind as keyof typeof page.counts]}</span>}</button>)}</div>}
       {(brief || search) && <p className="text-xs text-slate-500">{page.total} 个 SKU · 已显示 {shown.length} 个{brief && !search && !["all", "revenue", "missing"].includes(filter) ? ` · 经营 ${page.focusPeriod || "—"} · 当前库存` : ""}</p>}
-      {brief ? <div className="ops-sku-grid grid items-start gap-4">{!loading && shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={item.analysisPeriod} analysis={item.analysis} context={context} onNavigate={remember} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div> : <div className="ops-mini-grid">{!loading && shown.slice(0, 3).map(item => <Link key={item.market + item.sku} onClick={remember} href={skuOperatingHref(item.sku, market, period, context)} className="ops-mini-sku"><ProductArtwork sku={item.sku} available={item.imageAvailable} /><span className="min-w-0 flex-1"><strong className="block truncate text-xs">{item.productName || item.sku}</strong><span className="ops-subtext mt-1 block">{item.sku} · {item.market}</span></span><span className="text-xs font-semibold">{money(item.analysis.current?.productSales, item.currency)}</span></Link>)}</div>}
+      <div className="ops-stale-content" aria-busy={loading}>
+        <div className="ops-stale-body" inert={loading}>{brief ? <div className="ops-sku-grid grid items-start gap-4">{shown.map(item => <SkuOperatingCard key={item.market + item.sku} row={item} period={item.analysisPeriod} analysis={item.analysis} actionRecommendations={item.actionRecommendations} context={context} onNavigate={remember} rules={resolveOperatingRules(item.market, item.sku, model.ruleOverrides)} rulesAvailable={model.rulesAvailable} />)}</div> : <div className="ops-mini-grid">{shown.slice(0, 3).map(item => <Link key={item.market + item.sku} onClick={remember} href={skuOperatingHref(item.sku, market, period, context)} className="ops-mini-sku"><ProductArtwork sku={item.sku} available={item.imageAvailable} /><span className="min-w-0 flex-1"><strong className="block truncate text-xs">{item.productName || item.sku}</strong><span className="ops-subtext mt-1 block">{item.sku} · {item.market}</span></span><span className="text-xs font-semibold">{money(item.analysis.current?.productSales, item.currency)}</span></Link>)}</div>}</div>
+        {loading && <div role="status" className="ops-stale-status"><span>正在加载经营数据…</span></div>}
+      </div>
       {!loading && (brief || search) && !shown.length && <div className="rounded-xl bg-white p-8 text-center text-sm text-slate-500">{brief && !search && filter === "focus" ? "本期暂无触发提醒的 SKU" : "没有匹配的 SKU"}<Link href={`/inventory/brief?market=${market}&period=${period}&filter=all`} className="mt-3 block text-[#0071e3]">查看全部 SKU</Link></div>}
-      {loading && <p role="status" className="text-sm text-slate-500">正在加载经营数据…</p>}
       {error && <div role="alert" className="text-sm text-rose-700"><p>{error}</p><button onClick={() => window.location.reload()} className="mt-2 min-h-11 rounded-lg border px-4">重新加载当前筛选</button></div>}
       <div ref={sentinel} aria-hidden="true" />
       {brief && page.nextOffset !== null && <button disabled={busy || loading} onClick={() => void more()} className="min-h-12 w-full rounded-lg border border-slate-300 bg-white text-sm disabled:opacity-50">{busy ? "正在加载…" : "加载更多 20 张卡片"}</button>}
@@ -161,15 +171,21 @@ function OperatingTrend({ page }: { page: OperatingPage }) {
   </section>;
 }
 
-export function SkuOperatingCard({ row, period, analysis, rules, rulesAvailable = true, initialEvidenceOpen, context, onNavigate }: { row: OperatingSku; period: string; analysis?: ReturnType<typeof operatingFacts>; rules?: OperatingRules; rulesAvailable?: boolean; initialEvidenceOpen?: boolean; context?: { filter?: string; query?: string; sort?: string; origin?: string; returnPeriod?: string }; onNavigate?: () => void }) {
+function actionEvidenceValue(evidence: SkuActionEvidence) {
+  return evidence.unit === "currency" ? fullCurrency(evidence.value, evidence.currency || "USD") : `${evidence.value > 0 ? "+" : ""}${evidence.value.toFixed(1)}%`;
+}
+
+export function SkuOperatingCard({ row, period, analysis, actionRecommendations, rules, rulesAvailable = true, initialEvidenceOpen, context, onNavigate }: { row: OperatingSku; period: string; analysis?: ReturnType<typeof operatingFacts>; actionRecommendations?: SkuActionRecommendations | null; rules?: OperatingRules; rulesAvailable?: boolean; initialEvidenceOpen?: boolean; context?: { filter?: string; query?: string; sort?: string; origin?: string; returnPeriod?: string }; onNavigate?: () => void }) {
   const facts = analysis ?? operatingFacts(row, period, rules, new Date(), rulesAvailable);
+  const actions = actionRecommendations === undefined && rulesAvailable ? buildSkuActionRecommendations(row, period, facts, rules ?? resolveOperatingRules(row.market, row.sku)) : actionRecommendations;
+  const leadingAction = actions?.recommendations[0];
   const current = facts.current, displayCurrency = current?.currency || row.currency;
   const history = row.unitHistory.filter(point => point.month <= period).slice(-6);
   const maxUnits = Math.max(1, ...history.map(point => point.units));
   const priceHistory = row.history.filter(point => point.reportMonth <= period).slice(-6);
   const source = !current ? "" : current.sourceKind === "gerpgo" ? "积加" : "Excel";
   return <article className="ops-product-card overflow-hidden rounded-2xl border border-black/5 bg-white">
-    <header className="flex items-start gap-3 p-5 pb-3"><ProductArtwork sku={row.sku} available={row.imageAvailable} /><div className="min-w-0 flex-1"><p className="ops-product-code"><Link onClick={onNavigate} href={skuOperatingHref(row.sku, row.market, period, context)}>{row.sku}</Link> · {row.market}</p><h3 className="mt-1 break-words text-sm font-semibold">{row.productName || row.sku}</h3><p className="mt-2 text-[11px] text-slate-400">{`经营 ${period || "—"}${source ? ` · ${source}` : " · 无当期数据"}`}</p><p className="mt-1 text-[11px] text-slate-400">{`当前库存 ${row.inventoryDate || "—"}${row.inventoryDate && !facts.stockFresh ? " · 过期或日期待核验" : ""}`}</p></div>{facts.issues[0] && <span className={`ops-status ${facts.issues.includes("利润待核查") ? "ops-status-danger" : ""}`}>{issueLabel(facts.issues[0])}</span>}</header>
+    <header className="flex items-start gap-3 p-5 pb-3"><ProductArtwork sku={row.sku} available={row.imageAvailable} /><div className="min-w-0 flex-1"><p className="ops-product-code"><Link onClick={onNavigate} href={skuOperatingHref(row.sku, row.market, period, context)}>{row.sku}</Link> · {row.market}</p><h3 className="mt-1 break-words text-sm font-semibold">{row.productName || row.sku}</h3><p className="mt-2 text-[11px] text-slate-400">{`经营 ${period || "—"}${source ? ` · ${source}` : " · 无当期数据"}`}</p><p className="mt-1 text-[11px] text-slate-400">{`当前库存 ${row.inventoryDate || "—"}${row.inventoryDate && !facts.stockFresh ? " · 过期或日期待核验" : ""}`}</p></div>{facts.issues[0] && <span className={`ops-status ops-status-${issueTone(facts.issues[0])}`}>{issueLabel(facts.issues[0])}</span>}</header>
     <div className="ops-product-primary grid grid-cols-3 gap-x-3 px-5 py-4">
       <Metric label="销售额" value={money(current?.productSales, displayCurrency)} />
       <Metric label={current?.quality?.profitVerified ? "实际利润" : "报告利润"} value={money(current?.actualProfit, displayCurrency)} negative={current?.quality?.profitVerified && current.actualProfit != null && current.actualProfit < 0} />
@@ -182,7 +198,12 @@ export function SkuOperatingCard({ row, period, analysis, rules, rulesAvailable 
     </div>
     <div className="ops-card-trend mx-5 flex flex-wrap items-center justify-between gap-3 py-3"><span className="ops-subtext">供应覆盖 {row.stock?.cover == null ? "—" : `${Math.round(row.stock.cover)} 天`}</span><RevenueSparkline row={row} period={period} /></div>
     {facts.advertisingPeriod && <p className="px-5 pb-2 text-[11px] text-slate-400">广告 {facts.advertisingPeriod}{facts.advertisingPeriod !== period ? " · 最近有数据月份" : ""}{facts.advertisingAsOf ? ` · 截至 ${facts.advertisingAsOf}` : ""}</p>}
-    {facts.issues.length > 0 && <div className="mx-5 my-4 space-y-2 rounded-xl bg-[#f5f5f7] p-4 text-xs leading-6">
+    {leadingAction ? <div className="ops-action-preview mx-5 my-4 rounded-xl p-4 text-xs leading-6" data-kind={leadingAction.kind}>
+      <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-[#1d1d1f]">调整建议 · {leadingAction.title}</p><span className="ops-badge ops-badge-slate">{period} 完整月</span></div>
+      <p className="mt-2 text-slate-600">{leadingAction.suggestion}</p>
+      <dl className="mt-3 grid grid-cols-2 gap-2">{leadingAction.evidence.slice(0, 2).map(item => <div key={item.label} className="rounded-lg bg-white px-3 py-2"><dt className="text-slate-500">{item.label}</dt><dd className="mt-1 font-semibold tabular-nums text-slate-900">{actionEvidenceValue(item)}</dd></div>)}</dl>
+      {actions && actions.recommendations.length > 1 && <p className="mt-2 text-slate-500">还有 {actions.recommendations.length - 1} 项有依据的调整方向，见详情。</p>}
+    </div> : facts.issues.length > 0 && <div className="ops-issue-preview mx-5 my-4 space-y-2 rounded-xl p-4 text-xs leading-6" data-tone={issueTone(facts.issues[0])}>
       <div className="flex flex-wrap gap-x-3 gap-y-1 font-medium text-[#1d1d1f]">{facts.issues.map(issue => <span key={issue}>{issueLabel(issue)}</span>)}</div>
       {facts.hypotheses.slice(0, 2).map(text => <p key={text} className="text-slate-600">{text}</p>)}
       {facts.suggestion && <p className="text-slate-700">{facts.suggestion}</p>}

@@ -8,8 +8,10 @@ import { afterEach, expect, it, vi } from "vitest";
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => createElement("div", null, children),
   AreaChart: ({ children }: { children: ReactNode }) => createElement("svg", null, children),
+  LineChart: ({ children }: { children: ReactNode }) => createElement("svg", null, children),
   BarChart: ({ children }: { children: ReactNode }) => createElement("svg", null, children),
   Area: ({ name, stroke, fill }: { name: string; stroke: string; fill: string }) => createElement("path", { role: "img", "aria-label": name, stroke, fill }),
+  Line: ({ name, stroke }: { name: string; stroke: string }) => createElement("path", { role: "img", "aria-label": name, stroke }),
   Bar: ({ name, fill }: { name: string; fill: string }) => createElement("rect", { role: "img", "aria-label": name, fill }),
   CartesianGrid: ({ stroke }: { stroke: string }) => createElement("line", { stroke }),
   XAxis: () => null, YAxis: () => null, Tooltip: () => null,
@@ -39,6 +41,16 @@ it("uses the shared income color for overview and mini trends while profit remai
   cleanup();
   render(createElement(SkuOperatingCard, { row: model.rows[0], period: "2026-09" }));
   expect(screen.getByRole("img", { name: "SKU-COLOR 最近2个完整月销售额趋势" }).querySelector("polyline")).toHaveAttribute("stroke", "var(--chart-primary)");
+});
+it("keeps the previous overview visible and non-interactive while a new filter loads", () => {
+  const model = operatingModel();
+  render(createElement(RevenueOverviewDashboard, { initial: queryOperatingModel(model, { period: "2026-09" }, now) }));
+  const metrics = screen.getByLabelText("经营指标");
+  fireEvent.change(screen.getByLabelText("搜索 SKU、产品或 ASIN"), { target: { value: "NO-MATCH" } });
+  expect(metrics).toBeInTheDocument();
+  expect(metrics.closest(".ops-stale-content")).toHaveAttribute("aria-busy", "true");
+  expect(metrics.closest(".ops-stale-body")).toHaveAttribute("inert");
+  expect(screen.getByText("正在加载经营数据…")).toBeInTheDocument();
 });
 it("does not draw a compact trend across an absent month", () => {
   const row = operatingModel().rows[0];

@@ -23,6 +23,7 @@
   --positive-border: #d5e9de;
   --warning-soft: #fff7e9;
   --warning-border: #f0e0bf;
+  --warning-accent: #d7a348;
   --danger-soft: #fff1f3;
   --danger-border: #f0d8dd;
   --overlay: #14234466;
@@ -33,6 +34,8 @@
   --chart-tertiary: #d97706;
   --shadow-soft: 0 1px 2px rgba(20, 35, 68, 0.025), 0 6px 20px rgba(20, 35, 68, 0.045);
   --shadow-strong: 0 12px 32px rgba(20, 35, 68, 0.08);
+  --shadow-float: 0 16px 38px rgba(20, 35, 68, 0.11);
+  --surface-glass: rgba(255, 255, 255, 0.88);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -45,6 +48,7 @@
   --text-body: 15px;
   --text-meta: 13px;
   --motion-fast: 160ms;
+  --motion-medium: 220ms;
   --motion-ease: cubic-bezier(.2, .65, .3, 1);
 }
 

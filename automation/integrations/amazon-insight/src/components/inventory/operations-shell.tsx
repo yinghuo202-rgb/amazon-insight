@@ -20,6 +20,7 @@ const backendGroups = [
   { href: "/inventory/costs", label: "产品成本" },
   { href: "/inventory/advertising", label: "广告明细" },
   { href: "/inventory/research", label: "新品调研" },
+  { href: "/inventory/review-insights", label: "评论调研" },
   { href: "/inventory/data/editor", label: "在线编辑" },
   ] }, { label: "运营协作", links: [
   { href: "/inventory/content", label: "产品待办" },

@@ -175,13 +175,24 @@ GERPGO_TIMEOUT_MS=10000
 - `/product/[asin]?analysisId=...` 分析与 Inspiration 页
 - `/product/[asin]/report?analysisId=...` 可分享的完整 HTML 报告
 - `/inventory` 运营总览
-- `/inventory/brief` 单 SKU 卡片式经营简报
+- `/inventory/brief` 单 SKU 卡片式经营简报与价格/广告调整依据
+- `/inventory/review-insights` 已授权的 Amazon US 子 ASIN 评论主题调研
 - `/inventory/supply-chain` 业务后台供应链追溯
 - `/inventory/calculator` 新品利润试算
 - `/inventory/warehouse` 仓库台账（入库、出库、调拨、调整、批次、审核和流水）
 - `/inventory/team` 登录后的共享协作空间（成员、SKU 任务、认领与状态）
 
 首次打开 `/inventory` 会跳转到 `/login`。首次部署创建共用账号；已有部署沿用首个账号或配置指定账号，不再创建成员。认证会话写入 SQLite 的 `User` / `Session` 表，协作任务写入同一工作区数据库；不与接力项目共享。
+
+### SKU 调整建议与评论调研
+
+运营总览新增“整体销售分析”，按 US/USD 与 CA/CAD 分开计算完整月环比、最近三个月对前三个月及具备数据时的同比。当月累计指标保持原样，历史分析注明所采用的最近完整月份。趋势优先使用已发布 SKU 经营记录；无 SKU 明细的早期月份，可读取库存报告 `businessPerformance.series` 中已结束且有实际金额或销量的月度汇总，零填充占位月份不当作实际零销售。汇总只能用于整体趋势，不能构造 SKU 贡献。
+
+销售额变化按同 SKU 的销量、成交均价、无法分解的其他金额和单月记录范围差异四部分对账；使用两月价格/销量的平均权重做对称分解，不将商品组合变化当作调价效果。页面显示两期都有记录的涨跌各前三 SKU、Top5 销售集中度、同月完整广告及全部核验后的整体利润，展开查看金额图、来源和比较依据。无数据的同比、广告环比或利润结论不显示；不据此自动执行调价、竞价或采购。
+
+SKU 简报的调整建议由当前已发布经营报告、运营 SQLite 中的可编辑阈值和同 SKU 历史记录计算。价格/成本复核须同币种、完整月、利润已核验且样本足够；明确的提价试验还要求相邻完整月的成交均价、销量及利润证据。广告排查只用同月完整的 SKU 广告数据。卡片显示一个优先建议和两项依据，详情展示全部建议及逐月成交均价、销售额、广告花费、归因销售、ACOS 趋势。缺少条件则不生成价格或广告建议。当前没有实时挂牌价、活动/关键词竞价，不自动改价或改广告，也不伪造目标幅度；建议不是对因果关系的证明。
+
+业务后台“评论调研”通过 Amazon Selling Partner API Customer Feedback 接口读取 US 子 ASIN 的正负主题、短摘录和逐主题六个月趋势，快照保存在现有 `STORE_OPS_STATE_DB` 运营 SQLite 中。它不是零售网页全文评论爬虫，不使用浏览器 Cookie、代理或反爬绕过；CA/MX 暂不支持。需要在 Amazon 侧开通 Brand Analytics 或 Selling Partner Insights 角色并完成卖家授权，把 `AMZ_LWA_CLIENT_ID`、`AMZ_LWA_CLIENT_SECRET`、`AMZ_REFRESH_TOKEN` 放在 NAS 私有 `.env`，Compose 将其透传给 `app`。不应把凭证填进网站表单或提交到 Git。无授权时页面显示未配置；真实接口成功仍需在 NAS 上单独验收。
 
 ## 库存数据接入
 
@@ -356,7 +367,7 @@ npm run db:studio
 
 ## 当前限制
 
-- SP-API 仍然只是占位 adapter，不参与主链路
+- 旧商品分析的 SP-API adapter 仍不参与主链路；业务后台“评论调研”已单独实现 Customer Feedback API 主题与趋势采集，需真实卖家授权后才能在线使用
 - Inspiration 默认由规则和模板生成，不调用真实 LLM
 - Jungle Scout 某些分析接口若返回不完整，会在 UI 中标记 `partial`
 

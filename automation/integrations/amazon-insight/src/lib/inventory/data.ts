@@ -39,7 +39,7 @@ export async function loadOperatingModel() {
   }
   try { model.ruleOverrides = listOperatingRuleOverrides(); }
   catch { model.rulesAvailable = false; model.warnings.push("提醒配置读取失败，经营提醒暂停；事实数据仍可查看，请检查运营数据库。"); }
-  model.dataVersion = createHash("sha256").update(JSON.stringify([new Date().toISOString().slice(0, 10), model.publishedVersion, model.generatedAt, model.rows, model.snapshots, model.ruleOverrides, model.rulesAvailable, model.metricContract, model.publishedMetricContract, defaultOperatingRules])).digest("hex");
+  model.dataVersion = createHash("sha256").update(JSON.stringify([new Date().toISOString().slice(0, 10), model.publishedVersion, model.generatedAt, model.rows, model.salesHistory, model.snapshots, model.ruleOverrides, model.rulesAvailable, model.metricContract, model.publishedMetricContract, defaultOperatingRules])).digest("hex");
   return model;
   });
 }

@@ -34,6 +34,16 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
   const periods = [...new Set([...profits.map((row) => row.reportMonth), ...(advertising?.scopes.map(scope => scope.reportMonth) ?? [])])].sort().reverse();
   const markets = [...new Set([...inventories.map((item) => item.market), ...profits.map((item) => item.market), ...(performance?.scopes.map(scope => scope.market) ?? []), ...(advertising?.scopes.map(scope => scope.market) ?? [])])].filter((market) => (operatingMarkets as readonly string[]).includes(market));
   const inventoryMap = new Map(inventories.map((item) => [item.market, item]));
+  // Older workbooks retain site-level actual revenue before SKU revenue reports exist.
+  // Their zero-filled future slots are placeholders, not observed zero-sales months.
+  const salesHistory = [...inventoryMap.values()].flatMap(data => (data.businessPerformance?.series ?? []).flatMap(point => {
+    const reportMonth = `${data.businessPerformance.actualYear}-${point.month}`;
+    if (!(operatingMarkets as readonly string[]).includes(data.market) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(reportMonth)
+      || reportMonth >= now.toISOString().slice(0, 7) || !Number.isFinite(point.actualRevenue) || !Number.isFinite(point.actualUnits)
+      || !(point.actualRevenue > 0 || point.actualUnits > 0)) return [];
+    return [{ market: data.market, currency: data.currency, reportMonth, productSales: point.actualRevenue, units: point.actualUnits,
+      businessAsOf: new Date(Date.UTC(Number(reportMonth.slice(0, 4)), Number(reportMonth.slice(5)), 0)).toISOString().slice(0, 10), sourceKind: "excel-summary" as const }];
+  }));
   const rows = markets.flatMap((market) => {
     const inventory = inventoryMap.get(market);
     const calculatedStock = inventory ? calculateInventoryRows(inventory, inventory.parameters, 100, now) : [];
@@ -67,7 +77,7 @@ export function buildOperatingModel(inventories: InventoryDashboardData[], profi
       };
     });
   });
-  return { markets, periods, rows, warnings, advertisingScopes: advertising?.scopes ?? [], storeName: performance?.storeScope?.storeName ?? null, ruleOverrides: [] as OperatingRuleOverride[], dataVersion: "legacy", publishedVersion: performance?.publication.version ?? null, rulesAvailable: true, generatedAt: performance?.generatedAt ?? profitability?.generatedAt ?? null,
+  return { markets, periods, rows, salesHistory, warnings, advertisingScopes: advertising?.scopes ?? [], storeName: performance?.storeScope?.storeName ?? null, ruleOverrides: [] as OperatingRuleOverride[], dataVersion: "legacy", publishedVersion: performance?.publication.version ?? null, rulesAvailable: true, generatedAt: performance?.generatedAt ?? profitability?.generatedAt ?? null,
     metricContract: currentMetricContract, publishedMetricContract: null as MetricVersions | null,
     snapshots: inventories.map((item) => ({ market: item.market, date: item.snapshots.fbaDate, awdDate: item.snapshots.awdDate, awdAvailable: item.snapshots.awdSourceAvailable,
       stale: snapshotAgeDays(item.snapshots.fbaDate, now) === null || snapshotAgeDays(item.snapshots.fbaDate, now)! > item.snapshots.staleAfterDays })) };

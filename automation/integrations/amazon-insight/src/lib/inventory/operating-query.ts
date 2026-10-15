@@ -1,6 +1,8 @@
 import { operatingFacts, type OperatingModel } from "@/lib/inventory/dashboard-view-model";
 import { resolveOperatingRules } from "@/lib/inventory/operating-rules";
 import { operatingMarkets, selectAdvertisingPeriod } from "@/lib/inventory/operating-performance";
+import { buildSkuActionRecommendations } from "@/lib/inventory/sku-action-recommendations";
+import { buildSalesOverviewAnalysis } from "@/lib/inventory/sales-overview-analysis";
 
 export const operatingFilters = ["focus", "revenue", "loss", "advertising", "returns", "decline", "stock", "missing", "all"] as const;
 export type OperatingFilter = typeof operatingFilters[number];
@@ -85,7 +87,10 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const limit = input.brief ? 20 : query ? 3 : 0;
   const shown = matched.slice(offset, offset + limit).map(item => {
     const { row, ...analysis } = item;
-    return { ...row, analysis, analysisPeriod: listPeriod, advertisingHistory: row.advertisingHistory.slice(-6), history: row.history.filter(point => point.reportMonth <= listPeriod).slice(-6), unitHistory: row.unitHistory.filter(point => point.month <= listPeriod).slice(-6) };
+    const actionRecommendations = model.rulesAvailable
+      ? buildSkuActionRecommendations(row, listPeriod, analysis, resolveOperatingRules(market, row.sku, model.ruleOverrides))
+      : null;
+    return { ...row, analysis, analysisPeriod: listPeriod, actionRecommendations, advertisingHistory: row.advertisingHistory.slice(-6), history: row.history.filter(point => point.reportMonth <= listPeriod).slice(-6), unitHistory: row.unitHistory.filter(point => point.month <= listPeriod).slice(-6) };
   });
   const selected = { ...model, markets: model.markets.filter(item => item === "US" || item === "CA"), rows: shown };
   const priorDate = /^\d{4}-\d{2}$/.test(period) ? new Date(`${period}-01T00:00:00Z`) : null;
@@ -96,7 +101,8 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
   const complete = period < now.toISOString().slice(0, 7) && reported.length > 0 && reported.every(item => item.complete);
   const sameSkus = reported.every(item => item.previous !== null && item.previous.reportMonth === previousMonth && item.previous.currency === currency && item.previous.quality?.completePeriod !== false);
   const delta = complete && sameSkus && previousRows.length === reported.length && priorRevenue > 0 && revenue !== null ? (revenue / priorRevenue - 1) * 100 : null;
-  const earliest = model.periods.filter(month => month <= period).sort()[0];
+  const historicalSales = (model.salesHistory ?? []).filter(point => point.market === market && point.currency === currency);
+  const earliest = [...model.periods, ...historicalSales.map(point => point.reportMonth)].filter(month => month <= period).sort()[0];
   const months: string[] = [];
   if (earliest && priorDate) {
     const cursor = new Date(`${period}-01T00:00:00Z`);
@@ -105,6 +111,9 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
     }
   }
   const chart = months.map(month => {
+    const hasSkuRecords = rows.some(row => row.history.some(point => point.reportMonth === month));
+    const historical = !hasSkuRecords ? historicalSales.filter(point => point.reportMonth === month) : [];
+    if (historical.length === 1) return { month, revenue: historical[0].productSales, profit: null, complete: true, mtd: false, asOf: historical[0].businessAsOf };
     const points = rows.flatMap(row => row.history.filter(point => point.reportMonth === month && point.currency === currency));
     const complete = completeMonth(month);
     const dates = [...new Set(points.map(point => point.quality?.businessAsOf).filter((date): date is string => Boolean(date)))];
@@ -114,6 +123,7 @@ export function queryOperatingModel(model: OperatingModel, input: { market?: str
       asOf: dates.length === 1 && points.every(point => point.quality?.businessAsOf === dates[0]) ? dates[0] : complete && dates.length === 0 ? monthEnd : null };
   });
   return { model: selected, market, period, focusPeriod, query, filter, sort, currency, priorities, total: matched.length, nextOffset: limit && offset + limit < matched.length ? offset + limit : null,
+    salesAnalysis: input.brief ? null : buildSalesOverviewAnalysis(model, market, period, now),
     summary: { revenue, profit, units, returns, adSales, adCost, advertising, coverage, delta, complete, reportedCount: reported.length, profitVerified: reported.length > 0 && reported.every(item => item.current?.quality?.profitVerified),
       coveredCount: covered.length, unknownCoverageCount: facts.length - covered.length }, chart,
     counts: Object.fromEntries(operatingFilters.map(kind => [kind, (["all", "revenue", "missing"].includes(kind) ? facts : focusFacts).filter(item => matches(item, kind)).length])) };
