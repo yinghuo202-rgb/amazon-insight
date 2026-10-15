@@ -4,6 +4,8 @@
 
 **用户最新决定：暂不重建 NAS。** 下述 rc.15 是已验证的云端镜像，不表示原容器已升级；本轮不继续修改 NAS env 或操作容器。WPS 没有应用授权，改用手动下载 Excel、网页上传；新手工实际库存入口为本地待交付增量，尚不包含在 rc.15。正式 OAuth 自动下载不作为当前部署前提。
 
+后续代码状态：`v1.5.0-rc.16` 固定在 `aa81227`，包含手工实际库存导入；[Actions 38675012580](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38675012580) 的验证任务已通过，镜像构建及双架构启动结果尚未核实。再后的本地提交 `75ed8d1` 改进可选 WPS 设置和当月累计图表，未形成已验证镜像。**现在不要把 NAS 的 IMAGE_TAG 改成 rc.16 或本地提交号**；待工作流、GHCR 摘要与运行检查都确认后，另行确定升级版本。当前 NAS 仍由用户自行决定何时重建。
+
 最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.15`，[Actions 38668305700](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38668305700) 全部成功，对应提交 `9ba59a8613895fb2ce67ebc9d59806d66274e75d`；镜像摘要 `sha256:17342033575c6e227227d6bc27454d1135fe63a08b476e23cec82da149ca74f5`。62文件/473条网页、166条Python及AMD64/ARM64实际fresh/worker/resume检查通过；固定标签另经GHCR返回200及摘要一致验证。不提升latest。
 
 全门禁成功后按用户“只改env、自己重建”的要求，备份原NAS配置并仅将`IMAGE_TAG`从rc.14改为rc.15，其他字节比较完全不变，备份为`_archive/env.before-rc15-20261015`。没有操作容器、密钥或数据，rc.15实际运行仍待用户重建后验收；env备份不是数据库备份。原项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重新拉取并创建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
