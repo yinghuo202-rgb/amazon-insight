@@ -4,11 +4,11 @@
 
 ## 当前交付与操作入口（2026-10-15）
 
-已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.14`，代码提交 `59068c6fee0fb91541d21b5228de6aa260c23b50`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38392637697) 的61文件/462条网页、166条Python、AMD64/ARM64发布及fresh/worker/resume实际启动检查全部通过。镜像摘要 `sha256:e9699a332f50d27130b494cd24d74a9acc108b43f9fc8bda2f7d5abf150515dc`，不提升 `latest`。**构建成功不是 NAS 上线或经营数据自动同步成功的证明。**
+已验证镜像：`ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.15`，代码提交 `9ba59a8613895fb2ce67ebc9d59806d66274e75d`。[构建记录](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38668305700) 的62文件/473条网页、166条Python、AMD64/ARM64发布及fresh/worker/resume实际启动检查全部通过。镜像摘要 `sha256:17342033575c6e227227d6bc27454d1135fe63a08b476e23cec82da149ca74f5`，GHCR固定标签实际返回200并与该摘要一致，不提升 `latest`。**构建成功不是 NAS 新版已经运行的证明。**
 
 按用户“只改env、自己重建”的要求，全门禁通过后已备份NAS原配置，仅将`IMAGE_TAG`从rc.11更新至rc.14；备份`_archive/env.before-rc14-20261013`，逐字节确认其余不变。用户已确认原app和data-worker重建正常。10月15日公网登录及公共就绪均为200，登录后总览、重点SKU、广告和历史发货已实际显示；定时状态显示worker近期心跳、每日采集，上次任务完成。当前报告为`data-20261014-042116-08bc662dc7b8`，积加US/CA销售和广告截止10月14日，库存业务日期10月12日。WPS正式自动下载仍待应用及文件授权，不能把已导入库存称作自动同步。尚未独立核实容器实际镜像摘要，亦未完成灾备和全部商业验收。以下rc.10—rc.13为历史记录。
 
-rc.15候选修复了MX旧链接/API仍可访问的范围遗漏，前台模型、筛选及SKU入口统一只允许US/CA；MX/AU归档不删除、不改写。相关59条测试、类型检查已通过；云端镜像与双架构启动尚待门禁，不提前修改NAS镜像变量。
+rc.15修复了MX旧链接/API仍可访问的范围遗漏，经营模型、筛选及SKU入口统一只允许US/CA；MX/AU归档不删除、不改写。相关59条测试、类型检查及上述云端全门禁通过。随后按用户要求备份NAS原env至`_archive/env.before-rc15-20261015`，仅将`IMAGE_TAG`从rc.14改为rc.15，逐字节验证其余不变；没有操作容器或业务数据。用户需在原项目拉取并重建app、data-worker，cloudflared不动；此前真实页面验收不能冒充rc.15运行验收。
 
 rc.10 包含认证字段脱敏补丁：清理新生成的积加证据和来源报告副本，不自动清理历史文件或吊销凭证。云端 50 个文件、333 条网页测试和 123 条 Python 测试通过；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。按用户要求备份并仅更新 NAS env 至 rc.10，不自动操作容器。
 

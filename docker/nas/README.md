@@ -2,9 +2,9 @@
 
 ## 当前交付状态（2026-10-15）
 
-最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.14`，[Actions 38392637697](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38392637697) 全部成功，对应提交 `59068c6fee0fb91541d21b5228de6aa260c23b50`；镜像摘要 `sha256:e9699a332f50d27130b494cd24d74a9acc108b43f9fc8bda2f7d5abf150515dc`。61文件/462条网页、166条Python及AMD64/ARM64实际fresh/worker/resume检查通过，包含成本历史、原子worker审计、完整月报发布和指标口径记录。不提升latest。
+最新已验证镜像为 `ghcr.io/yinghuo202-rgb/amazon-insight:v1.5.0-rc.15`，[Actions 38668305700](https://github.com/yinghuo202-rgb/amazon-insight/actions/runs/38668305700) 全部成功，对应提交 `9ba59a8613895fb2ce67ebc9d59806d66274e75d`；镜像摘要 `sha256:17342033575c6e227227d6bc27454d1135fe63a08b476e23cec82da149ca74f5`。62文件/473条网页、166条Python及AMD64/ARM64实际fresh/worker/resume检查通过；固定标签另经GHCR返回200及摘要一致验证。不提升latest。
 
-全门禁成功后按用户“只改env、自己重建”的要求，备份原NAS配置并仅将`IMAGE_TAG`从rc.11改为rc.14，其他字节比较完全不变，备份为`_archive/env.before-rc14-20261013`。没有操作容器、密钥或数据，实际运行版本仍待用户重建后验收；env备份不是数据库备份。原项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重新拉取并创建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
+全门禁成功后按用户“只改env、自己重建”的要求，备份原NAS配置并仅将`IMAGE_TAG`从rc.14改为rc.15，其他字节比较完全不变，备份为`_archive/env.before-rc15-20261015`。没有操作容器、密钥或数据，rc.15实际运行仍待用户重建后验收；env备份不是数据库备份。原项目沿用用户实际使用的`measureman-commerce-online.yml`、原挂载和账号，不导入新模板；重新拉取并创建app与data-worker，不重建cloudflared。新版本无需增加worker账号库挂载：经营复核协调在app的Node启动入口每30秒有界执行。
 
 rc.12和rc.13均因Python门禁失败而跳过docker，没有镜像，不能部署，不覆盖失败标签。rc.14只补旧提交锁测试config参数兼容及交付记录，原锁内保护断言未改；全流程已通过。补丁不自动清理历史凭证、替换数据或更换密钥，也不表示整份PRD和生产经营验收完成。
 
@@ -16,7 +16,7 @@ rc.12和rc.13均因Python门禁失败而跳过docker，没有镜像，不能部�
 
 10月15日只读验收：公网登录及公共就绪200；用户确认双服务重建正常。登录后重点SKU、广告、历史发货和返回筛选可用，定时状态显示近期worker心跳、每日同步、上次完成。新报告`data-20261014-042116-08bc662dc7b8`由定时worker发布，US/CA销售及广告截止10月14日，库存业务日期10月12日。WPS授权尚未配置，当前为已导入库存。没有触发生产发布、修改业务记录或操作容器；运行镜像摘要、完整灾备及业务签收仍待。下方旧版本号及1033记录均为历史，不覆盖本段。
 
-rc.15为修正MX历史URL/API仍可访问的最小候选，只收紧前台US/CA范围，不修改归档和数据卷。59条相关测试及类型检查通过，镜像门禁尚待；NAS保持rc.14，不因候选提交自动升级。
+rc.15为修正MX历史URL/API仍可访问的最小补丁，只收紧经营展示US/CA范围，不修改归档和数据卷。59条相关测试、类型检查和云端全门禁通过后，已备份原NAS env为`_archive/env.before-rc15-20261015`，仅将IMAGE_TAG从rc.14更新为rc.15，逐字节确认其他内容不变。没有操作容器或业务数据；请在原项目拉取并重新创建app、data-worker，不重建cloudflared、不换数据卷、不覆盖原Compose。rc.15实际运行仍待用户重建验收，env副本不替代完整数据库灾备。
 
 ## v1.5.0-rc.8（历史发布记录，云端与双架构启动检查通过）
 
