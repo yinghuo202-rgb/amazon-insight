@@ -1,15 +1,20 @@
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { getSharedLoginUser, requireCurrentUser, SESSION_COOKIE, verifyPassword } from "@/lib/auth";
-import { appendImportChunk, finalizeChunkedImport, initializeChunkedImport, listDataVersions, listImportBatches, publishImportBatch, restoreDataVersion } from "@/lib/inventory/data-import";
+import { appendImportChunk, DataImportValidationError, finalizeChunkedImport, initializeChunkedImport, listDataVersions, listImportBatches, publishImportBatch, restoreDataVersion } from "@/lib/inventory/data-import";
 import { DataConfirmationError, DataOperationConfirmationStore, readDataOperationBinding, validateDataOperationTarget, type DataOperation } from "@/lib/inventory/data-operation-confirmation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "no-store" };
+const inventoryImportSchema = z.discriminatedUnion("scope", [
+  z.object({ scope: z.literal("planning") }).strict(),
+  z.object({ scope: z.literal("actual"), businessAsOf: z.iso.date() }).strict(),
+]);
 function failure(error: unknown) {
   if (error instanceof Error && error.message === "UNAUTHENTICATED") return Response.json({ error: "请先登录。" }, { status: 401, headers: noStore });
   if (error instanceof DataConfirmationError) return Response.json({ error: error.message }, { status: error.status, headers: noStore });
+  if (error instanceof DataImportValidationError) return Response.json({ error: error.message }, { status: 422, headers: noStore });
   return Response.json({ error: "数据操作未完成，请检查预览并重新验证。" }, { status: 400, headers: noStore });
 }
 function requireBrowserWrite(request: Request, type = "application/json") {
@@ -69,7 +74,11 @@ export async function POST(request: Request) {
       const files = z.array(z.object({ name: z.string().min(1).max(500), size: z.number().int().positive() }).strict()).min(1).max(100).parse(body.files);
       return Response.json({ upload: await initializeChunkedImport(files) }, { status: 201, headers: noStore });
     }
-    if (body.action === "finalize" && typeof body.batchId === "string") return Response.json({ batch: await finalizeChunkedImport(body.batchId) }, { headers: noStore });
+    if (body.action === "finalize") {
+      const parsed = z.object({ action: z.literal("finalize"), batchId: z.string(), inventory: inventoryImportSchema.default({ scope: "planning" }) }).strict().safeParse(body);
+      if (!parsed.success) throw new DataConfirmationError("请选择库存导入方式；实际库存需要有效业务日期，规划导入不填写日期。", 422);
+      return Response.json({ batch: await finalizeChunkedImport(parsed.data.batchId, parsed.data.inventory) }, { headers: noStore });
+    }
     throw new DataConfirmationError("上传操作参数不正确。", 422);
   } catch (error) { return failure(error); }
 }

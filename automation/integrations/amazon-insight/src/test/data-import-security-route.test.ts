@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 const mocks = vi.hoisted(() => ({ user: vi.fn(), shared: vi.fn(), verify: vi.fn(), cookies: vi.fn(), publish: vi.fn(), restore: vi.fn(), initialize: vi.fn(), finalize: vi.fn(), chunk: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ requireCurrentUser: mocks.user, getSharedLoginUser: mocks.shared, verifyPassword: mocks.verify, SESSION_COOKIE: "measureman_session" }));
 vi.mock("next/headers", () => ({ cookies: mocks.cookies }));
-vi.mock("@/lib/inventory/data-import", () => ({ publishImportBatch: mocks.publish, restoreDataVersion: mocks.restore, initializeChunkedImport: mocks.initialize, finalizeChunkedImport: mocks.finalize, appendImportChunk: mocks.chunk, listImportBatches: vi.fn(), listDataVersions: vi.fn() }));
+vi.mock("@/lib/inventory/data-import", async original => ({ ...await original<typeof import("@/lib/inventory/data-import")>(), publishImportBatch: mocks.publish, restoreDataVersion: mocks.restore, initializeChunkedImport: mocks.initialize, finalizeChunkedImport: mocks.finalize, appendImportChunk: mocks.chunk, listImportBatches: vi.fn(), listDataVersions: vi.fn() }));
+import { DataImportValidationError } from "@/lib/inventory/data-import";
 import { PATCH, POST, PUT } from "@/app/api/inventory/data-import/route";
 const batchId = "batch-20261013-synthetic";
 const version = "data-20261013-000000-test";
@@ -81,12 +82,13 @@ it.each(["publish", "restore"])("executes a correctly confirmed %s once with man
   expect((await PATCH(request("PATCH", body))).status).toBe(409);
   expect(operation).toHaveBeenCalledOnce();
 });
-it.each(["expired", "session", "operation", "baseline", "target_contents"])("rejects confirmation changed by %s without calling a publisher", async change => {
+it.each(["expired", "session", "operation", "baseline", "target_contents", "inventory_metadata"])("rejects confirmation changed by %s without calling a publisher", async change => {
   const token = await confirm();
   if (change === "expired") vi.spyOn(Date, "now").mockReturnValue(Date.now() + 120001);
   if (change === "session") mocks.cookies.mockResolvedValue({ get: () => ({ value: "different-synthetic-session" }) });
   if (change === "baseline") writeFileSync(path.join(folder, "reports", "manual.json"), '{"notes":"human-newer"}');
   if (change === "target_contents") writeFileSync(path.join(folder, "uploads", batchId, "source", "test.xlsx"), "changed-synthetic-source");
+  if (change === "inventory_metadata") writeFileSync(path.join(folder, "uploads", batchId, "manifest.json"), JSON.stringify({ status: "ready", files: [{ name: "test.xlsx" }], source: { kind: "manual-inventory-upload", inventoryScope: "actual", businessAsOf: "2026-10-12" } }));
   const body = change === "operation" ? { action: "restore", version, confirmationToken: token } : { batchId, confirmationToken: token };
   expect((await PATCH(request("PATCH", body))).status).toBe(409);
   expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.restore).not.toHaveBeenCalled();
@@ -110,4 +112,37 @@ it("protects upload initialization and rejects plaintext password confirmation",
   const response = await POST(request("POST", { action: "confirm_operation", operation: "publish", batchId, currentPassword: "synthetic-password" }, { origin: "http://example.invalid" }));
   expect(response.status).toBe(403);
   expect(mocks.verify).not.toHaveBeenCalled();
+});
+
+it("defaults browser inventory imports to planning without declaring actual inventory", async () => {
+  mocks.finalize.mockResolvedValue({ batchId });
+  const response = await POST(request("POST", { action: "finalize", batchId }));
+  expect(response.status).toBe(200);
+  expect(mocks.finalize).toHaveBeenCalledWith(batchId, { scope: "planning" });
+});
+it("passes explicit actual inventory date into the immutable preview before publication confirmation", async () => {
+  mocks.finalize.mockResolvedValue({ batchId });
+  const inventory = { scope: "actual", businessAsOf: "2026-10-12" };
+  expect((await POST(request("POST", { action: "finalize", batchId, inventory }))).status).toBe(200);
+  expect(mocks.finalize).toHaveBeenCalledWith(batchId, inventory);
+  expect(mocks.publish).not.toHaveBeenCalled();
+});
+it.each([
+  { scope: "actual" }, { scope: "actual", businessAsOf: "2026-02-30" },
+  { scope: "actual", businessAsOf: "2026-10-12T00:00:00Z" },
+  { scope: "planning", businessAsOf: "2026-10-12" }, { scope: "unexpected" },
+  { scope: "actual", businessAsOf: "2026-10-12", authentication: "official-oauth" },
+])("rejects invalid manual inventory metadata before finalizing: %j", async inventory => {
+  expect((await POST(request("POST", { action: "finalize", batchId, inventory }))).status).toBe(422);
+  expect(mocks.finalize).not.toHaveBeenCalled();
+});
+it("returns a recognized manual inventory validation error without exposing unexpected parser failures", async () => {
+  mocks.finalize.mockRejectedValue(new DataImportValidationError("库存规划 实际库存缺少必需列：AWD备货"));
+  const validation = await POST(request("POST", { action: "finalize", batchId }));
+  expect(validation.status).toBe(422);
+  expect(await validation.json()).toEqual({ error: "库存规划 实际库存缺少必需列：AWD备货" });
+  mocks.finalize.mockRejectedValue(new Error("private-host-path-and-traceback"));
+  const unexpected = await POST(request("POST", { action: "finalize", batchId }));
+  expect(unexpected.status).toBe(400);
+  expect(JSON.stringify(await unexpected.json())).not.toContain("private-host-path");
 });

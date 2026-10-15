@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function DataRefreshPage() {
   const [status, batches, versions] = await Promise.all([getDataRefreshStatus(), listImportBatches(), listDataVersions()]);
   const onlineSources = getOnlineSourceConfiguration();
-  return <><OpsPageHeader title="数据更新" description="积加负责经营事实，WPS 负责库存规划和新品资料。上传文件仍可作为更新入口。" />
+  return <><OpsPageHeader title="数据更新" description="销售和广告由积加同步；库存与新品资料从 WPS 下载后手动导入。" />
     <section aria-label="在线数据来源" className="mb-6 rounded-2xl border border-black/5 bg-white p-5">
       <h2 className="text-lg font-semibold tracking-tight">在线数据来源</h2>
       <div className="mt-4 divide-y divide-slate-100">

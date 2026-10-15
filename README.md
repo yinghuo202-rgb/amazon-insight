@@ -10,6 +10,8 @@
 
 rc.15修复了MX旧链接/API仍可访问的范围遗漏，经营模型、筛选及SKU入口统一只允许US/CA；MX/AU归档不删除、不改写。相关59条测试、类型检查及上述云端全门禁通过。随后按用户要求备份NAS原env至`_archive/env.before-rc15-20261015`，仅将`IMAGE_TAG`从rc.14改为rc.15，逐字节验证其余不变；没有操作容器或业务数据。用户需在原项目拉取并重建app、data-worker，cloudflared不动；此前真实页面验收不能冒充rc.15运行验收。
 
+10月15日最新决定：**暂不重建 NAS**；WPS 没有开放平台授权，库存改走手动下载 Excel、网页上传，不再把 WPS 自动下载授权作为当前交付前提。手工实际库存导入增量通过36项网页、28项Python聚焦测试、类型检查、定向lint及Next生产构建，并完成本地合成数据桌面交互检查；手机实机和NAS真实文件发布未验收。该增量未包含在rc.15，候选rc.16须另经云端门禁，不更新NAS配置或生产数据。操作及口径见[手动库存更新](automation/integrations/amazon-insight/README.md#手动库存更新无-wps-应用授权)。
+
 rc.10 包含认证字段脱敏补丁：清理新生成的积加证据和来源报告副本，不自动清理历史文件或吊销凭证。云端 50 个文件、333 条网页测试和 123 条 Python 测试通过；镜像摘要 `sha256:0b15784b99e057c412d4c23150e81ed9bdc132f378d3efc9dee7427d61bc86ca`。按用户要求备份并仅更新 NAS env 至 rc.10，不自动操作容器。
 
 rc.11 已按[核心闭环计划](docs/superpowers/plans/2026-10-13-prd-core-closure.md)实现复核重新触发、证据历史、连续查询、登录限流以及发布/回退二次验证。云端57个文件/403条网页测试、130条Python测试及双架构fresh/worker/resume检查通过，新生产instrumentation自动协调也实际通过。镜像摘要 `sha256:f199e35e18ebfb972cff84fe286640cb11603b38f5e82dde734d1f3abc38f3be`。NAS原env已按用户要求仅更新为rc.11，备份为`_archive/env.before-rc11-20261013`，其余字节不变；容器仍由用户重建，不表示已上线。

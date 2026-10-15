@@ -30,8 +30,13 @@ export type ImportBatch = {
   dataVersion?: string;
   updatedReports?: string[];
   stagedFiles?: string[];
-  source?: { kind: "wps-browser-download" | "wps-api-download"; shareUrl: string; capturedAt: string; businessAsOf: string | null; sha256: string; authentication: "existing-browser-session" | "official-oauth"; fileToken?: string };
+  source?: { kind: "wps-browser-download" | "wps-api-download" | "manual-inventory-upload"; shareUrl?: string; capturedAt: string; businessAsOf: string | null; sha256: string; authentication: "existing-browser-session" | "official-oauth" | "manual-upload"; fileToken?: string; inventoryScope?: "planning" | "actual"; confirmedInventoryDate?: string };
 };
+
+export type InventoryImportOptions = { scope: "planning" } | { scope: "actual"; businessAsOf: string };
+export class DataImportValidationError extends Error {
+  override name = "DataImportValidationError";
+}
 
 export type DataVersion = { version: string; createdAt: string; fileCount: number };
 
@@ -94,14 +99,14 @@ export async function appendImportChunk(batchId: string, fileIndex: number, offs
   return { received: currentSize + content.length, size: file.size };
 }
 
-export async function finalizeChunkedImport(batchId: string) {
+export async function finalizeChunkedImport(batchId: string, inventory: InventoryImportOptions = { scope: "planning" }) {
   const directory = path.join(uploadsRoot(), safeBatchId(batchId));
   const plan = JSON.parse(await readFile(path.join(directory, "upload.json"), "utf8")) as UploadPlan;
   for (const file of plan.files) {
     const info = await stat(path.join(directory, "source", file.serverName)).catch(() => null);
     if (!info || info.size !== file.size) throw new Error(`${file.name} 尚未完整上传。`);
   }
-  return runImporter("inspect", directory);
+  return runImporter("inspect", directory, ["--inventory-scope", inventory.scope, ...(inventory.scope === "actual" ? ["--confirmed-inventory-date", inventory.businessAsOf] : [])]);
 }
 
 export type DataOperationGuard = { expectedBaseline: string; expectedTarget: string };
@@ -170,7 +175,15 @@ async function runImporter(command: "inspect" | "publish", batchDirectory: strin
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-20_000); });
     child.on("error", reject);
     child.on("close", (code) => {
-      if (code !== 0) return reject(new Error(`表格解析失败：${stderr.slice(-1500) || `退出码 ${code}`}`));
+      if (code !== 0) {
+        if (command === "inspect") {
+          try {
+            const validation = JSON.parse(stdout);
+            if (validation.code === "MANUAL_INVENTORY_VALIDATION" && typeof validation.error === "string" && validation.error.length <= 1000) return reject(new DataImportValidationError(validation.error));
+          } catch { /* Unexpected parser output remains a private server error. */ }
+        }
+        return reject(new Error(`表格解析失败：${stderr.slice(-1500) || `退出码 ${code}`}`));
+      }
       try { resolve(JSON.parse(stdout) as ImportBatch); }
       catch { reject(new Error("表格解析结果格式不正确。")); }
     });

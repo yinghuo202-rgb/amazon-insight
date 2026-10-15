@@ -47,6 +47,10 @@ TYPE_LABELS = {
 }
 
 
+class ManualInventoryValidationError(ValueError):
+    """Deliberate inventory confirmation errors safe to display to the uploader."""
+
+
 def _text(value: object) -> str:
     return "" if value is None else str(value).strip()
 
@@ -112,7 +116,7 @@ def _detect(path: Path, workbook) -> str:
         return "shipment"
     if "新品调研" in name or any(re.fullmatch(r"\d{1,2}月新品", value) for value in sheets):
         return "research"
-    if "库存规划" in name or "库存规划" in sheets:
+    if "库存规划" in name or "库存规划" in sheets or "加拿大库存计划" in sheets:
         return "inventory"
     if "产品总成本" in name or {"美国", "加拿大"}.issubset(sheets):
         return "product_cost"
@@ -256,7 +260,9 @@ def _generic_preview(workbook, kind: str) -> dict[str, Any]:
     return {"sheets": sheets[:12], "impacts": impacts}
 
 
-def inspect_batch(batch_dir: Path, *, config: ProjectConfig | None = None) -> dict[str, Any]:
+def inspect_batch(batch_dir: Path, *, config: ProjectConfig | None = None,
+                  confirmed_inventory_date: str | None = None, inventory_scope: str | None = None) -> dict[str, Any]:
+    confirmed_date = _confirmed_inventory_date(confirmed_inventory_date, inventory_scope)
     files: list[dict[str, Any]] = []
     warnings: list[str] = []
     for path in sorted((batch_dir / "source").iterdir()):
@@ -304,20 +310,92 @@ def inspect_batch(batch_dir: Path, *, config: ProjectConfig | None = None) -> di
         "warnings": warnings,
         "files": files,
     }
+    inventory_files = [item for item in files if item["type"] == "inventory"]
+    if inventory_scope is not None:
+        if len(inventory_files) > 1 or inventory_scope == "actual" and (len(files) != 1 or len(inventory_files) != 1):
+            raise ManualInventoryValidationError("人工库存范围只支持一个库存工作簿；实际库存须单独上传完整库存工作簿")
+        if inventory_files:
+            manifest["source"] = {"kind": "manual-inventory-upload", "authentication": "manual-upload",
+                                  "inventoryScope": inventory_scope, "businessAsOf": confirmed_date,
+                                  "sha256": inventory_files[0]["sha256"], "capturedAt": manifest["createdAt"]}
+            if confirmed_date:
+                manifest["source"].update(confirmedInventoryDate=confirmed_date, confirmation="explicit-user-confirmation")
+            _validate_manual_inventory_source(manifest, batch_dir)
     (batch_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
 
 def _confirmed_inventory_date(value: str | None, scope: str | None) -> str | None:
     if scope not in {None, "planning", "actual"}:
-        raise ValueError("库存范围必须为 planning 或 actual")
+        raise ManualInventoryValidationError("库存范围必须为 planning 或 actual")
     if scope == "actual":
         if not value or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-            raise ValueError("实际库存发布须明确确认业务日期 YYYY-MM-DD")
-        return date.fromisoformat(value).isoformat()
+            raise ManualInventoryValidationError("实际库存发布须明确确认业务日期 YYYY-MM-DD")
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            raise ManualInventoryValidationError("实际库存业务日期无效，请填写有效日期 YYYY-MM-DD") from None
     if value is not None:
-        raise ValueError("确认库存日期仅适用于 actual 库存范围")
+        raise ManualInventoryValidationError("确认库存日期仅适用于 actual 库存范围")
     return None
+
+
+def _validate_manual_actual_inventory(path: Path) -> None:
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True, keep_links=False)
+    try:
+        markets = 0
+        for market, sheet_name in (("US", "库存规划"), ("CA", "加拿大库存计划 ")):
+            if sheet_name not in workbook.sheetnames:
+                continue
+            markets += 1
+            rows = workbook[sheet_name].iter_rows(values_only=True)
+            indexes = _header_map(next(rows, ()))
+            required = ["SKU", "FBA库存", "FBA+在途库存", "工厂库存及已下订单"]
+            if market == "US":
+                required.append("AWD备货")
+            if any(_field(indexes, name) is None for name in required):
+                raise ManualInventoryValidationError(f"{sheet_name} 实际库存缺少必需列：{', '.join(required)}")
+            sku_i, fba_i, network_i = (_field(indexes, name) for name in ("SKU", "FBA库存", "FBA+在途库存"))
+            awd_i, local_i = (_field(indexes, name) for name in ("AWD备货", "工厂库存及已下订单"))
+            seen = set()
+            for row in rows:
+                sku = _text(row[sku_i]).upper()
+                if not sku:
+                    continue
+                if not re.fullmatch(r"[A-Z]{2}\d{3}", sku) or sku in seen:
+                    raise ManualInventoryValidationError(f"{sheet_name} 实际库存 SKU 无效或重复：{sku}")
+                seen.add(sku)
+                quantities = {}
+                for column in (fba_i, network_i, local_i, *([awd_i] if awd_i is not None else [])):
+                    quantity = _number(row[column])
+                    if quantity is None or not math.isfinite(quantity) or quantity < 0 or int(quantity) != quantity:
+                        raise ManualInventoryValidationError(f"{sheet_name} {sku} 实际库存为空或不是非负整数")
+                    quantities[column] = int(quantity)
+                if quantities[network_i] < quantities[fba_i] + quantities.get(awd_i, 0):
+                    raise ManualInventoryValidationError(f"{sheet_name} {sku} 网络库存小于 FBA 与 AWD 合计")
+            if not seen:
+                raise ManualInventoryValidationError(f"{sheet_name} 没有可确认的有效库存 SKU")
+        if not markets:
+            raise ManualInventoryValidationError("实际库存未识别到 US 或 CA 标准库存工作表")
+    finally:
+        workbook.close()
+
+
+def _validate_manual_inventory_source(manifest: dict[str, Any], batch_dir: Path) -> None:
+    source = manifest.get("source", {})
+    inventory_files = [item for item in manifest["files"] if item.get("type") == "inventory"]
+    scope = source.get("inventoryScope")
+    confirmed_date = _confirmed_inventory_date(source.get("confirmedInventoryDate"), scope)
+    if source.get("authentication") != "manual-upload" or scope not in {"planning", "actual"} or len(inventory_files) != 1:
+        raise ManualInventoryValidationError("人工库存来源或范围无效，请重新上传确认")
+    item = inventory_files[0]
+    path = batch_dir / "source" / item["name"]
+    if source.get("businessAsOf") != confirmed_date or source.get("sha256") != item.get("sha256") or _sha256(path) != source.get("sha256"):
+        raise ManualInventoryValidationError("人工库存来源日期或文件校验已变化，请重新上传确认")
+    if confirmed_date:
+        if len(manifest["files"]) != 1 or not item.get("publishable") or source.get("confirmation") != "explicit-user-confirmation":
+            raise ManualInventoryValidationError("实际库存须单独上传完整库存工作簿并明确确认")
+        _validate_manual_actual_inventory(path)
 
 
 def receive_wps_download(config: ProjectConfig, source: Path, share_url: str, *, file_token: str | None = None,
@@ -531,6 +609,12 @@ def _patch_inventory(path: Path, reports_dir: Path, *, planning_only: bool = Fal
                         item["awdOnHand"] = item["awdAvailable"]
                         item["awdSnapshotDate"] = confirmed_date
                         # The source network total already includes this AWD pool.
+                        item["awdOutboundToFba"] = 0
+                    elif market == "CA":
+                        # The confirmed network total replaces these old pools;
+                        # absent AWD detail remains unconfirmed, not verified zero.
+                        item["awdAvailable"] = 0
+                        item["awdOnHand"] = 0
                         item["awdOutboundToFba"] = 0
                 fba_value = _number(row[fba_i]) if fba_i is not None else None
                 if fba_value is not None and not planning_only:
@@ -898,6 +982,8 @@ def publish_batch(batch_dir: Path, reports_dir: Path, snapshots_dir: Path, *, be
 
 def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, image_output: Path | None = None, *, config: ProjectConfig | None = None) -> dict[str, Any]:
     manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("source", {}).get("kind") == "manual-inventory-upload":
+        _validate_manual_inventory_source(manifest, batch_dir)
     # Revalidate monthly sources even when preview made them unpublishable. A bad
     # monthly report blocks the entire transaction, not just that file's patch.
     for item in manifest["files"]:
@@ -933,9 +1019,10 @@ def _publish_staged_batch(batch_dir: Path, reports_dir: Path, version: str, imag
         elif item["type"] == "inventory":
             provenance = manifest.get("source", {})
             confirmed_date = _confirmed_inventory_date(provenance.get("confirmedInventoryDate"), provenance.get("inventoryScope"))
-            if confirmed_date and provenance.get("kind") != "wps-browser-download":
-                raise ValueError("实际库存范围需要人工确认的 WPS 下载来源")
-            names = _patch_inventory(source, reports_dir, planning_only=not confirmed_date and provenance.get("kind") in {"wps-api-download", "wps-browser-download"}, confirmed_date=confirmed_date)
+            if confirmed_date and (provenance.get("kind") not in {"wps-browser-download", "manual-inventory-upload"}
+                                   or provenance.get("kind") == "wps-browser-download" and provenance.get("authentication") != "existing-browser-session"):
+                raise ValueError("实际库存范围需要明确确认的人工上传或 WPS 下载来源")
+            names = _patch_inventory(source, reports_dir, planning_only=not confirmed_date and provenance.get("kind") in {"wps-api-download", "wps-browser-download", "manual-inventory-upload"}, confirmed_date=confirmed_date)
             for name in names:
                 report_path = reports_dir / name
                 report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1074,7 +1161,15 @@ def main() -> int:
     if args.command == "inspect":
         if not args.batch_dir:
             parser.error("inspect requires --batch-dir")
-        payload = inspect_batch(Path(args.batch_dir), config=load_config(args.config))
+        config = load_config(args.config)
+        try:
+            payload = inspect_batch(Path(args.batch_dir), config=config,
+                                    confirmed_inventory_date=args.confirmed_inventory_date, inventory_scope=args.inventory_scope)
+        except ManualInventoryValidationError as error:
+            if args.inventory_scope is None:
+                raise
+            print(json.dumps({"code": "MANUAL_INVENTORY_VALIDATION", "error": str(error)}, ensure_ascii=False))
+            return 1
     elif args.command == "publish":
         if not args.batch_dir or not args.reports_dir or not args.snapshots_dir:
             parser.error("publish requires --batch-dir, --reports-dir and --snapshots-dir")
