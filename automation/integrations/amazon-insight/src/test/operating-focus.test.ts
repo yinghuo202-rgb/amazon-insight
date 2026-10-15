@@ -69,12 +69,13 @@ it("distinguishes the old operating month from current inventory on a merged att
   expect(queryOperatingModel(data, { period: "2026-10" }, now).priorities[0]).toMatchObject({ operatingPeriod: "2026-09", inventoryDate: "2026-10-11", stockFresh: true, fact: "利润为负 · 当前供货风险 · 供应覆盖不足" });
 });
 
-it("limits visible site choices to US and CA without removing Mexico history", () => {
+it("rejects direct Mexico queries without deleting the supplied archived history", () => {
   const data = focusModel();
   data.markets.push("MX");
   data.rows.push({ ...data.rows[0], market: "MX", currency: "MXN", listingId: "MX-SKU", history: [{ ...data.rows[0].history[0], market: "MX", currency: "MXN" }] });
   const page = queryOperatingModel(data, {}, now);
   expect(page.model.markets).toEqual(["US"]);
+  expect(() => queryOperatingModel(data, { market: "MX", brief: true, filter: "all" }, now)).toThrow("筛选参数");
   expect(data.rows.find(row => row.market === "MX")?.history).toHaveLength(1);
 });
 

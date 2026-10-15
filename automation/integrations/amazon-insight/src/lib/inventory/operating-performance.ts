@@ -1,14 +1,16 @@
 import { z } from "zod";
 import { profitabilityRowSchema } from "@/lib/inventory/contracts";
 
-export const operatingMarkets = ["US", "CA", "MX"] as const;
+export const operatingMarkets = ["US", "CA"] as const;
+// Archived advertising remains readable without making its markets active.
+const archivedAdvertisingMarkets = ["US", "CA", "MX"] as const;
 
 const advertisingAmounts = {
   cost: z.number().nonnegative().nullable(), sales: z.number().nonnegative().nullable(),
   clicks: z.number().nonnegative().nullable(), impressions: z.number().nonnegative().nullable(), orders: z.number().nonnegative().nullable(),
 };
 const advertisingPeriod = {
-  market: z.enum(operatingMarkets), currency: z.enum(["USD", "CAD", "MXN"]),
+  market: z.enum(archivedAdvertisingMarkets), currency: z.enum(["USD", "CAD", "MXN"]),
   reportMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), startDate: z.string(), businessAsOf: z.string(), recordCount: z.number().int().nonnegative(),
 };
 export const advertisingDataSchema = z.object({
@@ -28,7 +30,7 @@ export function selectAdvertisingPeriod<T extends { reportMonth: string; cost: n
 
 // Keep the existing Excel contract for legacy detail consumers. Operating facts
 // accept nullable API fees without manufacturing a complete profit statement.
-// AU remains readable only for old report compatibility; it is not a live market.
+// MX/AU remain readable only for old report compatibility, not as live markets.
 export const operatingPerformanceRowSchema = profitabilityRowSchema.omit({ settlementPayout: true, landedCost: true, netUnits: true, grossMargin: true, conservativeMargin: true }).extend({
   market: z.enum(["US", "CA", "MX", "AU"]), currency: z.enum(["USD", "CAD", "MXN", "AUD"]),
   returns: z.number().int().nonnegative().nullable(),

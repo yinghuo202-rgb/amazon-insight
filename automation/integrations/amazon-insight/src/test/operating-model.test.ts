@@ -7,12 +7,15 @@ function row(sku = "MA1", reportMonth = "2026-08", market: "US" | "CA" | "MX" = 
 }
 function report(rows: ProfitabilityData["rows"]): ProfitabilityData { return { schemaVersion: 1, generatedAt: "2026-09-01", method: "Excel", sources: [], rows }; }
 describe("period-aligned operating cards", () => {
-  it("keeps markets separate and exposes Mexico without inventing its inventory", () => {
-    const model = buildOperatingModel([], report([row(), row("MA1", "2026-08", "MX")]));
-    expect(model.markets).toEqual(["US", "MX"]);
+  it("keeps US and CA separate while retaining Mexico only in the source report", () => {
+    const source = report([row(), row("MA1", "2026-08", "CA"), row("MA1", "2026-07", "MX")]);
+    const model = buildOperatingModel([], source);
+    expect(model.markets).toEqual(["US", "CA"]);
     expect(model.rows).toHaveLength(2);
-    expect(model.rows[1].currency).toBe("MXN");
+    expect(model.rows[1].currency).toBe("CAD");
     expect(model.rows[1].stock).toBeNull();
+    expect(model.periods).toEqual(["2026-08"]);
+    expect(source.rows[2]).toMatchObject({ market: "MX", currency: "MXN", reportMonth: "2026-07" });
   });
   it("does not treat absent reports or ads attribution as zero", () => {
     const sku = buildOperatingModel([], report([row()])).rows[0];

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { buildOperatingModel, operatingFacts } from "@/lib/inventory/dashboard-view-model";
 import { queryOperatingModel } from "@/lib/inventory/operating-query";
-import { operatingPerformanceSchema } from "@/lib/inventory/operating-performance";
+import { operatingMarkets, operatingPerformanceSchema } from "@/lib/inventory/operating-performance";
 import { profitabilityDataSchema } from "@/lib/inventory/contracts";
 const now = new Date("2026-10-08T00:00:00Z");
 const input = {
@@ -49,13 +49,31 @@ it("does not report partial fee sums as a whole-market profit", () => {
   expect(page.summary.profit).toBeNull();
   expect(page.summary.revenue).toBe(200);
 });
-it("keeps legacy AU reports readable but excludes their rows and periods from operations", () => {
-  const data = operatingPerformanceSchema.parse({ ...input, storeScope: { storeName: "MEASUREMAN", serverId: 1, marketIds: [1, 2, 3, 17] }, scopes: [{ market: "AU", reportMonth: "2026-09" }, { market: "MX", reportMonth: "2026-09" }], rows: [{ ...input.rows[0], market: "AU", currency: "AUD" }] });
+it("keeps legacy MX and AU reports readable but excludes their rows and periods from operations", () => {
+  const data = operatingPerformanceSchema.parse({ ...input, storeScope: { storeName: "MEASUREMAN", serverId: 1, marketIds: [1, 2, 3, 17] }, scopes: [{ market: "AU", reportMonth: "2026-08" }, { market: "MX", reportMonth: "2026-07" }], rows: [{ ...input.rows[0], market: "AU", currency: "AUD", reportMonth: "2026-08" }, { ...input.rows[0], market: "MX", currency: "MXN", reportMonth: "2026-07" }] });
+  const archived = structuredClone(data);
   const model = buildOperatingModel([], undefined, undefined, [], now, data);
+  expect(operatingMarkets).toEqual(["US", "CA"]);
   expect(model.storeName).toBe("MEASUREMAN");
-  expect(model.markets).not.toContain("AU");
-  expect(model.markets).toContain("MX");
+  expect(model.markets).toEqual([]);
   expect(model.rows).toEqual([]);
   expect(model.periods).toEqual([]);
+  expect(data.rows.map(row => row.market)).toEqual(["AU", "MX"]);
+  expect(data).toEqual(archived);
   expect(() => queryOperatingModel(model, { market: "AU" }, now)).toThrow("筛选参数");
+  expect(() => queryOperatingModel(model, { market: "MX" }, now)).toThrow("筛选参数");
+});
+it("reads archived MX advertising without creating a current site, month or advertising scope", () => {
+  const scope = { market: "MX", currency: "MXN", reportMonth: "2026-10", startDate: "2026-10-01", businessAsOf: "2026-10-07", recordCount: 1, cost: 10, sales: 100, clicks: 2, impressions: 100, orders: 1, dayCount: 7, unmatchedRecords: 0 };
+  const data = operatingPerformanceSchema.parse({ ...input, advertising: { schemaVersion: 1, capturedAt: now.toISOString(), identities: [{ sku: "MX-ONLY", aliases: ["MX-ONLY"] }], scopes: [scope], rows: [{ ...scope, sku: "MX-ONLY", productName: "Archived product", asins: [], mskus: [] }] } });
+  const archived = structuredClone(data);
+  const model = buildOperatingModel([], undefined, undefined, [], now, data);
+  expect(data).toEqual(archived);
+  expect(data.advertising?.scopes[0]).toMatchObject({ market: "MX", reportMonth: "2026-10" });
+  expect(data.advertising?.rows[0].sku).toBe("MX-ONLY");
+  expect(model.markets).toEqual(["US"]);
+  expect(model.periods).toEqual(["2026-09"]);
+  expect(model.advertisingScopes).toEqual([]);
+  expect(model.rows.map(row => row.sku)).toEqual(["SKU-A"]);
+  expect(queryOperatingModel(model, {}, now)).toMatchObject({ market: "US", period: "2026-09", summary: { revenue: 100, advertising: null } });
 });

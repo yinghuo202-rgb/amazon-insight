@@ -7,7 +7,7 @@ import { queryOperatingModel } from "@/lib/inventory/operating-query";
 const now = new Date("2026-10-09T00:00:00Z");
 function model() {
   const base = profitabilityRowSchema.parse({ sku: "SKU-A", market: "US", currency: "USD", reportMonth: "2026-09", units: 100, returns: 4, netUnits: 96, productSales: 1000, settlementPayout: 400, landedCost: 500, grossProfit: -100, advertisingCost: 250, storageCost: 10, actualProfit: -100, currentPrice: 10, grossMargin: -.1, actualMargin: -.1, conservativeMargin: -.1, quality: { profitVerified: true, returnsVerified: true, completePeriod: true } });
-  return buildOperatingModel([], { schemaVersion: 1, generatedAt: now.toISOString(), method: "fixture", sources: [], rows: [base, { ...base, market: "MX", currency: "MXN" }] }, undefined, [], now);
+  return buildOperatingModel([], { schemaVersion: 1, generatedAt: now.toISOString(), method: "fixture", sources: [], rows: [base, { ...base, market: "CA", currency: "CAD" }] }, undefined, [], now);
 }
 const request = { kind: "review" as const, sku: "SKU-A", market: "US" as const, period: "2026-09", issue: "利润为负", version: "legacy" };
 describe("SKU review evidence", () => {
@@ -16,7 +16,7 @@ describe("SKU review evidence", () => {
     data.rows[0].history.push({ ...data.rows[0].history[0], reportMonth: "2026-08" });
     const earlier = buildReviewEvidence(data, { ...request, period: "2026-08" }, now);
     expect(a.issueKey).toBe(earlier.issueKey);
-    expect(a.issueKey).not.toBe(buildReviewEvidence(data, { ...request, market: "MX" }, now).issueKey);
+    expect(a.issueKey).not.toBe(buildReviewEvidence(data, { ...request, market: "CA" }, now).issueKey);
   });
   it("keeps first baseline when a new report is reviewed, including rollback", () => {
     const data = model(), first = buildReviewEvidence(data, request, now);

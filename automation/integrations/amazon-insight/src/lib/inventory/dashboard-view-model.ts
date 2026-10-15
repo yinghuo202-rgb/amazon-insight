@@ -13,7 +13,11 @@ export type OperatingSku = OperatingModel["rows"][number];
 export function buildOperatingModel(inventories: InventoryDashboardData[], profitability?: ProfitabilityData, variants?: VariantCatalogData, warnings: string[] = [], now = new Date(), performance?: OperatingPerformance) {
   const replaced = new Set(performance?.scopes.map(scope => `${scope.market}:${scope.reportMonth}`) ?? []);
   const profits: OperatingPerformanceRow[] = [...(profitability?.rows ?? []).filter(row => !replaced.has(`${row.market}:${row.reportMonth}`)), ...(performance?.rows ?? [])].filter(row => (operatingMarkets as readonly string[]).includes(row.market));
-  const advertising = performance?.advertising;
+  const advertising = performance?.advertising && {
+    ...performance.advertising,
+    scopes: performance.advertising.scopes.filter(scope => (operatingMarkets as readonly string[]).includes(scope.market)),
+    rows: performance.advertising.rows.filter(row => (operatingMarkets as readonly string[]).includes(row.market)),
+  };
   const aliases = new Map(advertising?.identities.flatMap(identity => identity.aliases.map(alias => [alias, identity.sku] as const)) ?? []);
   const canonical = new Map<string, string>();
   for (const identity of advertising?.identities ?? []) {

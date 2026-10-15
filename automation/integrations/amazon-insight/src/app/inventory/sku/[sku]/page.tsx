@@ -13,6 +13,7 @@ import { withReportVersion } from "@/lib/inventory/report-version";
 import { resolveOperatingRules } from "@/lib/inventory/operating-rules";
 import { operatingFacts } from "@/lib/inventory/dashboard-view-model";
 import { operatingFilters, operatingSorts } from "@/lib/inventory/operating-query";
+import { operatingMarkets } from "@/lib/inventory/operating-performance";
 import { skuOperatingHref } from "@/lib/inventory/operating-navigation";
 import { loadOperatingModel, loadDocumentMasterData, loadInventoryDashboardData, loadProductCatalogData, loadVariantCatalogData } from "@/lib/inventory/data";
 import { listLatestPurchaseOrderReviews } from "@/lib/inventory/purchase-order-reviews";
@@ -23,12 +24,12 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ sku: string }> }): Promise<Metadata> { const { sku } = await params; return { title: `${sku} SKU 分析` }; }
 export default async function SkuPage({ params, searchParams }: { params: Promise<{ sku: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const search = await searchParams, requestedMarket = typeof search.market === "string" ? search.market.toUpperCase() : "US";
-  if (!["US", "CA", "MX"].includes(requestedMarket)) notFound();
-  const market = requestedMarket as "US" | "CA" | "MX";
+  if (!(operatingMarkets as readonly string[]).includes(requestedMarket)) notFound();
+  const market = requestedMarket as typeof operatingMarkets[number];
   const sku = (await params).sku.toUpperCase();
   return withReportVersion(async () => {
   const [data, variants, products, initialPurchaseOrders, documentMaster, operating] = await Promise.all([
-    market !== "MX" ? loadInventoryDashboardData(market).catch(() => null) : Promise.resolve(null),
+    loadInventoryDashboardData(market).catch(() => null),
     loadVariantCatalogData().catch(() => null), loadProductCatalogData().catch(() => null), listSkuPurchaseOrderDetails(sku).catch(() => []),
     loadDocumentMasterData().catch(() => ({ shipmentHistory: [] })), loadOperatingModel(),
   ]);
@@ -57,7 +58,7 @@ export default async function SkuPage({ params, searchParams }: { params: Promis
   const backendHref = (path: string) => path + "?" + new URLSearchParams({ market, period, query: resolvedSku, returnTo: detailHref });
   const initialTab = typeof search.tab === "string" ? search.tab : filter === "stock" ? "supply" : filter === "advertising" ? "advertising" : "analysis";
   const current = facts?.current;
-  const currency = current?.currency || operatingRow?.currency || (market === "CA" ? "CAD" : market === "MX" ? "MXN" : "USD");
+  const currency = current?.currency || operatingRow?.currency || (market === "CA" ? "CAD" : "USD");
   const amount = (value: number | null | undefined) => value == null ? "—" : fullCurrency(value, currency);
   const percentage = (value: number | null | undefined) => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
   return <>
