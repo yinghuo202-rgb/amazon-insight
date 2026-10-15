@@ -11,13 +11,13 @@ export function OperatingHistoryChart({ points: input, metric, currency }: { poi
   const color = metric === "revenue" ? "var(--chart-primary)" : "var(--positive)";
   const name = metric === "revenue" ? "销售额" : "报告利润";
   const partial = points.filter(point => !point.complete && point[metric] !== null);
-  const data = points.map((point, index) => ({ ...point,
+  const data = points.map(point => ({ ...point,
     fullValue: point.complete ? point[metric] : null,
-    partialValue: !point.complete || points[index + 1] && !points[index + 1].complete ? point[metric] : null,
+    partialValue: point.complete ? null : point[metric],
   }));
   if (points.filter(point => point[metric] !== null).length < 2) return <p className="ops-subtext py-12 text-center">暂无连续月份数据</p>;
   return <>
-    <div className="ops-chart-legend" aria-label="图表口径"><span><i />完整月</span>{partial.length > 0 ? <span><i className="partial" />{partial.some(point => point.mtd) ? "当月累计" : "期间未完整"}{partial.at(-1)?.asOf ? ` · 截至 ${partial.at(-1)!.asOf}` : ""}</span> : null}</div>
+    <div className="ops-chart-legend" aria-label="图表口径"><span><i />完整月</span>{partial.length > 0 ? <><span><i className="partial" />{partial.some(point => point.mtd) ? "当月累计" : "期间未完整"}{partial.at(-1)?.asOf ? ` · 截至 ${partial.at(-1)!.asOf}` : ""}</span><span>不与完整月直接比较</span></> : null}</div>
     <div className="ops-history-chart h-64">
       <ResponsiveContainer width="100%" height="100%"><AreaChart data={data} margin={{ top: 12, right: 12, bottom: 4, left: 0 }}>
         <defs><linearGradient id={`ops-history-${id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={0.18} /><stop offset="100%" stopColor={color} stopOpacity={0.01} /></linearGradient></defs>

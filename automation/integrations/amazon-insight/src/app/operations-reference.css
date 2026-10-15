@@ -119,7 +119,7 @@
 .ops-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; margin: 18px 0 10px; font-size: 12px; line-height: 1.6; color: var(--ops-muted); }
 .ops-chart-legend span { display: inline-flex; align-items: center; gap: 7px; }
 .ops-chart-legend i { width: 20px; height: 0; border-top: 2px solid var(--chart-primary); }
-.ops-chart-legend i.partial { border-top-style: dashed; }
+.ops-chart-legend i.partial { width: 8px; height: 8px; border: 2px solid var(--chart-primary); border-radius: 50%; background: var(--surface); }
 .ops-chart-tooltip { max-width: 260px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); box-shadow: var(--shadow-soft); font-size: 13px; color: var(--foreground); line-height: 1.7; }
 .ops-chart-tooltip small { font-size: 12px; color: var(--ops-muted); }
 .ops-detail-heading .ops-page-heading { margin-bottom: 0; }

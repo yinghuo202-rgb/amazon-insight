@@ -4,7 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: ReactNode }) => createElement("div", null, children),
-  AreaChart: ({ children }: { children: ReactNode }) => createElement("svg", null, children),
+  AreaChart: ({ children, data }: { children: ReactNode; data: unknown }) => createElement("svg", { "data-chart-points": JSON.stringify(data) }, children),
   Area: ({ name, strokeDasharray }: { name: string; strokeDasharray?: string }) => createElement("path", { role: "img", "aria-label": name, strokeDasharray }),
   CartesianGrid: () => null, XAxis: () => null, YAxis: () => null, Tooltip: () => null,
 }));
@@ -29,7 +29,20 @@ it("distinguishes MTD from complete periods using text, cutoff and a dashed seri
   expect(screen.getByRole("img", { name: "当月累计" })).toHaveAttribute("stroke-dasharray", "5 5");
   expect(screen.getByRole("img", { name: "销售额" })).not.toHaveAttribute("stroke-dasharray");
   expect(screen.getByLabelText("图表口径")).toHaveTextContent("截至 2026-10-12");
+  expect(screen.getByLabelText("图表口径")).toHaveTextContent("不与完整月直接比较");
   expect(screen.getByLabelText("销售额趋势数据")).toHaveTextContent("2026-10，期间未完整，CA$49,000");
+});
+it("does not draw a decline from a complete month to a partial month", () => {
+  const { container } = render(createElement(OperatingHistoryChart, { currency: "USD", metric: "revenue", points: [
+    { month: "2026-09", revenue: 120000, profit: 30000, complete: true, mtd: false, asOf: "2026-09-30" },
+    { month: "2026-10", revenue: 49000, profit: 10000, complete: false, mtd: true, asOf: "2026-10-12" },
+  ] }));
+  const chart = container.querySelector("svg[data-chart-points]");
+  const points = JSON.parse(chart?.getAttribute("data-chart-points") ?? "[]") as Array<{ month: string; fullValue: number | null; partialValue: number | null }>;
+  expect(points).toEqual([
+    expect.objectContaining({ month: "2026-09", fullValue: 120000, partialValue: null }),
+    expect.objectContaining({ month: "2026-10", fullValue: null, partialValue: 49000 }),
+  ]);
 });
 it("does not label incomplete historical evidence as current-month accumulation", () => {
   render(createElement(OperatingHistoryChart, { currency: "USD", metric: "profit", points: [
