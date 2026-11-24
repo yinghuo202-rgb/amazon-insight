@@ -1,10 +1,18 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
-import { loadProductCatalogData, loadVariantCatalogData } from "@/lib/inventory/data";
+import { loadProductCatalogData, loadVariantCatalogData, productCatalogDataPath, variantCatalogDataPath } from "@/lib/inventory/data";
 import { buildProductKnowledgeGraph } from "@/lib/inventory/product-knowledge-graph";
+import { documentMasterPath } from "@/lib/inventory/document-exports";
 import { listPurchaseOrders, purchaseOrderDetailsForSku } from "@/lib/inventory/purchase-orders";
 
-describe("product knowledge graph", () => {
+const hasLocalReports =
+  existsSync(variantCatalogDataPath()) &&
+  existsSync(productCatalogDataPath()) &&
+  existsSync(documentMasterPath());
+
+describe.skipIf(!hasLocalReports)("product knowledge graph", () => {
   it("links each product family to specifications, attributes, orders, and suppliers", async () => {
     const [variants, products, purchaseOrders] = await Promise.all([
       loadVariantCatalogData(),

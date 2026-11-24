@@ -8,7 +8,7 @@ import openpyxl
 from store_ops.config import ProjectConfig
 from store_ops.documents import PurchaseOrderLot, PurchaseOrderShortage, allocate_purchase_orders_fifo
 from store_ops.jobs.document_master import _market, _read_payment_ledger
-from store_ops.jobs.export_documents import _chunk_rows, _declaration_layout, _declaration_rows, _validate_request
+from store_ops.jobs.export_documents import _build_declaration_workbook, _build_shipment_workbook, _chunk_rows, _declaration_layout, _declaration_rows, _validate_request
 
 
 def lot(number: str, day: str, ordered: int, shipped: int = 0) -> PurchaseOrderLot:
@@ -130,6 +130,100 @@ class PurchaseOrderAllocationTests(unittest.TestCase):
         self.assertEqual(source, ledger.resolve())
         self.assertEqual(payments["AM260101-2"]["paymentPayers"], ["联合"])
         self.assertEqual(payments["AM260101-2"]["paymentMethods"], ["含税"])
+
+    def test_openpyxl_builders_populate_shipment_and_declaration_workbooks(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shipment_template = root / "shipment-template.xlsx"
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Measureman"
+            ws["A3"] = "stale"
+            wb.save(shipment_template)
+            wb.close()
+
+            shipment_out = root / "shipment-out.xlsx"
+            _build_shipment_workbook({
+                "templatePath": str(shipment_template),
+                "outputPath": str(shipment_out),
+                "title": "1店美国发货清单CM320",
+                "rows": [{
+                    "sku": "MA007",
+                    "cartonQty": 20,
+                    "netWeightKg": 8.0,
+                    "grossWeightKg": 9.0,
+                    "lengthCm": 40,
+                    "widthCm": 30,
+                    "heightCm": 20,
+                    "cartonVolumeM3": 0.024,
+                    "quantity": 100,
+                    "cartons": 5,
+                    "totalWeightKg": 45.0,
+                    "totalVolumeM3": 0.12,
+                    "unitPriceRmb": 12.5,
+                    "imageFormula": "",
+                }],
+            })
+            built = openpyxl.load_workbook(shipment_out, data_only=False)
+            try:
+                sheet = built["Measureman"]
+                self.assertEqual(sheet["A1"].value, "1店美国发货清单CM320")
+                self.assertEqual(sheet["B3"].value, "MA007")
+                self.assertEqual(sheet["K3"].value, 100)
+                self.assertEqual(sheet["P3"].value, 12.5)
+                self.assertEqual(sheet["Q3"].value, '=IF(OR(P3="",K3=""),"",P3*K3)')
+            finally:
+                built.close()
+
+            decl_template = root / "decl-template.xlsx"
+            dwb = openpyxl.Workbook()
+            dws = dwb.active
+            dws.title = "报关空表"
+            dws["E2"] = "出运日期"
+            headers = ["合同号", "工厂", "品名", "数量", "箱数", "重量", "体积", "采购金额", "备注", "退税率", "税额", "额外", "SKU", "单价", "总金额"]
+            for col_idx, value in enumerate(headers, 1):
+                dws.cell(9, col_idx, value)
+            dws["A20"] = "合计"
+            dwb.save(decl_template)
+            dwb.close()
+
+            layout = _declaration_layout(decl_template, "US")
+            decl_out = root / "decl-out.xlsx"
+            _build_declaration_workbook({
+                "templatePath": str(decl_template),
+                "outputPath": str(decl_out),
+                "invoiceNumber": "INV-CM320",
+                "shipmentDate": "2026-07-15",
+                "freightReference": "FREIGHT-1",
+                "shippingMarks": "货件编号：FBA123",
+                "consignee": "Measureman US",
+                "originPort": "宁波",
+                "rows": [{
+                    "poNumber": "AM260320-9",
+                    "factory": "可名",
+                    "productName": "压力表",
+                    "quantity": 100,
+                    "cartons": 5,
+                    "weightKg": 45.0,
+                    "volumeM3": 0.12,
+                    "purchaseAmountRmb": 1250.0,
+                    "note": "含税",
+                    "taxRate": 0.13,
+                    "declarationSku": "MA007",
+                    "unitPriceRmb": 12.5,
+                }],
+                **layout,
+            })
+            built_decl = openpyxl.load_workbook(decl_out, data_only=False)
+            try:
+                dsheet = built_decl["报关空表"]
+                self.assertEqual(dsheet["A3"].value, "INV-CM320")
+                self.assertEqual(dsheet["E3"].value, (date(2026, 7, 15) - date(1899, 12, 30)).days)
+                self.assertEqual(dsheet["A10"].value, "AM260320-9")
+                self.assertEqual(dsheet["D10"].value, 100)
+                self.assertEqual(dsheet["L10"].value, '=IF(H10="","",H10*J10)')
+            finally:
+                built_decl.close()
 
 
 if __name__ == "__main__":

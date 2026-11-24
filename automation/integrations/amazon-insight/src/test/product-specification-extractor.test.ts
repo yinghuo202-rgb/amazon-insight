@@ -1,9 +1,13 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
-import { loadProductCatalogData, loadVariantCatalogData } from "@/lib/inventory/data";
+import { loadProductCatalogData, loadVariantCatalogData, productCatalogDataPath, variantCatalogDataPath } from "@/lib/inventory/data";
 import { extractProductSpecifications } from "@/lib/inventory/product-specification-extractor";
 
-describe("product specification extraction", () => {
+const hasLocalReports = existsSync(productCatalogDataPath()) && existsSync(variantCatalogDataPath());
+
+describe.skipIf(!hasLocalReports)("product specification extraction", () => {
   it("extracts engineering parameters from a pressure-gauge listing", async () => {
     const [products, variants] = await Promise.all([loadProductCatalogData(), loadVariantCatalogData()]);
     const product = products.items.find((item) => item.sku === "MA003") ?? null;

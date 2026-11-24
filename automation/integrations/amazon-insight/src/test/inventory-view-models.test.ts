@@ -1,9 +1,17 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { buildCombinedOverviewViewModel } from "@/lib/inventory/dashboard-view-model";
-import { loadInventoryDashboardData, loadProductCatalogData, loadVariantCatalogData } from "@/lib/inventory/data";
+import { inventoryDashboardDataPath, loadInventoryDashboardData, loadProductCatalogData, loadVariantCatalogData, productCatalogDataPath, variantCatalogDataPath } from "@/lib/inventory/data";
 import { buildSkuDetailViewModel } from "@/lib/inventory/sku-detail-view-model";
 import { marketHref } from "@/lib/inventory/presentation";
+
+const hasLocalReports =
+  existsSync(inventoryDashboardDataPath("US")) &&
+  existsSync(inventoryDashboardDataPath("CA")) &&
+  existsSync(productCatalogDataPath()) &&
+  existsSync(variantCatalogDataPath());
 
 describe("inventory client view models", () => {
   it("places the market query before URL fragments", () => {
@@ -11,7 +19,7 @@ describe("inventory client view models", () => {
     expect(marketHref("/inventory/categories?parent=MA007", "CA")).toBe("/inventory/categories?parent=MA007&market=CA");
   });
 
-  it("keeps the combined dashboard compact while retaining chart and execution data", async () => {
+  it.skipIf(!hasLocalReports)("keeps the combined dashboard compact while retaining chart and execution data", async () => {
     const [us, ca] = await Promise.all([loadInventoryDashboardData("US"), loadInventoryDashboardData("CA")]);
     const dashboard = buildCombinedOverviewViewModel(us, ca);
 
@@ -25,7 +33,7 @@ describe("inventory client view models", () => {
     expect(JSON.stringify(dashboard).length).toBeLessThan(100_000);
   });
 
-  it("serializes only the selected SKU instead of the full market report", async () => {
+  it.skipIf(!hasLocalReports)("serializes only the selected SKU instead of the full market report", async () => {
     const [data, variants, products] = await Promise.all([
       loadInventoryDashboardData("US"),
       loadVariantCatalogData(),

@@ -1,7 +1,11 @@
+import { existsSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
-import { applyPurchaseOrderReviews, loadContentWorkflowData, loadInventoryDashboardData, loadProductCatalogData, loadPurchasePlanData, loadRawInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
+import { applyPurchaseOrderReviews, inventoryDashboardDataPath, loadContentWorkflowData, loadInventoryDashboardData, loadProductCatalogData, loadPurchasePlanData, loadRawInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
 import { getDocumentExportMeta } from "@/lib/inventory/document-exports";
+
+const hasLocalRuntimeReports = existsSync(inventoryDashboardDataPath("US")) && existsSync(inventoryDashboardDataPath("CA"));
 
 describe("multi-market inventory data", () => {
   it("normalizes supported market query values", () => {
@@ -9,7 +13,8 @@ describe("multi-market inventory data", () => {
     expect(normalizeOperationsMarket("unknown")).toBe("US");
   });
 
-  it("loads the Canadian dashboard as CAD FBA data", async () => {
+  describe.skipIf(!hasLocalRuntimeReports)("local generated runtime reports", () => {
+    it("loads the Canadian dashboard as CAD FBA data", async () => {
     const data = await loadInventoryDashboardData("CA");
 
     expect(data.market).toBe("CA");
@@ -132,5 +137,6 @@ describe("multi-market inventory data", () => {
     expect(adjustedRow?.domesticSupplyTotal).toBe(row.domesticSupplyTotal - order.remainingQuantity);
     expect(adjusted.summary.pendingOrderQty).toBe(data.summary.pendingOrderQty - order.remainingQuantity);
     expect(adjusted.summary.overdueOrderCount).toBeLessThan(data.summary.overdueOrderCount);
+    });
   });
 });

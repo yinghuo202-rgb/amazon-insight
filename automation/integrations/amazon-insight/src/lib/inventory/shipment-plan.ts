@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
+import { operationsDbPath } from "@/lib/inventory/paths";
 
 export type ShipmentPlanMarket = "US" | "CA";
 export type ShipmentBatchStatus = "DRAFT" | "EXPORTED" | "ARCHIVED";
@@ -90,18 +89,11 @@ ON shipment_batch_items_v2(market,sku);
 `;
 
 export function shipmentPlanDbPath() {
-  return process.env.STORE_OPS_STATE_DB?.trim()
-    ? path.resolve(process.env.STORE_OPS_STATE_DB)
-    : path.join(automationRoot(), "runtime", "db", "operations.sqlite3");
+  return operationsDbPath();
 }
 
-function openDatabase() {
-  const databasePath = shipmentPlanDbPath();
-  mkdirSync(path.dirname(databasePath), { recursive: true });
-  const database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(schema);
-  return database;
+function withShipmentDb<T>(callback: (database: DatabaseSync) => T): T {
+  return withOperationsDb("shipment_plan_v2", schema, callback);
 }
 
 function marketOf(value: unknown): ShipmentPlanMarket {
@@ -184,24 +176,19 @@ function event(database: DatabaseSync, batchId: string, market: ShipmentPlanMark
 }
 
 export function listShipmentBatches(market: ShipmentPlanMarket, includeArchived = true) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const where = includeArchived ? "WHERE b.market=?" : "WHERE b.market=? AND b.status<>'ARCHIVED'";
     return database.prepare(`${batchQuery(where)} ORDER BY CASE b.status WHEN 'DRAFT' THEN 0 WHEN 'EXPORTED' THEN 1 ELSE 2 END,b.updated_at DESC`)
       .all(market).map((row) => mapBatch(row as Record<string, unknown>));
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function getShipmentBatch(batchId: string) {
-  const database = openDatabase();
-  try { return getBatchFromDatabase(database, batchId); } finally { database.close(); }
+  return withShipmentDb((database) => getBatchFromDatabase(database, batchId));
 }
 
 export function createShipmentBatch(market: ShipmentPlanMarket, patch: ShipmentBatchPatch = {}) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const now = new Date().toISOString();
     const id = randomUUID();
     const batchNumber = (patch.batchNumber || nextBatchNumberFromDatabase(database, market)).trim().toUpperCase();
@@ -214,14 +201,11 @@ export function createShipmentBatch(market: ShipmentPlanMarket, patch: ShipmentB
     );
     event(database, id, market, "CREATE_BATCH", { batchNumber });
     return getBatchFromDatabase(database, id)!;
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function updateShipmentBatch(batchId: string, patch: ShipmentBatchPatch) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = assertEditable(database, batchId);
     const next = { ...batch, ...Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value?.trim() ?? ""])) };
     const now = new Date().toISOString();
@@ -229,14 +213,11 @@ export function updateShipmentBatch(batchId: string, patch: ShipmentBatchPatch) 
       .run(next.batchNumber.toUpperCase(), next.shipmentDate, next.invoiceNumber, next.freightReference, next.shipmentId, next.trackingId, next.consignee, next.note, now, batchId);
     event(database, batchId, batch.market, "UPDATE_BATCH", patch);
     return getBatchFromDatabase(database, batchId)!;
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function setShipmentBatchStatus(batchId: string, status: ShipmentBatchStatus) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = getBatchFromDatabase(database, batchId);
     if (!batch) throw new Error("发货批次不存在。");
     const now = new Date().toISOString();
@@ -244,49 +225,37 @@ export function setShipmentBatchStatus(batchId: string, status: ShipmentBatchSta
       .run(status, now, status === "EXPORTED" ? now : batch.exportedAt, batchId);
     event(database, batchId, batch.market, "STATUS", { previous: batch.status, next: status });
     return getBatchFromDatabase(database, batchId)!;
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function deleteShipmentBatch(batchId: string) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = assertEditable(database, batchId);
     database.prepare("DELETE FROM shipment_batches_v2 WHERE id=?").run(batchId);
     event(database, batchId, batch.market, "DELETE_BATCH", { batchNumber: batch.batchNumber, itemCount: batch.itemCount });
     return true;
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function listShipmentBatchItems(batchId: string) {
-  const database = openDatabase();
-  try {
-    return database.prepare("SELECT * FROM shipment_batch_items_v2 WHERE batch_id=? ORDER BY updated_at DESC,sku")
-      .all(batchId).map((row) => mapItem(row as Record<string, unknown>));
-  } finally {
-    database.close();
-  }
+  return withShipmentDb((database) =>
+    database.prepare("SELECT * FROM shipment_batch_items_v2 WHERE batch_id=? ORDER BY updated_at DESC,sku")
+      .all(batchId).map((row) => mapItem(row as Record<string, unknown>)),
+  );
 }
 
 export function listShipmentPlanItems(market?: ShipmentPlanMarket) {
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const where = market ? "WHERE i.market=? AND b.status<>'ARCHIVED'" : "WHERE b.status<>'ARCHIVED'";
     const rows = database.prepare(`SELECT i.* FROM shipment_batch_items_v2 i JOIN shipment_batches_v2 b ON b.id=i.batch_id ${where} ORDER BY i.market,i.updated_at DESC,i.sku`)
       .all(...(market ? [market] : []));
     return rows.map((row) => mapItem(row as Record<string, unknown>));
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function upsertShipmentBatchItem(batchId: string, rawInput: ShipmentPlanInput) {
   const input = normalizeInput(rawInput);
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = assertEditable(database, batchId);
     if (batch.market !== input.market) throw new Error("SKU 站点与发货批次不一致。");
     const conflict = database.prepare(`SELECT i.batch_id,b.batch_number FROM shipment_batch_items_v2 i JOIN shipment_batches_v2 b ON b.id=i.batch_id WHERE i.market=? AND i.sku=? AND i.batch_id<>? AND b.status='DRAFT'`)
@@ -300,30 +269,24 @@ export function upsertShipmentBatchItem(batchId: string, rawInput: ShipmentPlanI
     database.prepare("UPDATE shipment_batches_v2 SET updated_at=? WHERE id=?").run(now, batchId);
     event(database, batchId, input.market, "UPSERT_ITEM", { quantity: input.quantity, previousQuantity: existing?.quantity ?? null }, input.sku);
     return mapItem(database.prepare("SELECT * FROM shipment_batch_items_v2 WHERE batch_id=? AND sku=?").get(batchId, input.sku) as Record<string, unknown>);
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function removeShipmentBatchItem(batchId: string, sku: string) {
   const normalizedSku = sku.trim().toUpperCase();
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = assertEditable(database, batchId);
     const result = database.prepare("DELETE FROM shipment_batch_items_v2 WHERE batch_id=? AND sku=?").run(batchId, normalizedSku);
     if (!result.changes) return false;
     database.prepare("UPDATE shipment_batches_v2 SET updated_at=? WHERE id=?").run(new Date().toISOString(), batchId);
     event(database, batchId, batch.market, "REMOVE_ITEM", {}, normalizedSku);
     return true;
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function replaceShipmentBatchItems(batchId: string, rawItems: ShipmentPlanInput[]) {
   const items = rawItems.map(normalizeInput);
-  const database = openDatabase();
-  try {
+  return withShipmentDb((database) => {
     const batch = assertEditable(database, batchId);
     if (items.some((item) => item.market !== batch.market)) throw new Error("SKU 站点与发货批次不一致。");
     database.exec("BEGIN IMMEDIATE");
@@ -341,9 +304,7 @@ export function replaceShipmentBatchItems(batchId: string, rawItems: ShipmentPla
     }
     return database.prepare("SELECT * FROM shipment_batch_items_v2 WHERE batch_id=? ORDER BY sku").all(batchId)
       .map((row) => mapItem(row as Record<string, unknown>));
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function autoSplitShipmentBatches(market: ShipmentPlanMarket, rawItems: ShipmentPlanInput[], firstBatchNumber?: string, shipmentDate = "") {
@@ -361,8 +322,7 @@ export function autoSplitShipmentBatches(market: ShipmentPlanMarket, rawItems: S
 }
 
 export function nextShipmentBatchNumber(market: ShipmentPlanMarket) {
-  const database = openDatabase();
-  try { return nextBatchNumberFromDatabase(database, market); } finally { database.close(); }
+  return withShipmentDb((database) => nextBatchNumberFromDatabase(database, market));
 }
 
 function nextBatchNumberFromDatabase(database: DatabaseSync, market: ShipmentPlanMarket) {

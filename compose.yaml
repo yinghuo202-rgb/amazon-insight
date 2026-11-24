@@ -12,6 +12,7 @@ services:
       APP_ENV: "${APP_ENV:-production}"
       HOSTNAME: 0.0.0.0
       PORT: 3000
+      PUBLIC_APP_URL: "${PUBLIC_APP_URL:-http://localhost:3000}"
       NEXT_PUBLIC_APP_URL: "${PUBLIC_APP_URL:-http://localhost:3000}"
       DATABASE_URL: "${DATABASE_URL:-file:/data/app/selection.db}"
       SECRET_KEY: "${SECRET_KEY:-}"
@@ -23,9 +24,16 @@ services:
       STORE_OPS_RUNTIME_ROOT: /data/runtime
       STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
       STORE_OPS_PYTHON: /opt/store-ops-venv/bin/python
-      API_KEY: "${API_KEY:-}"
+      JS_API_KEY: "${JS_API_KEY:-}"
+      JS_API_KEY_NAME: "${JS_API_KEY_NAME:-}"
       LLM_PROVIDER: "${LLM_PROVIDER:-disabled}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-}"
+      LLM_API_BASE_URL: "${LLM_API_BASE_URL:-https://api.openai.com/v1}"
+      GERPGO_APP_ID: "${GERPGO_APP_ID:-}"
+      GERPGO_APP_KEY: "${GERPGO_APP_KEY:-}"
+      GERPGO_BASE_URL: "${GERPGO_BASE_URL:-https://open.gerpgo.com/api/open}"
+      CRAWLER_INGEST_TOKEN: "${CRAWLER_INGEST_TOKEN:-}"
     ports:
       - "${APP_PORT:-3000}:3000"
     volumes:

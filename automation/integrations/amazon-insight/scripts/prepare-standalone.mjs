@@ -25,9 +25,6 @@ async function copyIfExists(from, to) {
 await copyIfExists(join(root, "public"), join(standaloneRoot, "public"));
 await copyIfExists(join(root, ".next", "static"), join(standaloneRoot, ".next", "static"));
 await copyIfExists(join(root, "prisma"), join(standaloneRoot, "prisma"));
-await copyIfExists(join(root, ".local"), join(standaloneRoot, ".local"));
-await copyIfExists(join(root, "dev.db"), join(standaloneRoot, "dev.db"));
-await copyIfExists(join(root, "api.txt"), join(standaloneRoot, "api.txt"));
 // Next's output tracer can retain the pre-build Prisma client when pnpm uses
 // symlinked packages. Always copy the freshly generated client so runtime
 // models (including auth/workspace tables) match prisma/schema.prisma.

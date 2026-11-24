@@ -11,6 +11,11 @@ RUN pnpm install --frozen-lockfile
 COPY automation/integrations/amazon-insight/ ./
 RUN pnpm build
 
+FROM node:22-bookworm-slim AS prisma-cli
+WORKDIR /opt/prisma-cli
+RUN npm init -y >/dev/null 2>&1 \
+  && npm install --no-save --omit=dev prisma@6.19.3
+
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -36,6 +41,7 @@ COPY --from=web-builder /build/.next/static ./.next/static
 COPY --from=web-builder /build/public ./public
 COPY --from=web-builder /build/package.json ./package.json
 COPY --from=web-builder /build/prisma ./prisma
+COPY --from=prisma-cli /opt/prisma-cli /opt/prisma-cli
 
 COPY automation/pyproject.toml /opt/store-ops/pyproject.toml
 COPY automation/src /opt/store-ops/src

@@ -340,3 +340,178 @@ video {
     display: none !important;
   }
 }
+
+/* Web Floating Sales Bubble (Liquid Glass Capsule) */
+.sales-bubble-shell {
+  position: fixed;
+  z-index: 50;
+  touch-action: none;
+  user-select: none;
+}
+
+.sales-bubble-capsule {
+  --pointer-x: 50%;
+  --pointer-y: 35%;
+  --lens-opacity: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 216px;
+  height: 52px;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(24, 34, 48, 0.84);
+  color: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 28px rgba(15, 23, 42, 0.28),
+    0 0 0 1px rgba(15, 23, 33, 0.14);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  overflow: hidden;
+  transition:
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms ease;
+}
+
+.sales-bubble-capsule::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--pointer-x) var(--pointer-y), rgba(255, 255, 255, 0.12), transparent 62%);
+  opacity: var(--lens-opacity);
+  transition: opacity 180ms ease;
+  pointer-events: none;
+}
+
+.sales-bubble-capsule.is-collapsed {
+  width: 58px;
+  height: 44px;
+  border-radius: 22px;
+}
+
+.sales-bubble-capsule.is-order,
+.sales-bubble-capsule.is-refund {
+  width: 282px;
+  height: 60px;
+  border-radius: 30px;
+}
+
+.sales-bubble-capsule.is-review {
+  width: 310px;
+  height: 68px;
+  border-radius: 30px;
+}
+
+.sales-bubble-capsule.is-increasing {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 28px rgba(15, 23, 42, 0.28),
+    0 0 0 2px rgba(48, 209, 88, 0.28);
+}
+
+.sales-bubble-capsule.is-decreasing {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 10px 28px rgba(15, 23, 42, 0.28),
+    0 0 0 2px rgba(255, 69, 58, 0.28);
+}
+
+.sales-bubble-brand {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.sales-bubble-brand b {
+  color: rgba(255, 255, 255, 0.97);
+  font: 600 22px/22px Georgia, serif;
+}
+
+.sales-bubble-brand i {
+  position: absolute;
+  left: 2px;
+  bottom: 0;
+  width: 16px;
+  height: 5px;
+  border-bottom: 2px solid #f4ad00;
+  border-radius: 0 0 100% 100%;
+  transform: rotate(-8deg);
+}
+
+.sales-bubble-number-window {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 26px;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.sales-bubble-number-window .old-number,
+.sales-bubble-number-window .new-number {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.sales-bubble-number-window .old-number {
+  visibility: hidden;
+}
+
+.sales-bubble-capsule.is-rolling .old-number {
+  visibility: visible;
+  animation: sb-old-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.sales-bubble-capsule.is-rolling .new-number {
+  animation:
+    sb-new-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    sb-positive 1.2s linear both;
+}
+
+.sales-bubble-capsule.is-decreasing.is-rolling .old-number {
+  animation-name: sb-old-down;
+}
+
+.sales-bubble-capsule.is-decreasing.is-rolling .new-number {
+  animation-name: sb-new-down, sb-negative;
+}
+
+@keyframes sb-old-up {
+  to { transform: translateY(-6px); opacity: 0; }
+}
+
+@keyframes sb-new-up {
+  from { transform: translateY(6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes sb-old-down {
+  to { transform: translateY(6px); opacity: 0; }
+}
+
+@keyframes sb-new-down {
+  from { transform: translateY(-6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes sb-positive {
+  0%, 75% { color: #30d158; }
+  100% { color: rgba(255, 255, 255, 0.96); }
+}
+
+@keyframes sb-negative {
+  0%, 75% { color: #ff453a; }
+  100% { color: rgba(255, 255, 255, 0.96); }
+}
+

@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
+import { automationRoot, dataRoot, operationsDbPath, runtimeRoot } from "@/lib/inventory/paths";
 
 export type DataRefreshSource = {
   key: string;
@@ -37,6 +36,7 @@ export type DataRefreshRun = {
 
 export type DataRefreshStatus = {
   checkedAt: string;
+  running: boolean;
   sources: DataRefreshSource[];
   reports: DataRefreshReport[];
   runs: DataRefreshRun[];
@@ -44,19 +44,29 @@ export type DataRefreshStatus = {
   summary: { sourceCount: number; missingCount: number; reportCount: number; failedRunCount: number; openExceptionCount: number };
 };
 
+export class DataRefreshConflictError extends Error {
+  constructor(message = "已有数据重建任务正在运行，请稍候完成后再试。") {
+    super(message);
+    this.name = "DataRefreshConflictError";
+  }
+}
+
 const reportDefinitions = [
-  ["inventory_us", "美国库存与运营", "runtime/reports/inventory_dashboard.json"],
-  ["inventory_ca", "加拿大库存与运营", "runtime/reports/inventory_dashboard.ca.json"],
-  ["purchase", "采购计划", "runtime/reports/purchase_plan.json"],
-  ["documents", "订单与单据主数据", "runtime/reports/document_master.json"],
-  ["products", "产品与图片目录", "runtime/reports/product_catalog.json"],
-  ["content", "Listing 与美工任务", "runtime/reports/content_workflow.json"],
+  ["inventory_us", "美国库存与运营", "reports/inventory_dashboard.json"],
+  ["inventory_ca", "加拿大库存与运营", "reports/inventory_dashboard.ca.json"],
+  ["purchase", "采购计划", "reports/purchase_plan.json"],
+  ["documents", "订单与单据主数据", "reports/document_master.json"],
+  ["products", "产品与图片目录", "reports/product_catalog.json"],
+  ["content", "Listing 与美工任务", "reports/content_workflow.json"],
 ] as const;
+
+let activeRefreshPromise: Promise<{ status: "completed"; commands: Array<{ command: string; startedAt: string; finishedAt: string; output: string }>; snapshot: DataRefreshStatus }> | null = null;
 
 export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   const root = automationRoot();
+  const runtime = runtimeRoot();
+  const sourcesRoot = dataRoot();
   const config = JSON.parse(await readFile(path.join(root, "config", "project.json"), "utf8")) as Record<string, unknown>;
-  const dataRoot = path.resolve(root, String(config.data_root ?? "../"));
   const inventory = (config.inventory_dashboard ?? {}) as Record<string, unknown>;
   const markets = (inventory.markets ?? {}) as Record<string, Record<string, unknown>>;
   const documentSources = (inventory.document_master_sources ?? {}) as Record<string, unknown>;
@@ -79,7 +89,7 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   add(documentSources.shipment_register_workbook, "出货记录");
 
   const sources = await Promise.all([...definitions].map(async ([relativePath, definition], index) => {
-    const absolute = path.resolve(dataRoot, relativePath);
+    const absolute = path.resolve(sourcesRoot, relativePath);
     const info = await stat(absolute).catch(() => null);
     if (!info) return { key: `source-${index}`, label: definition.label, relativePath, exists: false, kind: "file" as const, modifiedAt: null, fileCount: 0, required: definition.required };
     if (info.isDirectory()) {
@@ -90,13 +100,18 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
   }));
 
   const reports = await Promise.all(reportDefinitions.map(async ([key, label, relativePath]) => {
-    const info = await stat(path.join(root, relativePath)).catch(() => null);
-    return { key, label, relativePath, exists: Boolean(info), modifiedAt: info?.mtime.toISOString() ?? null, size: info?.size ?? 0 };
+    const info = await stat(path.join(runtime, relativePath)).catch(() => null);
+    return { key, label, relativePath: `runtime/${relativePath}`, exists: Boolean(info), modifiedAt: info?.mtime.toISOString() ?? null, size: info?.size ?? 0 };
   }));
   const { runs, exceptions } = operationHistory();
   const missingCount = sources.filter((source) => source.required && !source.exists).length;
   return {
-    checkedAt: new Date().toISOString(), sources: sources.sort((a, b) => Number(b.required) - Number(a.required) || a.label.localeCompare(b.label, "zh-CN")), reports, runs, exceptions,
+    checkedAt: new Date().toISOString(),
+    running: activeRefreshPromise !== null,
+    sources: sources.sort((a, b) => Number(b.required) - Number(a.required) || a.label.localeCompare(b.label, "zh-CN")),
+    reports,
+    runs,
+    exceptions,
     summary: {
       sourceCount: sources.filter((source) => source.exists).length,
       missingCount,
@@ -108,13 +123,28 @@ export async function getDataRefreshStatus(): Promise<DataRefreshStatus> {
 }
 
 export async function runFullDataRefresh() {
-  const root = automationRoot();
-  const before = await getDataRefreshStatus();
-  if (before.summary.missingCount) throw new Error(`存在 ${before.summary.missingCount} 个必需数据源缺失，请先补齐后再重建。`);
-  const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-document-master", "build-inventory-dashboard-data"];
-  const results = [];
-  for (const command of commands) results.push(await runPythonJob(root, command));
-  return { status: "completed", commands: results, snapshot: await getDataRefreshStatus() };
+  if (activeRefreshPromise) {
+    throw new DataRefreshConflictError();
+  }
+
+  const execution = (async () => {
+    const root = automationRoot();
+    const before = await getDataRefreshStatus();
+    if (before.summary.missingCount) throw new Error(`存在 ${before.summary.missingCount} 个必需数据源缺失，请先补齐后再重建。`);
+    const commands = ["audit-skus", "build-product-catalog", "build-content-workflow", "build-document-master", "build-inventory-dashboard-data"];
+    const results = [];
+    for (const command of commands) results.push(await runPythonJob(root, command));
+    return { status: "completed" as const, commands: results, snapshot: await getDataRefreshStatus() };
+  })();
+
+  activeRefreshPromise = execution;
+  try {
+    return await execution;
+  } finally {
+    if (activeRefreshPromise === execution) {
+      activeRefreshPromise = null;
+    }
+  }
 }
 
 async function runPythonJob(root: string, command: string) {
@@ -122,12 +152,37 @@ async function runPythonJob(root: string, command: string) {
   const args = ["-m", "store_ops", "--config", path.join(root, "config", "project.json"), command];
   const startedAt = new Date().toISOString();
   return new Promise<{ command: string; startedAt: string; finishedAt: string; output: string }>((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: root, windowsHide: true, env: { ...process.env, PYTHONPATH: path.join(root, "src") } });
+    const child = spawn(executable, args, {
+      cwd: root,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: "utf-8",
+        PYTHONPATH: path.join(root, "src"),
+        STORE_OPS_DATA_ROOT: dataRoot(),
+        STORE_OPS_RUNTIME_ROOT: runtimeRoot(),
+        STORE_OPS_STATE_DB: operationsDbPath(),
+      },
+    });
     let output = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+      reject(new Error(`${command} 执行超时（超过 180 秒）。`));
+    }, 180_000);
     child.stdout.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-16000); });
     child.stderr.on("data", (chunk) => { output = `${output}${String(chunk)}`.slice(-16000); });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve({ command, startedAt, finishedAt: new Date().toISOString(), output: output.trim() }) : reject(new Error(`${command} 执行失败（退出码 ${code}）：${output.slice(-1500)}`)));
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) return;
+      if (code === 0) resolve({ command, startedAt, finishedAt: new Date().toISOString(), output: output.trim() });
+      else reject(new Error(`${command} 执行失败（退出码 ${code}）：${output.slice(-1500)}`));
+    });
   });
 }
 
@@ -152,16 +207,22 @@ async function folderSummary(root: string) {
 }
 
 function operationHistory() {
-  const database = new DatabaseSync(shipmentPlanDbPath());
-  try {
-    const runs = database.prepare("SELECT id,job_name,status,started_at,finished_at,error_text FROM runs ORDER BY id DESC LIMIT 20").all().map((row) => {
-      const item = row as Record<string, unknown>;
-      return { id: Number(item.id), jobName: String(item.job_name), status: String(item.status), startedAt: String(item.started_at), finishedAt: item.finished_at ? String(item.finished_at) : null, error: String(item.error_text ?? "") };
-    });
-    const exceptions = database.prepare("SELECT category,severity,COUNT(*) AS count FROM exceptions WHERE review_status='open' GROUP BY category,severity ORDER BY count DESC").all().map((row) => {
-      const item = row as Record<string, unknown>;
-      return { category: String(item.category), severity: String(item.severity), count: Number(item.count) };
-    });
+  return withOperationsDb("runs_exceptions_read", "", (database) => {
+    const tables = new Set(
+      (database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map((row) => row.name),
+    );
+    const runs = tables.has("runs")
+      ? database.prepare("SELECT id,job_name,status,started_at,finished_at,error_text FROM runs ORDER BY id DESC LIMIT 20").all().map((row) => {
+          const item = row as Record<string, unknown>;
+          return { id: Number(item.id), jobName: String(item.job_name), status: String(item.status), startedAt: String(item.started_at), finishedAt: item.finished_at ? String(item.finished_at) : null, error: String(item.error_text ?? "") };
+        })
+      : [];
+    const exceptions = tables.has("exceptions")
+      ? database.prepare("SELECT category,severity,COUNT(*) AS count FROM exceptions WHERE review_status='open' GROUP BY category,severity ORDER BY count DESC").all().map((row) => {
+          const item = row as Record<string, unknown>;
+          return { category: String(item.category), severity: String(item.severity), count: Number(item.count) };
+        })
+      : [];
     return { runs, exceptions };
-  } finally { database.close(); }
+  });
 }

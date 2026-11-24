@@ -1,5 +1,6 @@
 import { HeroPanel, PageContainer, TopNav } from "@/components/common/ui";
 import { SearchWorkbench } from "@/components/products/search-workbench";
+import { requirePageUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export default async function SearchPage({
 }) {
   const resolved = await searchParams;
   const query = resolved.q || "";
+  await requirePageUser(query ? `/search?q=${encodeURIComponent(query)}` : "/search");
 
   return (
     <div className="flex min-h-screen flex-col pb-16">

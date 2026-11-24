@@ -1,7 +1,7 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import type { AdvertisingAction } from "@/lib/inventory/contracts";
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
 
 export type AdvertisingPlanStatus = "DRAFT" | "CONFIRMED";
 export type AdvertisingPlanItem = {
@@ -32,20 +32,12 @@ CREATE TABLE IF NOT EXISTS advertising_plan_events_v1 (
 );
 `;
 
-function openDatabase() { const database = new DatabaseSync(shipmentPlanDbPath()); database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"); database.exec(schema); return database; }
-
 export function getAdvertisingPlan(market: "US" | "CA", period: string) {
-  const database = openDatabase();
-  try {
-    const cycle = database.prepare("SELECT status,version,updated_at FROM advertising_plan_cycles_v1 WHERE market=? AND period=?").get(market, period) as Record<string, unknown> | undefined;
-    const items = database.prepare("SELECT * FROM advertising_plan_items_v1 WHERE market=? AND period=? ORDER BY campaign").all(market, period).map(mapItem);
-    return { market, period, status: String(cycle?.status ?? "DRAFT") as AdvertisingPlanStatus, version: Number(cycle?.version ?? 0), updatedAt: cycle?.updated_at ? String(cycle.updated_at) : null, items };
-  } finally { database.close(); }
+  return withOperationsDb("advertising_plan_v1", schema, (database) => getAdvertisingPlanFromDatabase(database, market, period));
 }
 
 export function saveAdvertisingPlan(market: "US" | "CA", period: string, items: Array<Omit<AdvertisingPlanItem, "market" | "period" | "updatedAt">>) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("advertising_plan_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const existing = database.prepare("SELECT status,version FROM advertising_plan_cycles_v1 WHERE market=? AND period=?").get(market, period) as Record<string, unknown> | undefined;
@@ -58,19 +50,18 @@ export function saveAdvertisingPlan(market: "US" | "CA", period: string, items: 
       event(database, market, period, "SAVE", { version, itemCount: items.length }); database.exec("COMMIT");
     } catch (error) { database.exec("ROLLBACK"); throw error; }
     return getAdvertisingPlanFromDatabase(database, market, period);
-  } finally { database.close(); }
+  });
 }
 
 export function transitionAdvertisingPlan(market: "US" | "CA", period: string, action: "confirm" | "reopen") {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("advertising_plan_v1", schema, (database) => {
     const current = getAdvertisingPlanFromDatabase(database, market, period);
     if (!current.items.length) throw new Error("当前没有可确认的广告调整草稿。");
     const status: AdvertisingPlanStatus = action === "confirm" ? "CONFIRMED" : "DRAFT";
     database.prepare("UPDATE advertising_plan_cycles_v1 SET status=?,updated_at=? WHERE market=? AND period=?").run(status, new Date().toISOString(), market, period);
     event(database, market, period, action.toUpperCase(), { from: current.status, to: status, version: current.version });
     return getAdvertisingPlanFromDatabase(database, market, period);
-  } finally { database.close(); }
+  });
 }
 
 function getAdvertisingPlanFromDatabase(database: DatabaseSync, market: "US" | "CA", period: string) {

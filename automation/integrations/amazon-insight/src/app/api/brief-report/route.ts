@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requireApiAuth } from "@/lib/auth";
 import { executeBriefReport } from "@/lib/brief-report";
 import { briefReportRequestSchema } from "@/lib/contracts";
 import { getErrorResponse } from "@/lib/workbench";
@@ -8,6 +9,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = briefReportRequestSchema.parse(await request.json());
     const response = await executeBriefReport(payload);

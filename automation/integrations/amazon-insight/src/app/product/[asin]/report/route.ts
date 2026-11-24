@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requireApiAuth } from "@/lib/auth";
 import { renderAnalysisHtmlReport } from "@/lib/report-html";
 import { getAnalysisPageData } from "@/lib/workbench";
 import { absoluteAppUrl } from "@/lib/utils";
@@ -11,6 +12,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ asin: string }> },
 ) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const resolvedParams = await params;
   const { searchParams } = new URL(request.url);
   const analysisId = searchParams.get("analysisId") || "";

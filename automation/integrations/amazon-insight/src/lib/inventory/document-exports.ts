@@ -5,8 +5,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { automationRoot } from "@/lib/inventory/paths";
 import { loadJsonReport } from "@/lib/inventory/json-report-cache";
+import { automationRoot, dataRoot, operationsDbPath, runtimeRoot } from "@/lib/inventory/paths";
 
 export { automationRoot } from "@/lib/inventory/paths";
 
@@ -17,7 +17,7 @@ export type DocumentExportResult = {
 };
 
 export function documentMasterPath() {
-  return path.join(automationRoot(), "runtime", "reports", "document_master.json");
+  return path.join(runtimeRoot(), "reports", "document_master.json");
 }
 
 export async function getDocumentExportMeta(market: "US" | "CA") {
@@ -66,7 +66,7 @@ function pythonExecutable() {
 
 export async function runDocumentExport(payload: unknown): Promise<DocumentExportResult> {
   const root = automationRoot();
-  const requestDirectory = path.join(root, "runtime", "work", "exports");
+  const requestDirectory = path.join(runtimeRoot(), "work", "exports");
   await mkdir(requestDirectory, { recursive: true });
   const requestPath = path.join(requestDirectory, `${Date.now()}-${randomUUID()}.json`);
   await writeFile(requestPath, JSON.stringify(payload, null, 2), "utf8");
@@ -90,6 +90,9 @@ export async function runDocumentExport(payload: unknown): Promise<DocumentExpor
           ...process.env,
           PYTHONIOENCODING: "utf-8",
           PYTHONPATH: path.join(root, "src"),
+          STORE_OPS_DATA_ROOT: dataRoot(),
+          STORE_OPS_RUNTIME_ROOT: runtimeRoot(),
+          STORE_OPS_STATE_DB: operationsDbPath(),
         },
       });
       let stdout = "";
@@ -117,5 +120,5 @@ export function exportFilePath(exportId: string, filename: string) {
   if (!/^[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$/.test(exportId) || path.basename(filename) !== filename) {
     throw new Error("无效的导出文件路径");
   }
-  return path.join(automationRoot(), "runtime", "output", "exports", exportId, filename);
+  return path.join(runtimeRoot(), "output", "exports", exportId, filename);
 }

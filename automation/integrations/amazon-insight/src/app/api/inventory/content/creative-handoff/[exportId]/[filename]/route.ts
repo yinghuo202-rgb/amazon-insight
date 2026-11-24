@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
 
+import { requireApiAuth } from "@/lib/auth";
 import { creativeHandoffFilePath } from "@/lib/inventory/creative-handoff";
 import { recordDownloadEvent } from "@/lib/inventory/download-center";
 
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: RouteContext<"/api/inventory/content/creative-handoff/[exportId]/[filename]">) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const { exportId, filename } = await context.params;
   try {
     const decoded = decodeURIComponent(filename);

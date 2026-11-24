@@ -9,3 +9,5 @@ backups/
 **/node_modules/
 **/.next/
 *.log
+**/__pycache__/
+*.py[cod]

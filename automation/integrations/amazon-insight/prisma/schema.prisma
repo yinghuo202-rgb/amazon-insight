@@ -214,3 +214,122 @@ model CollaborationTask {
   @@index([workspaceId, sku])
   @@index([assigneeId])
 }
+
+model IntegrationConfig {
+  id              String   @id @default(cuid())
+  provider        String   @unique
+  configJson      String   @default("{}")
+  encryptedSecret String?
+  updatedAt       DateTime @updatedAt
+}
+
+model ErpStore {
+  id              String   @id @default(cuid())
+  storeId         String   @unique
+  provider        String   @default("gerpgo")
+  name            String
+  marketplaceCode String
+  countryCode     String?
+  currency        String?
+  enabled         Boolean  @default(true)
+  selected        Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+
+  @@index([provider, selected])
+}
+
+model ErpDailySales {
+  id                  String   @id @default(cuid())
+  businessDate        String
+  storeId             String
+  marketplaceCode     String
+  currency            String
+  originalAmountMinor Int
+  baseCurrency        String
+  baseAmountMinor     Int
+  source              String   @default("gerpgo")
+  fetchedAt           DateTime @default(now())
+
+  @@unique([businessDate, storeId, baseCurrency])
+  @@index([businessDate])
+}
+
+model ErpEvent {
+  id              String   @id @default(cuid())
+  eventId         String   @unique
+  type            String
+  storeId         String?
+  orderId         String?
+  marketplace     String
+  msku            String
+  asin            String?
+  quantity        Int      @default(1)
+  amountMinor     Int      @default(0)
+  currency        String?
+  baseAmountMinor Int      @default(0)
+  salesDeltaMinor Int      @default(0)
+  rating          Int?
+  content         String?
+  status          String?
+  occurredAt      DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([occurredAt])
+  @@index([type, occurredAt])
+}
+
+model ErpSyncCursor {
+  id        String   @id @default(cuid())
+  stream    String   @unique
+  cursor    String
+  updatedAt DateTime @updatedAt
+}
+
+model AmazonCrawlSnapshot {
+  id              String   @id @default(cuid())
+  asin            String
+  marketplace     String   @default("US")
+  title           String
+  brand           String?
+  price           Float?
+  currency        String   @default("USD")
+  rating          Float?
+  reviews         Int?
+  bsrRank         Int?
+  bsrCategory     String?
+  monthlySalesEst Int?
+  sellerCount     Int?
+  imageUrl        String?
+  bulletsJson     String?
+  rawJson         String?
+  source          String   @default("crawler")
+  crawledAt       DateTime @default(now())
+
+  @@index([asin, crawledAt])
+  @@index([marketplace, crawledAt])
+}
+
+model Supplier1688Quote {
+  id               String   @id @default(cuid())
+  offerId          String   @unique
+  title            String
+  supplierName     String?
+  supplierLocation String?
+  unitPriceRmb     Float
+  moq              Int?
+  leadTimeDays     Int?
+  weightG          Float?
+  dimensionsCm     String?
+  linkedAsin       String?
+  linkedSku        String?
+  offerUrl         String?
+  imageUrl         String?
+  specsJson        String?
+  rawJson          String?
+  crawledAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([linkedAsin])
+  @@index([linkedSku])
+}
+

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 
+import { SalesBubbleWidget } from "@/components/sales-bubble/sales-bubble-widget";
 import { absoluteAppUrl } from "@/lib/utils";
 
 import "./globals.css";
@@ -42,7 +43,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full antialiased">
-      <body className="safe-bottom min-h-full">{children}</body>
+      <body className="safe-bottom min-h-full">
+        {children}
+        <SalesBubbleWidget />
+      </body>
     </html>
   );
 }

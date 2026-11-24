@@ -9,7 +9,7 @@ import {
   type DataSourceStatus,
   type TrendPoint,
 } from "@/lib/contracts";
-import { getJungleScoutCredentialStatus } from "@/lib/junglescout/settings";
+import { getJungleScoutAuthorization } from "@/lib/junglescout/settings";
 import {
   asInt,
   asNumber,
@@ -671,24 +671,24 @@ function scoreCandidateProduct(product: CandidateProduct, keyword: string) {
 
 export async function discoverFromSeedKeyword(keyword: string): Promise<SearchDiscovery> {
   const normalized = normalizeKeyword(keyword);
-  const auth = await getJungleScoutCredentialStatus();
+  const { authorization, status } = await getJungleScoutAuthorization();
 
   if (shouldPreferMockMode()) {
-    return buildMockDiscovery(normalized, auth.authorization ? "configured" : auth.sourceStatus, [
-      ...auth.diagnostics,
+    return buildMockDiscovery(normalized, authorization ? "configured" : status.sourceStatus, [
+      ...status.diagnostics,
       "已按配置强制使用 mock。",
     ]);
   }
 
-  if (!auth.authorization) {
-    return buildMockDiscovery(normalized, auth.sourceStatus, auth.diagnostics);
+  if (!authorization) {
+    return buildMockDiscovery(normalized, status.sourceStatus, status.diagnostics);
   }
 
-  const diagnostics = [...auth.diagnostics];
+  const diagnostics = [...status.diagnostics];
   let sourceStatus: DataSourceStatus["status"] = "configured";
 
   const keywordResult = await requestJsonApi({
-    authorization: auth.authorization,
+    authorization,
     method: "POST",
     path: DEFAULT_ENDPOINTS.keywordsByKeyword.path,
     params: {
@@ -719,7 +719,7 @@ export async function discoverFromSeedKeyword(keyword: string): Promise<SearchDi
   try {
     const includeKeywords = uniqueStrings([normalized, ...keywords.slice(0, 5).map((item) => item.keyword)]).slice(0, 6);
     const productPayload = await requestJsonApi({
-      authorization: auth.authorization,
+      authorization,
       method: "POST",
       path: DEFAULT_ENDPOINTS.productDatabase.path,
       params: {
@@ -771,27 +771,27 @@ export async function getMarketSignals(input: {
   primaryProduct: CandidateProduct;
   compareProducts: CandidateProduct[];
 }): Promise<MarketSignals> {
-  const auth = await getJungleScoutCredentialStatus();
+  const { authorization, status } = await getJungleScoutAuthorization();
 
   if (shouldPreferMockMode()) {
-    return buildMockSignals(input, auth.authorization ? "configured" : auth.sourceStatus, [
-      ...auth.diagnostics,
+    return buildMockSignals(input, authorization ? "configured" : status.sourceStatus, [
+      ...status.diagnostics,
       "已按配置强制使用 mock。",
     ]);
   }
 
-  if (!auth.authorization) {
-    return buildMockSignals(input, auth.sourceStatus, auth.diagnostics);
+  if (!authorization) {
+    return buildMockSignals(input, status.sourceStatus, status.diagnostics);
   }
 
   const { primaryKeyword, primaryProduct, compareProducts } = input;
-  const diagnostics = [...auth.diagnostics];
+  const diagnostics = [...status.diagnostics];
   const { startDate, endDate } = buildDateRange();
   const asins = uniqueStrings([primaryProduct.asin, ...compareProducts.map((product) => product.asin)]).slice(0, 10);
 
   const [keywordResult, trendResult, salesResult, shareResult] = await Promise.allSettled([
     requestJsonApi({
-      authorization: auth.authorization,
+      authorization,
       method: "POST",
       path: DEFAULT_ENDPOINTS.keywordsByAsin.path,
       params: {
@@ -805,7 +805,7 @@ export async function getMarketSignals(input: {
       },
     }),
     requestJsonApi({
-      authorization: auth.authorization,
+      authorization,
       method: "GET",
       path: DEFAULT_ENDPOINTS.historicalSearchVolume.path,
       params: {
@@ -816,7 +816,7 @@ export async function getMarketSignals(input: {
       },
     }),
     requestJsonApi({
-      authorization: auth.authorization,
+      authorization,
       method: "GET",
       path: DEFAULT_ENDPOINTS.salesEstimates.path,
       params: {
@@ -827,7 +827,7 @@ export async function getMarketSignals(input: {
       },
     }),
     requestJsonApi({
-      authorization: auth.authorization,
+      authorization,
       method: "GET",
       path: DEFAULT_ENDPOINTS.shareOfVoice.path,
       params: {

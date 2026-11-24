@@ -65,7 +65,7 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
   const rowBySku = useMemo(() => new Map(rows.map((row) => [row.sku, row] as const)), [rows]);
   const seasonalActions = useMemo(() => allSeasonalActions.filter((action) => action.market === data.market), [allSeasonalActions, data.market]);
   const seasonalActionBySku = useMemo(() => new Map(seasonalActions.map((action) => [action.sku, action] as const)), [seasonalActions]);
-  const readyQuantityBySku = new Map(rows.map((row) => {
+  const readyQuantityBySku = useMemo(() => new Map(rows.map((row) => {
     const carton = Math.max(1, row.cartonQty ?? 1);
     const seasonal = seasonalActionBySku.get(row.sku);
     const seasonalTransfer = seasonal?.transferQty ?? 0;
@@ -73,32 +73,52 @@ export function ReplenishmentWorkbench({ data, seasonalActions: allSeasonalActio
     const target = Math.max(row.suggestedShipmentQty, seasonalTransfer) + seasonalClearance;
     const quantity = Math.floor(Math.min(target, row.localInventory) / carton) * carton;
     return [row.sku, quantity] as const;
-  }));
-  const replenishmentRows = rows.filter((row) => (readyQuantityBySku.get(row.sku) ?? 0) > 0)
-    .sort((left, right) => (readyQuantityBySku.get(right.sku) ?? 0) - (readyQuantityBySku.get(left.sku) ?? 0));
-  const plannedSkus = new Set(marketPlanItems.map((item) => item.sku));
+  })), [rows, seasonalActionBySku]);
+  const replenishmentRows = useMemo(
+    () => rows.filter((row) => (readyQuantityBySku.get(row.sku) ?? 0) > 0)
+      .sort((left, right) => (readyQuantityBySku.get(right.sku) ?? 0) - (readyQuantityBySku.get(left.sku) ?? 0)),
+    [rows, readyQuantityBySku],
+  );
+  const plannedSkus = useMemo(() => new Set(marketPlanItems.map((item) => item.sku)), [marketPlanItems]);
   const normalized = query.trim().toLowerCase();
-  const availableRows = replenishmentRows.filter((row) => !plannedSkus.has(row.sku) && (!normalized || row.sku.toLowerCase().includes(normalized) || row.productName.toLowerCase().includes(normalized)));
-  const seasonalAvailableRows = replenishmentRows.filter((row) => !plannedSkus.has(row.sku) && (seasonalActionBySku.get(row.sku)?.shipmentQty ?? 0) > 0);
-  const activeBatchRows = batchItems.flatMap((item) => {
-    const row = rowBySku.get(item.sku);
-    return row && (readyQuantityBySku.get(row.sku) ?? 0) > 0 ? [{ item, row }] : [];
-  }).sort((left, right) => left.item.sku.localeCompare(right.item.sku, "en", { numeric: true }) * (skuSortDirection === "asc" ? 1 : -1));
-  const staleItems = batchItems.filter((item) => !activeBatchRows.some((entry) => entry.item.sku === item.sku));
-  const planEntries = activeBatchRows.map(({ item }) => ({ sku: item.sku, quantity: item.quantity }));
-  const candidateUnits = replenishmentRows.reduce((sum, row) => sum + (readyQuantityBySku.get(row.sku) ?? 0), 0);
-  const plannedUnits = planEntries.reduce((sum, item) => sum + item.quantity, 0);
-  const marketPlannedUnits = marketPlanItems.reduce((sum, item) => sum + item.quantity, 0);
-  const otherMarketUnits = allMarketItems.filter((item) => item.market !== data.market).reduce((sum, item) => sum + item.quantity, 0);
-  const otherMarketBySku = new Map<string, number>();
-  for (const item of allMarketItems.filter((candidate) => candidate.market !== data.market)) otherMarketBySku.set(item.sku, (otherMarketBySku.get(item.sku) ?? 0) + item.quantity);
-  const crossMarketConflicts = activeBatchRows.filter((entry) => entry.item.quantity + (otherMarketBySku.get(entry.item.sku) ?? 0) > entry.row.localInventory);
-  const productionGap = activeBatchRows.reduce((sum, entry) => sum + Math.max(0, entry.item.quantity - entry.row.localInventory), 0);
-  const missingShipmentData = planEntries.filter((entry) => !shipmentReadySkus.has(entry.sku));
-  const missingDeclarationData = planEntries.filter((entry) => !declarationReadySkus.has(entry.sku));
-  const seasonalShipmentRows = seasonalActions.filter((action) => action.shipmentQty > 0);
-  const seasonalClearanceRows = seasonalActions.filter((action) => action.clearanceQty > 0 || action.overseasClearanceQty > 0);
-  const seasonalShipmentUnits = seasonalShipmentRows.reduce((sum, action) => sum + action.shipmentQty, 0);
+  const availableRows = useMemo(
+    () => replenishmentRows.filter((row) => !plannedSkus.has(row.sku) && (!normalized || row.sku.toLowerCase().includes(normalized) || row.productName.toLowerCase().includes(normalized))),
+    [replenishmentRows, plannedSkus, normalized],
+  );
+  const seasonalAvailableRows = useMemo(
+    () => replenishmentRows.filter((row) => !plannedSkus.has(row.sku) && (seasonalActionBySku.get(row.sku)?.shipmentQty ?? 0) > 0),
+    [replenishmentRows, plannedSkus, seasonalActionBySku],
+  );
+  const activeBatchRows = useMemo(
+    () => batchItems.flatMap((item) => {
+      const row = rowBySku.get(item.sku);
+      return row && (readyQuantityBySku.get(row.sku) ?? 0) > 0 ? [{ item, row }] : [];
+    }).sort((left, right) => left.item.sku.localeCompare(right.item.sku, "en", { numeric: true }) * (skuSortDirection === "asc" ? 1 : -1)),
+    [batchItems, rowBySku, readyQuantityBySku, skuSortDirection],
+  );
+  const staleItems = useMemo(() => batchItems.filter((item) => !activeBatchRows.some((entry) => entry.item.sku === item.sku)), [batchItems, activeBatchRows]);
+  const planEntries = useMemo(() => activeBatchRows.map(({ item }) => ({ sku: item.sku, quantity: item.quantity })), [activeBatchRows]);
+  const candidateUnits = useMemo(() => replenishmentRows.reduce((sum, row) => sum + (readyQuantityBySku.get(row.sku) ?? 0), 0), [replenishmentRows, readyQuantityBySku]);
+  const plannedUnits = useMemo(() => planEntries.reduce((sum, item) => sum + item.quantity, 0), [planEntries]);
+  const marketPlannedUnits = useMemo(() => marketPlanItems.reduce((sum, item) => sum + item.quantity, 0), [marketPlanItems]);
+  const otherMarketUnits = useMemo(() => allMarketItems.filter((item) => item.market !== data.market).reduce((sum, item) => sum + item.quantity, 0), [allMarketItems, data.market]);
+  const otherMarketBySku = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of allMarketItems) {
+      if (item.market !== data.market) map.set(item.sku, (map.get(item.sku) ?? 0) + item.quantity);
+    }
+    return map;
+  }, [allMarketItems, data.market]);
+  const crossMarketConflicts = useMemo(
+    () => activeBatchRows.filter((entry) => entry.item.quantity + (otherMarketBySku.get(entry.item.sku) ?? 0) > entry.row.localInventory),
+    [activeBatchRows, otherMarketBySku],
+  );
+  const productionGap = useMemo(() => activeBatchRows.reduce((sum, entry) => sum + Math.max(0, entry.item.quantity - entry.row.localInventory), 0), [activeBatchRows]);
+  const missingShipmentData = useMemo(() => planEntries.filter((entry) => !shipmentReadySkus.has(entry.sku)), [planEntries, shipmentReadySkus]);
+  const missingDeclarationData = useMemo(() => planEntries.filter((entry) => !declarationReadySkus.has(entry.sku)), [planEntries, declarationReadySkus]);
+  const seasonalShipmentRows = useMemo(() => seasonalActions.filter((action) => action.shipmentQty > 0), [seasonalActions]);
+  const seasonalClearanceRows = useMemo(() => seasonalActions.filter((action) => action.clearanceQty > 0 || action.overseasClearanceQty > 0), [seasonalActions]);
+  const seasonalShipmentUnits = useMemo(() => seasonalShipmentRows.reduce((sum, action) => sum + action.shipmentQty, 0), [seasonalShipmentRows]);
 
   function applyPlan(plan: PlanResponse) {
     if (plan.error) throw new Error(plan.error);

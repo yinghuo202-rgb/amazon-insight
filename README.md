@@ -87,3 +87,18 @@ docker build --platform linux/amd64 -t measureman-commerce:local .
 ```
 
 `.env`、`.docker/config.json`、数据库、业务数据和日志已排除；只有 `.env.example` 提交到 GitHub。前端和自动化说明见 [`automation/README.md`](automation/README.md)。
+
+## 积加 ERP（GerpGo）与网页悬浮销售胶囊
+
+系统内置轻量化网页悬浮销售胶囊，连接积加开放平台后可在页面角落实时展示今日销售额、店铺明细及订单/退款/Review 动态事件，并支持拖动、收起和演示模式：
+
+- 在 `.env` 中配置 `GERPGO_APP_ID`、`GERPGO_APP_KEY`（可选 `GERPGO_BASE_URL`），或登录后访问 `/settings` 在“积加 ERP 销售接入”卡片加密保存。
+- 网页右下角胶囊通过 `/api/sales-bubble` 自动同步并按店铺时区汇总当日业绩；首次同步会建立基线游标，避免历史订单刷屏。
+
+## 亚马逊 / 1688 爬虫数据接入
+
+外部爬虫脚本可使用 `.env` 中的 `CRAWLER_INGEST_TOKEN`（通过请求头 `Authorization: Bearer <token>`）向以下端点推送采集结果：
+
+- `POST /api/crawlers/ingest/amazon`：接收亚马逊商品快照（`items[]` 含 `asin`、`marketplace`、`title`、`price`、`rating`、`reviews`、`bsrRank`、`monthlySalesEst` 等，设置 `syncToPool: true` 可同步写入选品池）。
+- `POST /api/crawlers/ingest/1688`：接收 1688 供应商报价（`items[]` 含 `offerId`、`title`、`unitPriceRmb`、`moq`、`leadTimeDays`、`linkedAsin`、`linkedSku` 等）。
+- `GET /api/crawlers/ingest/amazon` 与 `GET /api/crawlers/ingest/1688`：支持按 `asin` / `sku` / `marketplace` 查询最近入库的采集记录。

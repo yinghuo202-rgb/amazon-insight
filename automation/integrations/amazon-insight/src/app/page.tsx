@@ -4,8 +4,12 @@ import type { ReactNode } from "react";
 
 import { HeroPanel, PageContainer, TopNav } from "@/components/common/ui";
 import { HomeSearchForm } from "@/components/search/home-search-form";
+import { requirePageUser } from "@/lib/auth";
 
-export default function HomePage() {
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  await requirePageUser("/");
   return (
     <div className="flex min-h-screen flex-col pb-16">
       <TopNav />

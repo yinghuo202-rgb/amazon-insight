@@ -1,8 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
-
 import { calculateInventoryDecision, roundUpToPack } from "@/lib/inventory/calculator";
 import type { InventoryDashboardData, ProductCatalogData, PurchasePlanData } from "@/lib/inventory/contracts";
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
 
 export type ProductMasterValues = {
   chineseName: string;
@@ -67,29 +65,16 @@ CREATE TABLE IF NOT EXISTS domestic_inventory_overrides_v1 (
 );
 `;
 
-function openDatabase() {
-  const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(schema);
-  return database;
-}
-
 export function listOperationalDataOverrides(): OperationalDataOverrides {
-  const database = openDatabase();
-  try {
-    return {
-      products: database.prepare("SELECT * FROM product_master_overrides_v1 ORDER BY updated_at DESC,sku").all().map((row) => mapProduct(row as Record<string, unknown>)),
-      inventories: database.prepare("SELECT * FROM inventory_overrides_v1 ORDER BY updated_at DESC,market,sku").all().map((row) => mapInventory(row as Record<string, unknown>)),
-      domesticInventories: database.prepare("SELECT * FROM domestic_inventory_overrides_v1 ORDER BY updated_at DESC,sku").all().map((row) => mapDomestic(row as Record<string, unknown>)),
-    };
-  } finally {
-    database.close();
-  }
+  return withOperationsDb("operational_data_overrides_v1", schema, (database) => ({
+    products: database.prepare("SELECT * FROM product_master_overrides_v1 ORDER BY updated_at DESC,sku").all().map((row) => mapProduct(row as Record<string, unknown>)),
+    inventories: database.prepare("SELECT * FROM inventory_overrides_v1 ORDER BY updated_at DESC,market,sku").all().map((row) => mapInventory(row as Record<string, unknown>)),
+    domesticInventories: database.prepare("SELECT * FROM domestic_inventory_overrides_v1 ORDER BY updated_at DESC,sku").all().map((row) => mapDomestic(row as Record<string, unknown>)),
+  }));
 }
 
 export function saveProductMasterOverrides(items: Array<{ sku: string } & ProductMasterValues>) {
-  const database = openDatabase();
-  try {
+  withOperationsDb("operational_data_overrides_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const statement = database.prepare(`
@@ -108,13 +93,12 @@ export function saveProductMasterOverrides(items: Array<{ sku: string } & Produc
       for (const item of items) statement.run(item.sku.trim().toUpperCase(), item.chineseName.trim(), item.englishName.trim(), item.category.trim(), item.packaging.trim(), item.cartonQty, item.productWeightG, item.shippingSizeCm.trim(), item.cartonGrossWeightKg, item.cartonLengthCm, item.cartonWidthCm, item.cartonHeightCm, now);
       database.exec("COMMIT");
     } catch (error) { database.exec("ROLLBACK"); throw error; }
-  } finally { database.close(); }
+  });
   return listOperationalDataOverrides();
 }
 
 export function saveInventoryOverrides(items: Array<{ market: "US" | "CA"; sku: string } & InventoryValues>) {
-  const database = openDatabase();
-  try {
+  withOperationsDb("operational_data_overrides_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const inventory = database.prepare(`
@@ -135,13 +119,12 @@ export function saveInventoryOverrides(items: Array<{ market: "US" | "CA"; sku: 
       }
       database.exec("COMMIT");
     } catch (error) { database.exec("ROLLBACK"); throw error; }
-  } finally { database.close(); }
+  });
   return listOperationalDataOverrides();
 }
 
 export function deleteOperationalDataOverrides(entity: "product" | "inventory", keys: Array<{ sku: string; market?: "US" | "CA" }>) {
-  const database = openDatabase();
-  try {
+  withOperationsDb("operational_data_overrides_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       if (entity === "product") {
@@ -157,7 +140,7 @@ export function deleteOperationalDataOverrides(entity: "product" | "inventory", 
       }
       database.exec("COMMIT");
     } catch (error) { database.exec("ROLLBACK"); throw error; }
-  } finally { database.close(); }
+  });
   return listOperationalDataOverrides();
 }
 

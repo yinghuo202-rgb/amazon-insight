@@ -1,15 +1,26 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { verifySignedSessionCookie } from "@/lib/session-signature";
+
 const publicApi = ["/api/auth/login", "/api/auth/bootstrap", "/api/auth/status", "/api/auth/logout"];
 
 export default function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const protectedPage = !path.startsWith("/api/") && path !== "/login" && path !== "/health";
-  const protectedApi = path.startsWith("/api/") && !publicApi.includes(path);
-  if ((protectedPage || protectedApi) && !request.cookies.has("measureman_session")) {
-    if (protectedApi) return NextResponse.json({ error: "请先登录。" }, { status: 401 });
-    return NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(path)}`, request.url));
+  const isCrawlerIngest = path.startsWith("/api/crawlers/ingest/");
+  const hasBearer = request.headers.get("authorization")?.toLowerCase().startsWith("bearer ");
+  const protectedApi = path.startsWith("/api/") && !publicApi.includes(path) && !(isCrawlerIngest && hasBearer);
+
+  if (protectedPage || protectedApi) {
+    const cookieValue = request.cookies.get("measureman_session")?.value;
+    const validToken = verifySignedSessionCookie(cookieValue);
+    if (!validToken) {
+      if (protectedApi) {
+        return NextResponse.json({ error: "请先登录。" }, { status: 401 });
+      }
+      return NextResponse.redirect(new URL(`/login?next=${encodeURIComponent(path)}`, request.url));
+    }
   }
   return NextResponse.next();
 }

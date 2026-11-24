@@ -1,7 +1,10 @@
 import "server-only";
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import { prisma } from "@/lib/db/prisma";
+import { decryptSecret, encryptSecret } from "@/lib/secret-box";
 
 type CredentialSource = "env" | "local_settings" | "api_txt" | "missing";
 
@@ -11,7 +14,6 @@ export type JungleScoutLocalSettings = {
 };
 
 export type JungleScoutCredentialStatus = {
-  authorization: string | null;
   sourceStatus: "configured" | "partial" | "missing";
   diagnostics: string[];
   keyNameConfigured: boolean;
@@ -21,6 +23,7 @@ export type JungleScoutCredentialStatus = {
   keyNamePreview: string | null;
 };
 
+const PROVIDER_ID = "junglescout";
 const LOCAL_SETTINGS_PATH = join(process.cwd(), ".local", "junglescout.json");
 const API_TXT_PATH = join(process.cwd(), "api.txt");
 
@@ -176,6 +179,30 @@ export async function readApiTxtConfig() {
 
 export async function readLocalJungleScoutSettings(): Promise<JungleScoutLocalSettings> {
   try {
+    const record = await prisma.integrationConfig.findUnique({
+      where: { provider: PROVIDER_ID },
+    });
+    if (record) {
+      const config = JSON.parse(record.configJson || "{}") as { keyName?: string };
+      let apiKey: string | undefined;
+      if (record.encryptedSecret) {
+        try {
+          const parsedSecret = JSON.parse(decryptSecret(record.encryptedSecret)) as { apiKey?: string };
+          apiKey = trimOrNull(parsedSecret.apiKey) ?? undefined;
+        } catch {
+          apiKey = undefined;
+        }
+      }
+      const keyName = trimOrNull(config.keyName) ?? undefined;
+      if (keyName || apiKey) {
+        return { keyName, apiKey };
+      }
+    }
+  } catch {
+    // Fall back to legacy local settings file if database is unavailable in isolated unit runs.
+  }
+
+  try {
     const raw = await readFile(LOCAL_SETTINGS_PATH, "utf8");
     const parsed = JSON.parse(raw) as JungleScoutLocalSettings;
     return {
@@ -197,13 +224,26 @@ export async function saveLocalJungleScoutSettings(
     apiKey: input.apiKey === undefined ? current.apiKey : trimOrNull(input.apiKey) ?? undefined,
   };
 
-  await mkdir(join(process.cwd(), ".local"), { recursive: true });
-  await writeFile(LOCAL_SETTINGS_PATH, JSON.stringify(next, null, 2), "utf8");
+  await prisma.integrationConfig.upsert({
+    where: { provider: PROVIDER_ID },
+    create: {
+      provider: PROVIDER_ID,
+      configJson: JSON.stringify({ keyName: next.keyName ?? null }),
+      encryptedSecret: next.apiKey ? encryptSecret(JSON.stringify({ apiKey: next.apiKey })) : null,
+    },
+    update: {
+      configJson: JSON.stringify({ keyName: next.keyName ?? null }),
+      encryptedSecret: next.apiKey ? encryptSecret(JSON.stringify({ apiKey: next.apiKey })) : null,
+    },
+  });
 
   return next;
 }
 
-export async function getJungleScoutCredentialStatus(): Promise<JungleScoutCredentialStatus> {
+async function resolveJungleScoutCredentials(): Promise<{
+  authorization: string | null;
+  status: JungleScoutCredentialStatus;
+}> {
   const envKeyName = trimOrNull(process.env.JS_API_KEY_NAME);
   const envApiKeyRaw = trimOrNull(process.env.JS_API_KEY);
   const envComposite = parseComposite(envApiKeyRaw);
@@ -273,12 +313,23 @@ export async function getJungleScoutCredentialStatus(): Promise<JungleScoutCrede
 
   return {
     authorization,
-    sourceStatus: authorization ? "configured" : keyName || apiKey ? "partial" : "missing",
-    diagnostics,
-    keyNameConfigured: Boolean(keyName),
-    apiKeyConfigured: Boolean(apiKey),
-    keyNameSource,
-    apiKeySource,
-    keyNamePreview: maskValue(keyName),
+    status: {
+      sourceStatus: authorization ? "configured" : keyName || apiKey ? "partial" : "missing",
+      diagnostics,
+      keyNameConfigured: Boolean(keyName),
+      apiKeyConfigured: Boolean(apiKey),
+      keyNameSource,
+      apiKeySource,
+      keyNamePreview: maskValue(keyName),
+    },
   };
+}
+
+export async function getJungleScoutAuthorization() {
+  return resolveJungleScoutCredentials();
+}
+
+export async function getJungleScoutCredentialStatus(): Promise<JungleScoutCredentialStatus> {
+  const { status } = await resolveJungleScoutCredentials();
+  return status;
 }

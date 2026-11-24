@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/auth";
 import { loadInventoryDashboardData, loadProfitabilityData } from "@/lib/inventory/data";
 import { buildSeasonalInventoryPlan } from "@/lib/inventory/seasonal-clearance";
 import { buildSeasonalInventoryCsv, type SeasonalInventoryExportKind, type SeasonalInventoryExportMarket } from "@/lib/inventory/seasonal-clearance-export";
@@ -6,6 +7,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const searchParams = new URL(request.url).searchParams;
   const kind = searchParams.get("kind");
   const market = searchParams.get("market") ?? "ALL";

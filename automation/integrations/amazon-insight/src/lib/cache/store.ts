@@ -49,6 +49,10 @@ export async function setCache<T>(
     },
   });
 
+  if (Math.random() < 0.1) {
+    void pruneExpiredCache().catch(() => undefined);
+  }
+
   return expiresAt;
 }
 

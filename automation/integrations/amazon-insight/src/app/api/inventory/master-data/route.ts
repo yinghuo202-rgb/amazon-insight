@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { loadBaseInventoryDashboardData, loadBaseProductCatalogData } from "@/lib/inventory/data";
 import { deleteOperationalDataOverrides, listOperationalDataOverrides, saveInventoryOverrides, saveProductMasterOverrides } from "@/lib/inventory/operational-data-store";
 
@@ -40,10 +41,16 @@ const deleteSchema = z.object({
 });
 
 export async function GET() {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   return Response.json(listOperationalDataOverrides());
 }
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = saveSchema.parse(await request.json());
     await assertKnown(payload.entity, payload.items);
@@ -58,6 +65,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = deleteSchema.parse(await request.json());
     await assertKnown(payload.entity, payload.keys);

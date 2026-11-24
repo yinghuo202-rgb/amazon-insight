@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 
 import { ProductAnalysisWorkbench } from "@/components/analysis/product-analysis-workbench";
 import { HeroPanel, PageContainer, TopNav } from "@/components/common/ui";
+import { requirePageUser } from "@/lib/auth";
 import { getAnalysisPageData } from "@/lib/workbench";
 import { absoluteAppUrl, stageLabel } from "@/lib/utils";
 
@@ -74,6 +75,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const resolvedParams = await params;
   const resolvedSearch = await searchParams;
   const analysisId = resolvedSearch.analysisId || "";
+  await requirePageUser(
+    `/product/${encodeURIComponent(resolvedParams.asin)}${analysisId ? `?analysisId=${encodeURIComponent(analysisId)}` : ""}`,
+  );
   const data = await getPageData(analysisId, resolvedParams.asin);
   const isDemo = Boolean(data?.demoCase);
 

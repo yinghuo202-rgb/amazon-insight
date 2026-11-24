@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { loadBaseProductCatalogData } from "@/lib/inventory/data";
 import { deleteProductCostOverrides, listProductCostOverrides, saveProductCostOverrides } from "@/lib/inventory/product-cost-store";
 
@@ -17,10 +18,16 @@ const saveSchema = z.object({ items: z.array(itemSchema).min(1).max(1000) });
 const deleteSchema = z.object({ skus: z.array(skuSchema).min(1).max(1000) });
 
 export async function GET() {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   return Response.json({ items: listProductCostOverrides() });
 }
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = saveSchema.parse(await request.json());
     await assertKnownSkus(payload.items.map((item) => item.sku));
@@ -32,6 +39,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = deleteSchema.parse(await request.json());
     await assertKnownSkus(payload.skus);

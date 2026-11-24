@@ -1,10 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadBaseInventoryDashboardData, loadBaseProductCatalogData, loadInventoryDashboardData, loadProductCatalogData, loadPurchasePlanData } from "@/lib/inventory/data";
+import { inventoryDashboardDataPath, loadBaseInventoryDashboardData, loadBaseProductCatalogData, loadInventoryDashboardData, loadProductCatalogData, loadPurchasePlanData, productCatalogDataPath, purchasePlanDataPath } from "@/lib/inventory/data";
 import { deleteOperationalDataOverrides, listOperationalDataOverrides, saveInventoryOverrides, saveProductMasterOverrides } from "@/lib/inventory/operational-data-store";
+
+const hasLocalReports =
+  existsSync(inventoryDashboardDataPath("US")) &&
+  existsSync(inventoryDashboardDataPath("CA")) &&
+  existsSync(productCatalogDataPath()) &&
+  existsSync(purchasePlanDataPath());
 
 describe("online operational data editor", () => {
   const original = process.env.STORE_OPS_STATE_DB;
@@ -21,7 +27,7 @@ describe("online operational data editor", () => {
     rmSync(folder, { recursive: true, force: true });
   });
 
-  it("shares edited domestic inventory across markets and recalculates inventory decisions", async () => {
+  it.skipIf(!hasLocalReports)("shares edited domestic inventory across markets and recalculates inventory decisions", async () => {
     const [baseUs, baseCa] = await Promise.all([loadBaseInventoryDashboardData("US"), loadBaseInventoryDashboardData("CA")]);
     const usRow = baseUs.rows.find((row) => row.sku === "MA007")!;
     const caRow = baseCa.rows.find((row) => row.sku === "MA007")!;
@@ -49,7 +55,7 @@ describe("online operational data editor", () => {
     expect(us.summary.localInventory).toBe(baseUs.summary.localInventory + 200);
   });
 
-  it("syncs edited product master fields into product, inventory, and purchase data", async () => {
+  it.skipIf(!hasLocalReports)("syncs edited product master fields into product, inventory, and purchase data", async () => {
     const product = (await loadBaseProductCatalogData()).items.find((row) => row.sku === "MA007")!;
     saveProductMasterOverrides([{
       sku: "MA007",

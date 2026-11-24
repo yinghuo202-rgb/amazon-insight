@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { generateCreativeHandoff } from "@/lib/inventory/creative-handoff";
 import { loadContentWorkflowData } from "@/lib/inventory/data";
 
@@ -10,6 +11,9 @@ export const runtime = "nodejs";
 const requestSchema = z.object({ sku: z.string().trim().regex(/^[A-Z]{2}\d{3}$/) });
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = requestSchema.parse(await request.json());
     const content = await loadContentWorkflowData();

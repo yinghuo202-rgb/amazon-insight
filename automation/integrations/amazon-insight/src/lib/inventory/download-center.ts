@@ -2,10 +2,9 @@ import { randomBytes } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
-import { automationRoot } from "@/lib/inventory/document-exports";
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
+import { runtimeRoot } from "@/lib/inventory/paths";
 
 export type DownloadCategory = "documents" | "creative" | "purchase" | "advertising";
 
@@ -35,21 +34,33 @@ CREATE INDEX IF NOT EXISTS idx_download_events_v1_file
 ON download_events_v1(category,export_id,filename,downloaded_at DESC);
 `;
 
-const roots: Record<DownloadCategory, string> = {
-  documents: path.join(automationRoot(), "runtime", "output", "exports"),
-  creative: path.join(automationRoot(), "runtime", "output", "creative-handoffs"),
-  purchase: path.join(automationRoot(), "runtime", "output", "purchase-plans"),
-  advertising: path.join(automationRoot(), "runtime", "output", "advertising-plans"),
+const categorySubdirs: Record<DownloadCategory, string> = {
+  documents: "exports",
+  creative: "creative-handoffs",
+  purchase: "purchase-plans",
+  advertising: "advertising-plans",
 };
 
+function categoryRoot(category: DownloadCategory) {
+  if (category === "creative" && process.env.STORE_OPS_CREATIVE_HANDOFF_OUTPUT?.trim()) {
+    return path.resolve(process.env.STORE_OPS_CREATIVE_HANDOFF_OUTPUT);
+  }
+  return path.join(runtimeRoot(), "output", categorySubdirs[category]);
+}
+
 export async function listDownloadHistory(limit = 2000): Promise<DownloadHistoryItem[]> {
-  const groups = await Promise.all((Object.keys(roots) as DownloadCategory[]).map((category) => listCategory(category)));
+  const categories = Object.keys(categorySubdirs) as DownloadCategory[];
+  const groups = await Promise.all(categories.map((category) => listCategory(category)));
   const events = downloadEventSummary();
-  return groups.flat().map((item) => ({ ...item, ...(events.get(item.id) ?? { downloadCount: 0, lastDownloadedAt: null }) })).sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, limit);
+  return groups
+    .flat()
+    .map((item) => ({ ...item, ...(events.get(item.id) ?? { downloadCount: 0, lastDownloadedAt: null }) }))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, limit);
 }
 
 async function listCategory(category: DownloadCategory) {
-  const root = roots[category];
+  const root = categoryRoot(category);
   let directories: Dirent<string>[];
   try {
     directories = await readdir(root, { withFileTypes: true });
@@ -82,16 +93,8 @@ async function listCategory(category: DownloadCategory) {
   return result;
 }
 
-function openEventDatabase() {
-  const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(eventSchema);
-  return database;
-}
-
 function downloadEventSummary() {
-  const database = openEventDatabase();
-  try {
+  return withOperationsDb("download_events_v1", eventSchema, (database) => {
     const rows = database.prepare(`
       SELECT category,export_id,filename,COUNT(*) AS download_count,MAX(downloaded_at) AS last_downloaded_at
       FROM download_events_v1 GROUP BY category,export_id,filename
@@ -100,16 +103,15 @@ function downloadEventSummary() {
       downloadCount: Number(row.download_count),
       lastDownloadedAt: String(row.last_downloaded_at),
     }]));
-  } finally { database.close(); }
+  });
 }
 
 export function recordDownloadEvent(category: DownloadCategory, exportId: string, filename: string) {
   if (!safeSegment(exportId) || path.basename(filename) !== filename) return;
-  const database = openEventDatabase();
-  try {
+  withOperationsDb("download_events_v1", eventSchema, (database) => {
     database.prepare("INSERT INTO download_events_v1(category,export_id,filename,downloaded_at) VALUES(?,?,?,?)")
       .run(category, exportId, filename, new Date().toISOString());
-  } finally { database.close(); }
+  });
 }
 
 function isDownloadable(category: DownloadCategory, filename: string) {
@@ -147,7 +149,7 @@ export async function savePurchasePlanCsv(args: { cycleDate: string; view: "next
   const now = new Date();
   const exportId = `${compactTimestamp(now)}-${randomBytes(4).toString("hex")}`;
   const filename = `${args.cycleDate}-${args.view === "next" ? "采购计划" : "采购复盘"}.csv`;
-  const folder = path.join(roots.purchase, exportId);
+  const folder = path.join(categoryRoot("purchase"), exportId);
   await mkdir(folder, { recursive: true });
   const csv = args.rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
   await writeFile(path.join(folder, filename), `\ufeff${csv}`, "utf8");
@@ -158,7 +160,7 @@ export async function saveAdvertisingPlanCsv(args: { market: "US" | "CA"; period
   const now = new Date();
   const exportId = `${compactTimestamp(now)}-${randomBytes(4).toString("hex")}`;
   const filename = `${args.market}-${args.period}-广告调整-${args.status === "CONFIRMED" ? "已确认" : "草稿"}.csv`;
-  const folder = path.join(roots.advertising, exportId);
+  const folder = path.join(categoryRoot("advertising"), exportId);
   await mkdir(folder, { recursive: true });
   const csv = args.rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
   await writeFile(path.join(folder, filename), `\ufeff${csv}`, "utf8");
@@ -169,12 +171,14 @@ export function purchasePlanDownloadPath(exportId: string, filename: string) {
   if (!/^\d{8}-\d{6}-[a-f0-9]{8}$/.test(exportId) || path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== ".csv") {
     throw new Error("无效的采购表下载路径");
   }
-  return path.join(roots.purchase, exportId, filename);
+  return path.join(categoryRoot("purchase"), exportId, filename);
 }
 
 export function advertisingPlanDownloadPath(exportId: string, filename: string) {
-  if (!/^\d{8}-\d{6}-[a-f0-9]{8}$/.test(exportId) || path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== ".csv") throw new Error("无效的广告调整表下载路径");
-  return path.join(roots.advertising, exportId, filename);
+  if (!/^\d{8}-\d{6}-[a-f0-9]{8}$/.test(exportId) || path.basename(filename) !== filename || path.extname(filename).toLowerCase() !== ".csv") {
+    throw new Error("无效的广告调整表下载路径");
+  }
+  return path.join(categoryRoot("advertising"), exportId, filename);
 }
 
 function compactTimestamp(value: Date) {

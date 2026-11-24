@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { getDocumentExportMeta, runDocumentExport } from "@/lib/inventory/document-exports";
 
 export const runtime = "nodejs";
@@ -23,6 +24,9 @@ const requestSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const market = new URL(request.url).searchParams.get("market") === "CA" ? "CA" : "US";
   try {
     return Response.json(await getDocumentExportMeta(market));
@@ -32,6 +36,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: "导出参数不完整或格式不正确", details: parsed.error.flatten() }, { status: 400 });

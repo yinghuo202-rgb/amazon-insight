@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { savePurchasePlanCsv } from "@/lib/inventory/download-center";
 
 export const runtime = "nodejs";
@@ -12,6 +13,9 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "采购表导出数据不完整或格式不正确", details: parsed.error.flatten() }, { status: 400 });
   try {

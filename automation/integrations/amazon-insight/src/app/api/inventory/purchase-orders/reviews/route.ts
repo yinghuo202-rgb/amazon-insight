@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { loadRawInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
 import { listLatestPurchaseOrderReviews, purchaseOrderReviewKey, recordPurchaseOrderReview } from "@/lib/inventory/purchase-order-reviews";
 
@@ -16,6 +17,9 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = requestSchema.parse(await request.json());
     const market = normalizeOperationsMarket(payload.market);

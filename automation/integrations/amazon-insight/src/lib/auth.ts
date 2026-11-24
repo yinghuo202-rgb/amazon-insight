@@ -1,8 +1,13 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { prisma } from "@/lib/db/prisma";
+import { signSessionToken, verifySignedSessionCookie } from "@/lib/session-signature";
+
+const scrypt = promisify(scryptCallback);
 
 export const SESSION_COOKIE = "measureman_session";
 const DEFAULT_SESSION_DAYS = 14;
@@ -18,17 +23,16 @@ export function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
-export function hashPassword(password: string) {
+export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
-  const digest = scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${digest}`;
+  const digest = (await scrypt(password, salt, 64)) as Buffer;
+  return `${salt}:${digest.toString("hex")}`;
 }
 
-export function verifyPassword(password: string, stored: string) {
+export async function verifyPassword(password: string, stored: string) {
   const [salt, expected] = stored.split(":");
   if (!salt || !expected) return false;
-  const actual = scryptSync(password, salt, 64).toString("hex");
-  const actualBuffer = Buffer.from(actual, "hex");
+  const actualBuffer = (await scrypt(password, salt, 64)) as Buffer;
   const expectedBuffer = Buffer.from(expected, "hex");
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
@@ -45,9 +49,10 @@ function sessionDays() {
 export async function createSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + sessionDays() * 24 * 60 * 60 * 1000);
+  await prisma.session.deleteMany({ where: { expiresAt: { lte: new Date() } } }).catch(() => undefined);
   await prisma.session.create({ data: { tokenHash: hashToken(token), userId, expiresAt } });
   const store = await cookies();
-  store.set(SESSION_COOKIE, token, {
+  store.set(SESSION_COOKIE, signSessionToken(token), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production" && process.env.AUTH_SECURE_COOKIE !== "false",
@@ -58,13 +63,15 @@ export async function createSession(userId: string) {
 
 export async function destroyCurrentSession() {
   const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
+  const rawCookie = store.get(SESSION_COOKIE)?.value;
+  const token = verifySignedSessionCookie(rawCookie) ?? rawCookie;
   if (token) await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } });
   store.delete(SESSION_COOKIE);
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  const rawCookie = (await cookies()).get(SESSION_COOKIE)?.value;
+  const token = verifySignedSessionCookie(rawCookie);
   if (!token) return null;
   const session = await prisma.session.findUnique({ where: { tokenHash: hashToken(token) }, include: { user: true } });
   if (!session) return null;
@@ -78,6 +85,26 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 export async function requireCurrentUser() {
   const user = await getCurrentUser();
   if (!user) throw new Error("UNAUTHENTICATED");
+  return user;
+}
+
+export async function requireApiAuth(options?: { role?: "ADMIN" | "MEMBER" }): Promise<{ user: AuthUser } | { response: Response }> {
+  const user = await getCurrentUser();
+  if (!user) {
+    return { response: Response.json({ error: "请先登录。" }, { status: 401 }) };
+  }
+  if (options?.role === "ADMIN" && user.role !== "ADMIN") {
+    return { response: Response.json({ error: "需要管理员权限。" }, { status: 403 }) };
+  }
+  return { user };
+}
+
+export async function requirePageUser(nextPath?: string): Promise<AuthUser> {
+  const user = await getCurrentUser();
+  if (!user) {
+    const suffix = nextPath ? `?next=${encodeURIComponent(nextPath)}` : "";
+    redirect(`/login${suffix}`);
+  }
   return user;
 }
 
@@ -97,4 +124,3 @@ export async function workspaceForUser(userId: string) {
 export async function isBootstrapRequired() {
   return (await prisma.user.count()) === 0;
 }
-

@@ -1,10 +1,12 @@
 import { ProductPoolWorkbench } from "@/components/pool/product-pool-workbench";
 import { HeroPanel, PageContainer, TopNav } from "@/components/common/ui";
+import { requirePageUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default function PoolPage() {
+export default async function PoolPage() {
+  await requirePageUser("/pool");
   return (
     <div className="flex min-h-screen flex-col pb-16">
       <TopNav />

@@ -1,12 +1,16 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { requireApiAuth } from "@/lib/auth";
 import { loadProductCatalogData, productImageDirectory } from "@/lib/inventory/data";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: Request, { params }: { params: Promise<{ sku: string }> }) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const sku = decodeURIComponent((await params).sku).toUpperCase();
   if (!/^[A-Z]{2}\d{3}$/.test(sku)) return new Response(null, { status: 404 });
 

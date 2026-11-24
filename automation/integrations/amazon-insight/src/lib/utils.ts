@@ -268,5 +268,9 @@ export function escapeHtml(value: string) {
 }
 
 export function absoluteAppUrl() {
-  return process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") || "http://127.0.0.1:3000";
+  return (
+    process.env.PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "") ||
+    "http://127.0.0.1:3000"
+  );
 }

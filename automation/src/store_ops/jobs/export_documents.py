@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
+from openpyxl.utils import get_column_letter
 
 from ..config import ProjectConfig
 from ..db import StateDb
@@ -91,16 +90,118 @@ def _cell_text(value: object) -> str:
     return "" if value is None else str(value).strip()
 
 
-def _node_executable() -> Path:
-    configured = os.environ.get("STORE_OPS_NODE", "").strip()
-    if configured:
-        return Path(configured)
-    bundled_bin = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "node" / "bin"
-    candidates = [bundled_bin / "node.exe"] if os.name == "nt" else [bundled_bin / "node"]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return Path("node")
+def _excel_date_serial(iso_date: str) -> int:
+    parsed = date.fromisoformat(iso_date)
+    return (parsed - date(1899, 12, 30)).days
+
+
+def _clear_range(sheet, min_col: int, min_row: int, max_col: int, max_row: int) -> None:
+    for row in range(min_row, max_row + 1):
+        for col in range(min_col, max_col + 1):
+            sheet.cell(row, col).value = None
+
+
+def _build_shipment_workbook(document: dict) -> None:
+    workbook = openpyxl.load_workbook(document["templatePath"], read_only=False, data_only=False, keep_links=False)
+    try:
+        sheet = workbook["Measureman"]
+        sheet.freeze_panes = "A33"
+        _clear_range(sheet, 1, 3, 2, 45)
+        _clear_range(sheet, 4, 3, 14, 45)
+        _clear_range(sheet, 16, 3, 16, 45)
+        _clear_range(sheet, 18, 3, 18, 45)
+        for number in range(3, 46):
+            sheet.cell(number, 3).value = None
+            sheet[f"Q{number}"].value = f'=IF(OR(P{number}="",K{number}=""),"",P{number}*K{number})'
+            sheet[f"S{number}"].value = f'=IF(G{number}="","",G{number}/2.54)'
+            sheet[f"T{number}"].value = f'=IF(H{number}="","",H{number}/2.54)'
+            sheet[f"U{number}"].value = f'=IF(I{number}="","",I{number}/2.54)'
+            sheet[f"V{number}"].value = f'=IF(F{number}="","",F{number}/0.45359237)'
+
+        sheet["A1"].value = document["title"]
+        for index, row in enumerate(document["rows"]):
+            number = index + 3
+            sheet.cell(number, 1).value = index + 1
+            sheet.cell(number, 2).value = row["sku"]
+            values = [
+                row.get("cartonQty"),
+                row.get("netWeightKg"),
+                row.get("grossWeightKg"),
+                row.get("lengthCm"),
+                row.get("widthCm"),
+                row.get("heightCm"),
+                row.get("cartonVolumeM3"),
+                row.get("quantity"),
+                row.get("cartons"),
+                row.get("totalWeightKg"),
+                row.get("totalVolumeM3"),
+            ]
+            for offset, value in enumerate(values):
+                sheet.cell(number, 4 + offset).value = value
+            sheet.cell(number, 16).value = row.get("unitPriceRmb")
+            if row.get("imageFormula"):
+                sheet.cell(number, 3).value = row["imageFormula"]
+
+        output_path = Path(document["outputPath"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(output_path)
+    finally:
+        workbook.close()
+
+
+def _build_declaration_workbook(document: dict) -> None:
+    workbook = openpyxl.load_workbook(document["templatePath"], read_only=False, data_only=False, keep_links=False)
+    try:
+        sheet = workbook["报关空表"]
+        data_start = int(document["dataStart"])
+        data_end = int(document["dataEnd"])
+        columns: dict[str, int] = document["columns"]
+
+        def cell_ref(key: str, row: int) -> str:
+            return f"{get_column_letter(int(columns[key]))}{row}"
+
+        _clear_range(sheet, 1, data_start, 11, data_end)
+        _clear_range(sheet, 13, data_start, 15, data_end)
+        for number in range(data_start, data_end + 1):
+            purchase_amount = cell_ref("purchaseAmountRmb", number)
+            tax_rate = cell_ref("taxRate", number)
+            sheet[f"L{number}"].value = f'=IF({purchase_amount}="","",{purchase_amount}*{tax_rate})'
+
+        sheet["A3"].value = document["invoiceNumber"]
+        sheet[document["shipmentDateCell"]].value = _excel_date_serial(document["shipmentDate"])
+        sheet["I3"].value = '=IFERROR(J3/F3,"")'
+        sheet["A5"].value = document.get("freightReference") or ""
+        sheet["C5"].value = document.get("shippingMarks") or ""
+        sheet["F5"].value = document.get("consignee") or ""
+        sheet["L5"].value = document.get("originPort") or "宁波"
+
+        for index, row in enumerate(document["rows"]):
+            number = data_start + index
+            values = {
+                "poNumber": row["poNumber"],
+                "factory": row["factory"],
+                "productName": row["productName"],
+                "quantity": row["quantity"],
+                "cartons": row.get("cartons") or None,
+                "weightKg": row.get("weightKg") or None,
+                "volumeM3": row.get("volumeM3") or None,
+                "purchaseAmountRmb": row["purchaseAmountRmb"],
+                "note": row.get("note") or None,
+                "taxRate": row["taxRate"],
+                "declarationSku": row["declarationSku"],
+                "unitPriceRmb": row["unitPriceRmb"],
+            }
+            for key, value in values.items():
+                sheet[cell_ref(key, number)].value = value
+            qty_cell = cell_ref("quantity", number)
+            unit_price_cell = cell_ref("unitPriceRmb", number)
+            sheet[cell_ref("lineAmountRmb", number)].value = f'=IF({unit_price_cell}="","",{qty_cell}*{unit_price_cell})'
+
+        output_path = Path(document["outputPath"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(output_path)
+    finally:
+        workbook.close()
 
 
 def _validate_request(request: dict) -> tuple[str, list[str], list[dict]]:
@@ -294,9 +395,8 @@ def run(config: ProjectConfig, db: StateDb, request_path: Path) -> dict:
         plan = {"resultPath": str(output_dir / "result.json"), "files": [], "shipments": [], "declarations": []}
 
         if "shipment" in document_types:
-            retained = Path.home() / ".codex" / "skills" / "artifact-template-measureman" / "assets" / "reference.xlsx"
             source_template = templates["shipment"][market]
-            template_path = retained if market == "US" and retained.exists() else config.data_root / source_template
+            template_path = config.data_root / source_template
             rows = _shipment_rows(entries, logistics, source_template)
             parts = _chunk_rows(rows, 43)
             for part_index, part_rows in enumerate(parts, start=1):
@@ -353,33 +453,22 @@ def run(config: ProjectConfig, db: StateDb, request_path: Path) -> dict:
                 plan["declarations"].append(document)
                 plan["files"].append({"type": "declaration", "filename": filename, "part": part_index, "partCount": len(parts)})
 
-        plan_path = output_dir / "plan.json"
-        _atomic_json(plan_path, plan)
-        builder = config.project_root / "src" / "store_ops" / "export_builder.mjs"
-        completed = subprocess.run(
-            [str(_node_executable()), str(builder), str(plan_path)],
-            cwd=config.project_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=180,
-            check=False,
-        )
-        if completed.returncode != 0:
-            raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "表格生成失败")
         for document in plan["shipments"]:
+            _build_shipment_workbook(document)
             restore_layout_metadata(
                 Path(document["templatePath"]),
                 Path(document["outputPath"]),
                 "Measureman",
             )
         for document in plan["declarations"]:
+            _build_declaration_workbook(document)
             restore_layout_metadata(
                 Path(document["templatePath"]),
                 Path(document["outputPath"]),
                 "报关空表",
             )
-        result = _read_json(output_dir / "result.json")
+        result = {"status": "completed", "files": plan["files"]}
+        _atomic_json(output_dir / "result.json", result)
         payload = {"status": "completed", "exportId": export_id, "files": result["files"]}
         db.finish_run(run_id, "completed", payload)
         return payload

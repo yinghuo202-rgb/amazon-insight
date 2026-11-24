@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { getPurchasePlanCycle, listPurchasePlanDraft, replacePurchasePlanDraft, transitionPurchasePlanCycle } from "@/lib/inventory/purchase-plan-store";
 
 export const runtime = "nodejs";
@@ -18,6 +19,9 @@ const requestSchema = z.object({
 });
 
 export async function GET(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const cycleDate = new URL(request.url).searchParams.get("cycle") ?? "";
   const parsed = z.iso.date().safeParse(cycleDate);
   if (!parsed.success) return Response.json({ error: "采购周期日期格式不正确。" }, { status: 400 });
@@ -25,6 +29,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = requestSchema.parse(await request.json());
     if (payload.action !== "save") return Response.json({ status: "completed", cycle: transitionPurchasePlanCycle(payload.cycleDate, payload.action) });

@@ -19,9 +19,6 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/*": [
       "prisma/**/*",
-      "dev.db",
-      ".local/**/*",
-      "api.txt",
       "node_modules/.prisma/**/*",
       "node_modules/@prisma/**/*",
     ],

@@ -1,12 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadBaseProductCatalogData, loadProductCatalogData, loadVariantCatalogData } from "@/lib/inventory/data";
+import { loadBaseProductCatalogData, loadProductCatalogData, loadVariantCatalogData, productCatalogDataPath, variantCatalogDataPath } from "@/lib/inventory/data";
 import { deleteProductCostOverrides, listProductCostOverrides, saveProductCostOverrides } from "@/lib/inventory/product-cost-store";
 import { PRODUCT_COST_VAT_RATE } from "@/lib/inventory/product-cost-policy";
 import { buildProductCostView, calculateCostsFromTaxIncluded } from "@/lib/inventory/product-costs";
+
+const hasLocalReports = existsSync(productCatalogDataPath()) && existsSync(variantCatalogDataPath());
 
 describe("product cost management", () => {
   const original = process.env.STORE_OPS_STATE_DB;
@@ -23,7 +25,7 @@ describe("product cost management", () => {
     rmSync(folder, { recursive: true, force: true });
   });
 
-  it("persists overrides and applies them to downstream product catalog reads", async () => {
+  it.skipIf(!hasLocalReports)("persists overrides and applies them to downstream product catalog reads", async () => {
     saveProductCostOverrides([{
       sku: "MA007",
       purchaseCostRmbTaxIncluded: 20,
@@ -42,7 +44,7 @@ describe("product cost management", () => {
     expect(listProductCostOverrides()).toHaveLength(0);
   });
 
-  it("builds real variant series and category fallback groups for all products", async () => {
+  it.skipIf(!hasLocalReports)("builds real variant series and category fallback groups for all products", async () => {
     const [products, variants] = await Promise.all([loadBaseProductCatalogData(), loadVariantCatalogData()]);
     const view = buildProductCostView(products, variants, []);
     const variantRow = view.rows.find((row) => row.sku === "MA003");

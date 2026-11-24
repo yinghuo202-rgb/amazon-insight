@@ -1,11 +1,15 @@
 import { readFile } from "node:fs/promises";
 
+import { requireApiAuth } from "@/lib/auth";
 import { exportFilePath } from "@/lib/inventory/document-exports";
 import { recordDownloadEvent } from "@/lib/inventory/download-center";
 
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, context: RouteContext<"/api/inventory/exports/[exportId]/[filename]">) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const { exportId, filename } = await context.params;
   try {
     const decoded = decodeURIComponent(filename);

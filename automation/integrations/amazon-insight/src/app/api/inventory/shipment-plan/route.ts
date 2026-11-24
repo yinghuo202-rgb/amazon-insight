@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { requireApiAuth } from "@/lib/auth";
 import { loadInventoryDashboardData, normalizeOperationsMarket } from "@/lib/inventory/data";
 import {
   autoSplitShipmentBatches,
@@ -67,12 +68,18 @@ function responseFor(market: "US" | "CA", requestedBatchId?: string) {
 }
 
 export async function GET(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   const url = new URL(request.url);
   const market = normalizeOperationsMarket(url.searchParams.get("market"));
   return Response.json(responseFor(market, url.searchParams.get("batchId") ?? undefined));
 }
 
 export async function POST(request: Request) {
+  const auth = await requireApiAuth();
+  if ("response" in auth) return auth.response;
+
   try {
     const payload = requestSchema.parse(await request.json());
     const data = await loadInventoryDashboardData(payload.market);

@@ -1,6 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
 
 export type PurchasePlanDraftItem = {
   cycleDate: string;
@@ -34,13 +34,6 @@ CREATE TABLE IF NOT EXISTS purchase_plan_events_v1 (
 );
 `;
 
-function openDatabase() {
-  const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(schema);
-  return database;
-}
-
 function mapItem(row: Record<string, unknown>): PurchasePlanDraftItem {
   return {
     cycleDate: String(row.cycle_date),
@@ -53,21 +46,18 @@ function mapItem(row: Record<string, unknown>): PurchasePlanDraftItem {
 }
 
 export function listPurchasePlanDraft(cycleDate: string) {
-  const database = openDatabase();
-  try {
-    return database.prepare("SELECT * FROM purchase_plan_items_v1 WHERE cycle_date=? ORDER BY quantity DESC,sku")
-      .all(cycleDate).map((row) => mapItem(row as Record<string, unknown>));
-  } finally { database.close(); }
+  return withOperationsDb("purchase_plan_v1", schema, (database) =>
+    database.prepare("SELECT * FROM purchase_plan_items_v1 WHERE cycle_date=? ORDER BY quantity DESC,sku")
+      .all(cycleDate).map((row) => mapItem(row as Record<string, unknown>)),
+  );
 }
 
 export function getPurchasePlanCycle(cycleDate: string): PurchasePlanCycle {
-  const database = openDatabase();
-  try { return getCycleFromDatabase(database, cycleDate); } finally { database.close(); }
+  return withOperationsDb("purchase_plan_v1", schema, (database) => getCycleFromDatabase(database, cycleDate));
 }
 
 export function replacePurchasePlanDraft(cycleDate: string, items: Array<Omit<PurchasePlanDraftItem, "cycleDate" | "updatedAt">>) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("purchase_plan_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const cycle = getCycleFromDatabase(database, cycleDate);
@@ -86,12 +76,11 @@ export function replacePurchasePlanDraft(cycleDate: string, items: Array<Omit<Pu
     }
     return database.prepare("SELECT * FROM purchase_plan_items_v1 WHERE cycle_date=? ORDER BY quantity DESC,sku")
       .all(cycleDate).map((row) => mapItem(row as Record<string, unknown>));
-  } finally { database.close(); }
+  });
 }
 
 export function transitionPurchasePlanCycle(cycleDate: string, action: "review" | "lock" | "reopen" | "ordered") {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("purchase_plan_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const cycle = getCycleFromDatabase(database, cycleDate);
@@ -108,7 +97,7 @@ export function transitionPurchasePlanCycle(cycleDate: string, action: "review" 
       database.exec("COMMIT");
       return getCycleFromDatabase(database, cycleDate);
     } catch (error) { database.exec("ROLLBACK"); throw error; }
-  } finally { database.close(); }
+  });
 }
 
 function getCycleFromDatabase(database: DatabaseSync, cycleDate: string): PurchasePlanCycle {

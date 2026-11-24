@@ -1,8 +1,5 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-
-import { automationRoot } from "@/lib/inventory/document-exports";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
+import { operationsDbPath } from "@/lib/inventory/paths";
 
 export type PurchaseOrderReviewAction = "cancel" | "restore";
 
@@ -41,18 +38,7 @@ ON purchase_order_review_events(sku,po_number,po_date,id DESC);
 `;
 
 export function purchaseOrderReviewDbPath() {
-  return process.env.STORE_OPS_STATE_DB?.trim()
-    ? path.resolve(process.env.STORE_OPS_STATE_DB)
-    : path.join(automationRoot(), "runtime", "db", "operations.sqlite3");
-}
-
-function openDatabase() {
-  const databasePath = purchaseOrderReviewDbPath();
-  mkdirSync(path.dirname(databasePath), { recursive: true });
-  const database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(schema);
-  return database;
+  return operationsDbPath();
 }
 
 function mapReview(row: Record<string, unknown>): PurchaseOrderReview {
@@ -76,8 +62,7 @@ export function purchaseOrderReviewKey(value: Pick<PurchaseOrderReview, "sku" | 
 }
 
 export function listLatestPurchaseOrderReviews(options: { sku?: string; action?: PurchaseOrderReviewAction } = {}) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("purchase_order_review_events", schema, (database) => {
     const rows = database.prepare(`
       SELECT id,sku,po_number,po_date,market,factory,remaining_quantity,action,reason,reviewer,created_at
       FROM purchase_order_review_events
@@ -93,14 +78,11 @@ export function listLatestPurchaseOrderReviews(options: { sku?: string; action?:
       (!options.sku || review.sku === options.sku.toUpperCase()) &&
       (!options.action || review.action === options.action)
     );
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function recordPurchaseOrderReview(input: RecordPurchaseOrderReviewInput) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("purchase_order_review_events", schema, (database) => {
     const createdAt = new Date().toISOString();
     const result = database.prepare(`
       INSERT INTO purchase_order_review_events(
@@ -119,7 +101,5 @@ export function recordPurchaseOrderReview(input: RecordPurchaseOrderReviewInput)
       createdAt,
     );
     return { ...input, id: Number(result.lastInsertRowid), createdAt } satisfies PurchaseOrderReview;
-  } finally {
-    database.close();
-  }
+  });
 }

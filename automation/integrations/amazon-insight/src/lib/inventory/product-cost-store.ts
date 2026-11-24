@@ -1,8 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import type { ProductCatalogData } from "@/lib/inventory/contracts";
+import { withOperationsDb } from "@/lib/inventory/operations-db";
 import { taxExcludedFromIncluded } from "@/lib/inventory/product-cost-policy";
-import { shipmentPlanDbPath } from "@/lib/inventory/shipment-plan";
 
 export type ProductCostValues = {
   purchaseCostRmbTaxIncluded: number | null;
@@ -27,13 +27,6 @@ CREATE INDEX IF NOT EXISTS idx_product_cost_overrides_v1_updated
 ON product_cost_overrides_v1(updated_at DESC);
 `;
 
-function openDatabase() {
-  const database = new DatabaseSync(shipmentPlanDbPath());
-  database.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
-  database.exec(schema);
-  return database;
-}
-
 function mapOverride(row: Record<string, unknown>): ProductCostOverride {
   return {
     sku: String(row.sku),
@@ -49,19 +42,13 @@ function nullableNumber(value: unknown) {
 }
 
 export function listProductCostOverrides() {
-  const database = openDatabase();
-  try {
-    return database.prepare("SELECT * FROM product_cost_overrides_v1 ORDER BY updated_at DESC, sku")
-      .all()
-      .map((row) => mapOverride(row as Record<string, unknown>));
-  } finally {
-    database.close();
-  }
+  return withOperationsDb("product_cost_overrides_v1", schema, (database) =>
+    listProductCostOverridesFromDatabase(database),
+  );
 }
 
 export function saveProductCostOverrides(items: Array<{ sku: string } & ProductCostValues>) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("product_cost_overrides_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const statement = database.prepare(`
@@ -90,14 +77,11 @@ export function saveProductCostOverrides(items: Array<{ sku: string } & ProductC
       throw error;
     }
     return listProductCostOverridesFromDatabase(database);
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function deleteProductCostOverrides(skus: string[]) {
-  const database = openDatabase();
-  try {
+  return withOperationsDb("product_cost_overrides_v1", schema, (database) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       const statement = database.prepare("DELETE FROM product_cost_overrides_v1 WHERE sku=?");
@@ -108,9 +92,7 @@ export function deleteProductCostOverrides(skus: string[]) {
       throw error;
     }
     return listProductCostOverridesFromDatabase(database);
-  } finally {
-    database.close();
-  }
+  });
 }
 
 export function applyProductCostOverrides(data: ProductCatalogData, overrides: ProductCostOverride[]): ProductCatalogData {
