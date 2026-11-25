@@ -8,9 +8,9 @@ const publicApi = ["/api/auth/login", "/api/auth/bootstrap", "/api/auth/status",
 export default function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const protectedPage = !path.startsWith("/api/") && path !== "/login" && path !== "/health";
-  const isCrawlerIngest = path.startsWith("/api/crawlers/ingest/");
+  const isBearerApi = path.startsWith("/api/crawlers/") || path.startsWith("/api/worker/");
   const hasBearer = request.headers.get("authorization")?.toLowerCase().startsWith("bearer ");
-  const protectedApi = path.startsWith("/api/") && !publicApi.includes(path) && !(isCrawlerIngest && hasBearer);
+  const protectedApi = path.startsWith("/api/") && !publicApi.includes(path) && !(isBearerApi && hasBearer);
 
   if (protectedPage || protectedApi) {
     const cookieValue = request.cookies.get("measureman_session")?.value;

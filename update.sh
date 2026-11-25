@@ -17,8 +17,8 @@ BACKUP_DIR="${BACKUP_PATH:-./backups}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # Pull first so a transient registry or network failure never leaves the app stopped.
-docker compose pull app
-docker compose stop app >/dev/null 2>&1 || true
+docker compose pull app worker
+docker compose stop app worker >/dev/null 2>&1 || true
 
 if [ "${BACKUP_BEFORE_UPDATE:-true}" = "true" ]; then
   mkdir -p "$BACKUP_DIR"
@@ -32,6 +32,6 @@ if [ "${BACKUP_BEFORE_UPDATE:-true}" = "true" ]; then
   done
 fi
 
-docker compose up -d --no-deps app
+docker compose up -d --no-deps app worker
 docker image prune -f
 docker compose ps

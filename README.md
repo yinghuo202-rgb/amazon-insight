@@ -34,10 +34,10 @@ APP_PORT=3000
 
 ```sh
 DOCKER_CONFIG="$PWD/.docker" docker login ghcr.io
-docker compose pull app
-docker compose up -d app
+docker compose pull app worker
+docker compose up -d app worker
 docker compose ps
-docker compose logs -f app
+docker compose logs -f app worker
 ```
 
 停止服务：`docker compose stop app`。首次访问 `http://NAS_IP:3000/login` 创建管理员账户。
@@ -95,10 +95,12 @@ docker build --platform linux/amd64 -t measureman-commerce:local .
 - 在 `.env` 中配置 `GERPGO_APP_ID`、`GERPGO_APP_KEY`（可选 `GERPGO_BASE_URL`），或登录后访问 `/settings` 在“积加 ERP 销售接入”卡片加密保存。
 - 网页右下角胶囊通过 `/api/sales-bubble` 自动同步并按店铺时区汇总当日业绩；首次同步会建立基线游标，避免历史订单刷屏。
 
-## 亚马逊 / 1688 爬虫数据接入
+## 亚马逊 / 1688 爬虫数据接入与后台 Worker
 
-外部爬虫脚本可使用 `.env` 中的 `CRAWLER_INGEST_TOKEN`（通过请求头 `Authorization: Bearer <token>`）向以下端点推送采集结果：
+系统已内置轻量化 `worker` 服务（复用同一 Docker 镜像中的 `python -m store_ops.worker`，无需额外引入 Redis），通过内部接口与主容器通信：
 
-- `POST /api/crawlers/ingest/amazon`：接收亚马逊商品快照（`items[]` 含 `asin`、`marketplace`、`title`、`price`、`rating`、`reviews`、`bsrRank`、`monthlySalesEst` 等，设置 `syncToPool: true` 可同步写入选品池）。
-- `POST /api/crawlers/ingest/1688`：接收 1688 供应商报价（`items[]` 含 `offerId`、`title`、`unitPriceRmb`、`moq`、`leadTimeDays`、`linkedAsin`、`linkedSku` 等）。
-- `GET /api/crawlers/ingest/amazon` 与 `GET /api/crawlers/ingest/1688`：支持按 `asin` / `sku` / `marketplace` 查询最近入库的采集记录。
+- **积加 ERP 后台定时同步**：`worker` 按 `WORKER_ERP_SYNC_INTERVAL_SEC`（默认 60 秒）调用 `POST /api/worker/erp-sync`，无人打开网页时也会持续更新当日销售基线与事件流。
+- **爬虫任务队列**：可通过 `POST /api/crawlers/jobs`（`GET /api/crawlers/jobs` 查询队列和 Worker 状态）提交 `target: "amazon" | "1688"` 采集任务，支持失败重试与指数退避。
+- **可插拔爬虫适配器**：在 `.env` 配置 `CRAWLER_AMAZON_WEBHOOK_URL` / `CRAWLER_1688_WEBHOOK_URL`（HTTP Webhook）或 `CRAWLER_AMAZON_CMD` / `CRAWLER_1688_CMD`（本地脚本命令）后，`worker` 会自动领取任务执行并回写入库；也可继续使用外部脚本直传接口：
+  - `POST /api/crawlers/ingest/amazon`：接收亚马逊商品快照（设置 `syncToPool: true` 可同步写入选品池）。
+  - `POST /api/crawlers/ingest/1688`：接收 1688 供应商报价（按 `offerId` 更新，支持 `linkedAsin` / `linkedSku`）。

@@ -333,3 +333,46 @@ model Supplier1688Quote {
   @@index([linkedSku])
 }
 
+model CrawlJob {
+  id          String    @id @default(cuid())
+  target      String
+  action      String    @default("product")
+  marketplace String    @default("US")
+  query       String
+  linkedAsin  String?
+  linkedSku   String?
+  syncToPool  Boolean   @default(false)
+  payloadJson String?
+  status      String    @default("PENDING")
+  priority    Int       @default(0)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  scheduledAt DateTime  @default(now())
+  lockedBy    String?
+  lockedAt    DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  resultJson  String?
+  lastError   String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, scheduledAt, priority])
+  @@index([target, status])
+  @@index([createdAt])
+}
+
+model WorkerState {
+  id              String    @id @default(cuid())
+  workerId        String    @unique
+  status          String    @default("IDLE")
+  lastHeartbeatAt DateTime  @default(now())
+  lastErpSyncAt   DateTime?
+  lastErpError    String?
+  lastCrawlJobId  String?
+  lastCrawlAt     DateTime?
+  metaJson        String?
+  updatedAt       DateTime  @updatedAt
+}
+

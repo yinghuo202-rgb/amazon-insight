@@ -34,6 +34,7 @@ services:
       GERPGO_APP_KEY: "${GERPGO_APP_KEY:-}"
       GERPGO_BASE_URL: "${GERPGO_BASE_URL:-https://open.gerpgo.com/api/open}"
       CRAWLER_INGEST_TOKEN: "${CRAWLER_INGEST_TOKEN:-}"
+      WORKER_AUTH_TOKEN: "${WORKER_AUTH_TOKEN:-}"
     ports:
       - "${APP_PORT:-3000}:3000"
     volumes:
@@ -47,6 +48,52 @@ services:
       timeout: 10s
       retries: 5
       start_period: 45s
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    image: "${IMAGE_REPOSITORY:-ghcr.io/yinghuo202-rgb/amazon-insight}:${IMAGE_TAG:-latest}"
+    container_name: "${WORKER_CONTAINER_NAME:-measureman-commerce-worker}"
+    restart: unless-stopped
+    init: true
+    depends_on:
+      app:
+        condition: service_healthy
+    command: ["/opt/store-ops-venv/bin/python", "-m", "store_ops.worker"]
+    env_file:
+      - .env
+    environment:
+      APP_ENV: "${APP_ENV:-production}"
+      DATABASE_URL: "${DATABASE_URL:-file:/data/app/selection.db}"
+      DATABASE_MIGRATE_ON_START: "false"
+      SECRET_KEY: "${SECRET_KEY:-}"
+      WORKER_ID: "${WORKER_ID:-nas-worker}"
+      WORKER_API_BASE_URL: "${WORKER_API_BASE_URL:-http://app:3000}"
+      WORKER_AUTH_TOKEN: "${WORKER_AUTH_TOKEN:-}"
+      WORKER_POLL_INTERVAL_SEC: "${WORKER_POLL_INTERVAL_SEC:-10}"
+      WORKER_ERP_SYNC_INTERVAL_SEC: "${WORKER_ERP_SYNC_INTERVAL_SEC:-60}"
+      WORKER_HEARTBEAT_INTERVAL_SEC: "${WORKER_HEARTBEAT_INTERVAL_SEC:-30}"
+      CRAWLER_AMAZON_WEBHOOK_URL: "${CRAWLER_AMAZON_WEBHOOK_URL:-}"
+      CRAWLER_1688_WEBHOOK_URL: "${CRAWLER_1688_WEBHOOK_URL:-}"
+      CRAWLER_WEBHOOK_TOKEN: "${CRAWLER_WEBHOOK_TOKEN:-}"
+      CRAWLER_AMAZON_CMD: "${CRAWLER_AMAZON_CMD:-}"
+      CRAWLER_1688_CMD: "${CRAWLER_1688_CMD:-}"
+      STORE_OPS_AUTOMATION_ROOT: /opt/store-ops
+      STORE_OPS_DATA_ROOT: /data/sources
+      STORE_OPS_RUNTIME_ROOT: /data/runtime
+      STORE_OPS_STATE_DB: /data/runtime/db/operations.sqlite3
+    volumes:
+      - "${RUNTIME_PATH:-./data/runtime}:/data/runtime"
+      - "${SOURCE_DATA_PATH:-./data/sources}:/data/sources:ro"
+      - "${LOG_PATH:-./logs}:/data/logs"
+    healthcheck:
+      test: ["CMD", "/opt/store-ops-venv/bin/python", "-c", "import json,time; data=json.load(open('/tmp/worker-heartbeat.json')); assert time.time()-data['ts']<180"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     security_opt:

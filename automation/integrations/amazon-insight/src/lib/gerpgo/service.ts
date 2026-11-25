@@ -477,6 +477,27 @@ export async function syncGerpGoData(): Promise<void> {
   }
 }
 
+export async function syncGerpGoIfConfigured(): Promise<{
+  skipped: boolean;
+  reason?: string;
+  lastSyncedAt?: string | null;
+}> {
+  const resolved = await resolveGerpGoCredentials();
+  if (resolved.demoMode) {
+    return { skipped: true, reason: "demo_mode" };
+  }
+  if (!resolved.appId || !resolved.appKey) {
+    return { skipped: true, reason: "unconfigured" };
+  }
+  if (!resolved.enabled) {
+    return { skipped: true, reason: "disabled" };
+  }
+
+  await syncGerpGoData();
+  const latest = await resolveGerpGoCredentials();
+  return { skipped: false, lastSyncedAt: latest.lastSyncedAt };
+}
+
 export async function getSalesBubbleSnapshot({
   since,
   triggerSync = false,
