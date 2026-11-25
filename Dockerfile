@@ -4,6 +4,10 @@ FROM node:22-bookworm-slim AS web-builder
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /build
 
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y openssl \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 COPY automation/integrations/amazon-insight/package.json automation/integrations/amazon-insight/pnpm-lock.yaml automation/integrations/amazon-insight/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
@@ -13,6 +17,9 @@ RUN pnpm build
 
 FROM node:22-bookworm-slim AS prisma-cli
 WORKDIR /opt/prisma-cli
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y openssl \
+  && rm -rf /var/lib/apt/lists/*
 RUN npm init -y >/dev/null 2>&1 \
   && npm install --no-save --omit=dev prisma@6.19.3
 
@@ -31,7 +38,7 @@ ENV NODE_ENV=production \
     PATH=/opt/store-ops-venv/bin:$PATH
 
 RUN apt-get update \
-  && apt-get install --no-install-recommends -y python3 python3-venv ca-certificates \
+  && apt-get install --no-install-recommends -y python3 python3-venv ca-certificates openssl \
   && rm -rf /var/lib/apt/lists/* \
   && python3 -m venv /opt/store-ops-venv
 
@@ -51,9 +58,14 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN /opt/store-ops-venv/bin/pip install --no-cache-dir /opt/store-ops \
   && mkdir -p /data/app /data/runtime/db /data/logs /data/sources \
   && chmod 0755 /usr/local/bin/docker-entrypoint.sh \
-  && chown -R node:node /app /data /opt/store-ops
+  && chown -R node:node /app /data /opt/store-ops /opt/prisma-cli
 
 USER node
+# Verify the actual NAS uid can migrate without downloading missing engines.
+# This runs on each target architecture and never touches production data.
+RUN --network=none DATABASE_URL=file:/tmp/prisma-runtime-check.db \
+    /opt/prisma-cli/node_modules/.bin/prisma db push --schema /app/prisma/schema.prisma --skip-generate \
+  && rm /tmp/prisma-runtime-check.db
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=5 CMD node -e "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
